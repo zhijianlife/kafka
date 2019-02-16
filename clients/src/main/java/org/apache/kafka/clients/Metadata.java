@@ -10,13 +10,14 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.clients;
 
 import org.apache.kafka.common.Cluster;
-import org.apache.kafka.common.internals.ClusterResourceListeners;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.errors.TimeoutException;
+import org.apache.kafka.common.internals.ClusterResourceListeners;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -77,8 +78,9 @@ public final class Metadata {
 
     /**
      * Create a new Metadata instance
+     *
      * @param refreshBackoffMs The minimum amount of time that must expire between metadata refreshes to avoid busy
-     *        polling
+     * polling
      * @param metadataExpireMs The maximum amount of time that metadata can be retained without refresh
      * @param topicExpiryEnabled If true, enable expiry of unused topics
      * @param clusterResourceListeners List of ClusterResourceListeners which will receive metadata updates.
@@ -111,7 +113,7 @@ public final class Metadata {
      */
     public synchronized void add(String topic) {
         if (topics.put(topic, TOPIC_EXPIRY_NEEDS_UPDATE) == null) {
-            requestUpdateForNewTopics();
+            this.requestUpdateForNewTopics();
         }
     }
 
@@ -136,6 +138,7 @@ public final class Metadata {
 
     /**
      * Check whether an update has been explicitly requested.
+     *
      * @return true if an update was requested, false otherwise
      */
     public synchronized boolean updateRequested() {
@@ -152,11 +155,13 @@ public final class Metadata {
         long begin = System.currentTimeMillis();
         long remainingWaitMs = maxWaitMs;
         while (this.version <= lastVersion) {
-            if (remainingWaitMs != 0)
-                wait(remainingWaitMs);
+            if (remainingWaitMs != 0) {
+                this.wait(remainingWaitMs);
+            }
             long elapsed = System.currentTimeMillis() - begin;
-            if (elapsed >= maxWaitMs)
+            if (elapsed >= maxWaitMs) {
                 throw new TimeoutException("Failed to update metadata after " + maxWaitMs + " ms.");
+            }
             remainingWaitMs = maxWaitMs - elapsed;
         }
     }
@@ -165,11 +170,12 @@ public final class Metadata {
      * Replace the current set of topics maintained to the one provided.
      * If topic expiry is enabled, expiry time of the topics will be
      * reset on the next update.
+     *
      * @param topics
      */
     public synchronized void setTopics(Collection<String> topics) {
         if (!this.topics.keySet().containsAll(topics)) {
-            requestUpdateForNewTopics();
+            this.requestUpdateForNewTopics();
         }
         this.topics.clear();
         for (String topic : topics)
@@ -185,6 +191,7 @@ public final class Metadata {
 
     /**
      * Check if a topic is already in the topic set.
+     *
      * @param topic topic to check
      * @return true if the topic exists, false otherwise
      */
@@ -198,7 +205,7 @@ public final class Metadata {
      *
      * @param cluster the cluster containing metadata for topics with valid metadata
      * @param unavailableTopics topics which are non-existent or have one or more partitions whose
-     *        leader is not known
+     * leader is not known
      * @param now current time in milliseconds
      */
     public synchronized void update(Cluster cluster, Set<String> unavailableTopics, long now) {
@@ -214,16 +221,16 @@ public final class Metadata {
             for (Iterator<Map.Entry<String, Long>> it = topics.entrySet().iterator(); it.hasNext(); ) {
                 Map.Entry<String, Long> entry = it.next();
                 long expireMs = entry.getValue();
-                if (expireMs == TOPIC_EXPIRY_NEEDS_UPDATE)
+                if (expireMs == TOPIC_EXPIRY_NEEDS_UPDATE) {
                     entry.setValue(now + TOPIC_EXPIRY_MS);
-                else if (expireMs <= now) {
+                } else if (expireMs <= now) {
                     it.remove();
                     log.debug("Removing unused topic {} from the metadata list, expiryMs {} now {}", entry.getKey(), expireMs, now);
                 }
             }
         }
 
-        for (Listener listener: listeners)
+        for (Listener listener : listeners)
             listener.onMetadataUpdate(cluster, unavailableTopics);
 
         String previousClusterId = cluster.clusterResource().clusterId();
@@ -232,7 +239,7 @@ public final class Metadata {
             // the listener may change the interested topics, which could cause another metadata refresh.
             // If we have already fetched all topics, however, another fetch should be unnecessary.
             this.needUpdate = false;
-            this.cluster = getClusterForCurrentTopics(cluster);
+            this.cluster = this.getClusterForCurrentTopics(cluster);
         } else {
             this.cluster = cluster;
         }
@@ -240,12 +247,13 @@ public final class Metadata {
         // The bootstrap cluster is guaranteed not to have any useful information
         if (!cluster.isBootstrapConfigured()) {
             String clusterId = cluster.clusterResource().clusterId();
-            if (clusterId == null ? previousClusterId != null : !clusterId.equals(previousClusterId))
+            if (clusterId == null ? previousClusterId != null : !clusterId.equals(previousClusterId)) {
                 log.info("Cluster ID: {}", cluster.clusterResource().clusterId());
+            }
             clusterResourceListeners.onUpdate(cluster.clusterResource());
         }
 
-        notifyAll();
+        this.notifyAll();
         log.debug("Updated cluster metadata version {} to {}", this.version, this.cluster);
     }
 
@@ -273,11 +281,12 @@ public final class Metadata {
 
     /**
      * Set state to indicate if metadata for all topics in Kafka cluster is required or not.
+     *
      * @param needMetadataForAllTopics boolean indicating need for metadata of all topics in cluster.
      */
     public synchronized void needMetadataForAllTopics(boolean needMetadataForAllTopics) {
         if (needMetadataForAllTopics && !this.needMetadataForAllTopics) {
-            requestUpdateForNewTopics();
+            this.requestUpdateForNewTopics();
         }
         this.needMetadataForAllTopics = needMetadataForAllTopics;
     }
@@ -312,7 +321,7 @@ public final class Metadata {
          *
          * @param cluster the cluster containing metadata for topics with valid metadata
          * @param unavailableTopics topics which are non-existent or have one or more partitions whose
-         *        leader is not known
+         * leader is not known
          */
         void onMetadataUpdate(Cluster cluster, Set<String> unavailableTopics);
     }
@@ -320,7 +329,7 @@ public final class Metadata {
     private synchronized void requestUpdateForNewTopics() {
         // Override the timestamp of last refresh to let immediate update.
         this.lastRefreshMs = 0;
-        requestUpdate();
+        this.requestUpdate();
     }
 
     private Cluster getClusterForCurrentTopics(Cluster cluster) {

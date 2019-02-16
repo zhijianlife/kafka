@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,7 +14,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.kafka.clients.producer;
+
+import org.apache.kafka.clients.producer.internals.DefaultPartitioner;
+import org.apache.kafka.clients.producer.internals.FutureRecordMetadata;
+import org.apache.kafka.clients.producer.internals.ProduceRequestResult;
+import org.apache.kafka.common.Cluster;
+import org.apache.kafka.common.Metric;
+import org.apache.kafka.common.MetricName;
+import org.apache.kafka.common.PartitionInfo;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.record.Record;
+import org.apache.kafka.common.serialization.Serializer;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -25,18 +37,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-
-import org.apache.kafka.clients.producer.internals.FutureRecordMetadata;
-import org.apache.kafka.clients.producer.internals.DefaultPartitioner;
-import org.apache.kafka.clients.producer.internals.ProduceRequestResult;
-import org.apache.kafka.common.Cluster;
-import org.apache.kafka.common.Metric;
-import org.apache.kafka.common.MetricName;
-import org.apache.kafka.common.PartitionInfo;
-import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.record.Record;
-import org.apache.kafka.common.serialization.Serializer;
-
 
 /**
  * A mock of the producer interface you can use for testing code that uses Kafka.
@@ -60,9 +60,9 @@ public class MockProducer<K, V> implements Producer<K, V> {
      *
      * @param cluster The cluster holding metadata for this producer
      * @param autoComplete If true automatically complete all requests successfully and execute the callback. Otherwise
-     *        the user must call {@link #completeNext()} or {@link #errorNext(RuntimeException)} after
-     *        {@link #send(ProducerRecord) send()} to complete the call and unblock the @{link
-     *        java.util.concurrent.Future Future&lt;RecordMetadata&gt;} that is returned.
+     * the user must call {@link #completeNext()} or {@link #errorNext(RuntimeException)} after
+     * {@link #send(ProducerRecord) send()} to complete the call and unblock the @{link
+     * java.util.concurrent.Future Future&lt;RecordMetadata&gt;} that is returned.
      * @param partitioner The partition strategy
      * @param keySerializer The serializer for key that implements {@link Serializer}.
      * @param valueSerializer The serializer for value that implements {@link Serializer}.
@@ -98,12 +98,12 @@ public class MockProducer<K, V> implements Producer<K, V> {
 
     /**
      * Adds the record to the list of sent records. The {@link RecordMetadata} returned will be immediately satisfied.
-     * 
+     *
      * @see #history()
      */
     @Override
     public synchronized Future<RecordMetadata> send(ProducerRecord<K, V> record) {
-        return send(record, null);
+        return this.send(record, null);
     }
 
     /**
@@ -114,20 +114,22 @@ public class MockProducer<K, V> implements Producer<K, V> {
     @Override
     public synchronized Future<RecordMetadata> send(ProducerRecord<K, V> record, Callback callback) {
         int partition = 0;
-        if (this.cluster.partitionsForTopic(record.topic()) != null)
-            partition = partition(record, this.cluster);
+        if (this.cluster.partitionsForTopic(record.topic()) != null) {
+            partition = this.partition(record, this.cluster);
+        }
         TopicPartition topicPartition = new TopicPartition(record.topic(), partition);
         ProduceRequestResult result = new ProduceRequestResult(topicPartition);
         FutureRecordMetadata future = new FutureRecordMetadata(result, 0, Record.NO_TIMESTAMP, 0, 0, 0);
-        long offset = nextOffset(topicPartition);
+        long offset = this.nextOffset(topicPartition);
         Completion completion = new Completion(offset,
-                                               new RecordMetadata(topicPartition, 0, offset, Record.NO_TIMESTAMP, 0, 0, 0),
-                                               result, callback);
+                new RecordMetadata(topicPartition, 0, offset, Record.NO_TIMESTAMP, 0, 0, 0),
+                result, callback);
         this.sent.add(record);
-        if (autoComplete)
+        if (autoComplete) {
             completion.complete(null);
-        else
+        } else {
             this.completions.addLast(completion);
+        }
         return future;
     }
 
@@ -146,15 +148,18 @@ public class MockProducer<K, V> implements Producer<K, V> {
         }
     }
 
+    @Override
     public synchronized void flush() {
         while (!this.completions.isEmpty())
-            completeNext();
+            this.completeNext();
     }
 
+    @Override
     public List<PartitionInfo> partitionsFor(String topic) {
         return this.cluster.partitionsForTopic(topic);
     }
 
+    @Override
     public Map<MetricName, Metric> metrics() {
         return Collections.emptyMap();
     }
@@ -188,7 +193,7 @@ public class MockProducer<K, V> implements Producer<K, V> {
      * @return true if there was an uncompleted call to complete
      */
     public synchronized boolean completeNext() {
-        return errorNext(null);
+        return this.errorNext(null);
     }
 
     /**
@@ -216,11 +221,12 @@ public class MockProducer<K, V> implements Producer<K, V> {
             List<PartitionInfo> partitions = cluster.partitionsForTopic(topic);
             int numPartitions = partitions.size();
             // they have given us a partition, use it
-            if (partition < 0 || partition >= numPartitions)
+            if (partition < 0 || partition >= numPartitions) {
                 throw new IllegalArgumentException("Invalid partition given with record: " + partition
-                                                   + " is not in the range [0..."
-                                                   + numPartitions
-                                                   + "].");
+                        + " is not in the range [0..."
+                        + numPartitions
+                        + "].");
+            }
             return partition;
         }
         byte[] keyBytes = keySerializer.serialize(topic, record.key());
@@ -247,10 +253,11 @@ public class MockProducer<K, V> implements Producer<K, V> {
         public void complete(RuntimeException e) {
             result.set(e == null ? offset : -1L, Record.NO_TIMESTAMP, e);
             if (callback != null) {
-                if (e == null)
+                if (e == null) {
                     callback.onCompletion(metadata, null);
-                else
+                } else {
                     callback.onCompletion(null, e);
+                }
             }
             result.done();
         }

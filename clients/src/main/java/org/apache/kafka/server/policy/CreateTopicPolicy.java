@@ -51,12 +51,12 @@ public interface CreateTopicPolicy extends Configurable, AutoCloseable {
          * @param numPartitions the number of partitions to create or null if replicasAssignments is set.
          * @param replicationFactor the replication factor for the topic or null if replicaAssignments is set.
          * @param replicasAssignments replica assignments or null if numPartitions and replicationFactor is set. The
-         *                            assignment is a map from partition id to replica (broker) ids.
+         * assignment is a map from partition id to replica (broker) ids.
          * @param configs topic configs for the topic to be created, not including broker defaults. Broker configs are
-         *                passed via the {@code configure()} method of the policy implementation.
+         * passed via the {@code configure()} method of the policy implementation.
          */
         public RequestMetadata(String topic, Integer numPartitions, Short replicationFactor,
-                        Map<Integer, List<Integer>> replicasAssignments, Map<String, String> configs) {
+                               Map<Integer, List<Integer>> replicasAssignments, Map<String, String> configs) {
             this.topic = topic;
             this.numPartitions = numPartitions;
             this.replicationFactor = replicationFactor;

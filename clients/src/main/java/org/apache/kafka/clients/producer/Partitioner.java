@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,15 +17,14 @@
 
 package org.apache.kafka.clients.producer;
 
-import org.apache.kafka.common.Configurable;
 import org.apache.kafka.common.Cluster;
+import org.apache.kafka.common.Configurable;
 
 import java.io.Closeable;
 
 /**
  * Partitioner Interface
  */
-
 public interface Partitioner extends Configurable, Closeable {
 
     /**
@@ -38,11 +37,12 @@ public interface Partitioner extends Configurable, Closeable {
      * @param valueBytes The serialized value to partition on or null
      * @param cluster The current cluster metadata
      */
-    public int partition(String topic, Object key, byte[] keyBytes, Object value, byte[] valueBytes, Cluster cluster);
+    int partition(String topic, Object key, byte[] keyBytes, Object value, byte[] valueBytes, Cluster cluster);
 
     /**
      * This is called when partitioner is closed.
      */
-    public void close();
+    @Override
+    void close();
 
 }

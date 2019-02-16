@@ -3,13 +3,14 @@
  * file distributed with this work for additional information regarding copyright ownership. The ASF licenses this file
  * to You under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
  * License. You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.clients.producer.internals;
 
 import org.apache.kafka.clients.ClientRequest;
@@ -117,13 +118,14 @@ public class Sender implements Runnable {
     /**
      * The main run loop for the sender thread
      */
+    @Override
     public void run() {
         log.debug("Starting Kafka producer I/O thread.");
 
         // main loop, runs until close is called
         while (running) {
             try {
-                run(time.milliseconds());
+                this.run(time.milliseconds());
             } catch (Exception e) {
                 log.error("Uncaught error in kafka producer I/O thread: ", e);
             }
@@ -136,7 +138,7 @@ public class Sender implements Runnable {
         // wait until these are completed.
         while (!forceClose && (this.accumulator.hasUnsent() || this.client.inFlightRequestCount() > 0)) {
             try {
-                run(time.milliseconds());
+                this.run(time.milliseconds());
             } catch (Exception e) {
                 log.error("Uncaught error in kafka producer I/O thread: ", e);
             }
@@ -157,9 +159,8 @@ public class Sender implements Runnable {
 
     /**
      * Run a single iteration of sending
-     * 
-     * @param now
-     *            The current POSIX time in milliseconds
+     *
+     * @param now The current POSIX time in milliseconds
      */
     void run(long now) {
         Cluster cluster = metadata.fetch();
@@ -189,9 +190,9 @@ public class Sender implements Runnable {
 
         // create produce requests
         Map<Integer, List<RecordBatch>> batches = this.accumulator.drain(cluster,
-                                                                         result.readyNodes,
-                                                                         this.maxRequestSize,
-                                                                         now);
+                result.readyNodes,
+                this.maxRequestSize,
+                now);
         if (guaranteeMessageOrder) {
             // Mute all the partitions drained
             for (List<RecordBatch> batchList : batches.values()) {
@@ -216,7 +217,7 @@ public class Sender implements Runnable {
             log.trace("Nodes with data ready to send: {}", result.readyNodes);
             pollTimeout = 0;
         }
-        sendProduceRequests(batches, now);
+        this.sendProduceRequests(batches, now);
 
         // if some partitions are already ready to be sent, the select time would be 0;
         // otherwise if some partition already has some data accumulated but not ready yet,
@@ -241,7 +242,7 @@ public class Sender implements Runnable {
      */
     public void forceClose() {
         this.forceClose = true;
-        initiateClose();
+        this.initiateClose();
     }
 
     /**
@@ -252,12 +253,12 @@ public class Sender implements Runnable {
         if (response.wasDisconnected()) {
             log.trace("Cancelled request {} due to node {} being disconnected", response, response.destination());
             for (RecordBatch batch : batches.values())
-                completeBatch(batch, new ProduceResponse.PartitionResponse(Errors.NETWORK_EXCEPTION), correlationId, now);
+                this.completeBatch(batch, new ProduceResponse.PartitionResponse(Errors.NETWORK_EXCEPTION), correlationId, now);
         } else if (response.versionMismatch() != null) {
             log.warn("Cancelled request {} due to a version mismatch with node {}",
                     response, response.destination(), response.versionMismatch());
             for (RecordBatch batch : batches.values())
-                completeBatch(batch, new ProduceResponse.PartitionResponse(Errors.INVALID_REQUEST), correlationId, now);
+                this.completeBatch(batch, new ProduceResponse.PartitionResponse(Errors.INVALID_REQUEST), correlationId, now);
         } else {
             log.trace("Received produce response from node {} with correlation id {}", response.destination(), correlationId);
             // if we have a response, parse it
@@ -267,14 +268,14 @@ public class Sender implements Runnable {
                     TopicPartition tp = entry.getKey();
                     ProduceResponse.PartitionResponse partResp = entry.getValue();
                     RecordBatch batch = batches.get(tp);
-                    completeBatch(batch, partResp, correlationId, now);
+                    this.completeBatch(batch, partResp, correlationId, now);
                 }
                 this.sensors.recordLatency(response.destination(), response.requestLatencyMs());
                 this.sensors.recordThrottleTime(produceResponse.getThrottleTime());
             } else {
                 // this is the acks = 0 case, just complete all requests
                 for (RecordBatch batch : batches.values()) {
-                    completeBatch(batch, new ProduceResponse.PartitionResponse(Errors.NONE), correlationId, now);
+                    this.completeBatch(batch, new ProduceResponse.PartitionResponse(Errors.NONE), correlationId, now);
                 }
             }
         }
@@ -282,7 +283,7 @@ public class Sender implements Runnable {
 
     /**
      * Complete or retry the given batch of records.
-     * 
+     *
      * @param batch The record batch
      * @param response The produce response
      * @param correlationId The correlation id for the request
@@ -291,37 +292,41 @@ public class Sender implements Runnable {
     private void completeBatch(RecordBatch batch, ProduceResponse.PartitionResponse response, long correlationId,
                                long now) {
         Errors error = response.error;
-        if (error != Errors.NONE && canRetry(batch, error)) {
+        if (error != Errors.NONE && this.canRetry(batch, error)) {
             // retry
             log.warn("Got error produce response with correlation id {} on topic-partition {}, retrying ({} attempts left). Error: {}",
-                     correlationId,
-                     batch.topicPartition,
-                     this.retries - batch.attempts - 1,
-                     error);
+                    correlationId,
+                    batch.topicPartition,
+                    this.retries - batch.attempts - 1,
+                    error);
             this.accumulator.reenqueue(batch, now);
             this.sensors.recordRetries(batch.topicPartition.topic(), batch.recordCount);
         } else {
             RuntimeException exception;
-            if (error == Errors.TOPIC_AUTHORIZATION_FAILED)
+            if (error == Errors.TOPIC_AUTHORIZATION_FAILED) {
                 exception = new TopicAuthorizationException(batch.topicPartition.topic());
-            else
+            } else {
                 exception = error.exception();
+            }
             // tell the user the result of their request
             batch.done(response.baseOffset, response.logAppendTime, exception);
             this.accumulator.deallocate(batch);
-            if (error != Errors.NONE)
+            if (error != Errors.NONE) {
                 this.sensors.recordErrors(batch.topicPartition.topic(), batch.recordCount);
+            }
         }
         if (error.exception() instanceof InvalidMetadataException) {
-            if (error.exception() instanceof UnknownTopicOrPartitionException)
+            if (error.exception() instanceof UnknownTopicOrPartitionException) {
                 log.warn("Received unknown topic or partition error in produce request on partition {}. The " +
                         "topic/partition may not exist or the user may not have Describe access to it", batch.topicPartition);
+            }
             metadata.requestUpdate();
         }
 
         // Unmute the completed partition.
-        if (guaranteeMessageOrder)
+        if (guaranteeMessageOrder) {
             this.accumulator.unmutePartition(batch.topicPartition);
+        }
     }
 
     /**
@@ -336,7 +341,7 @@ public class Sender implements Runnable {
      */
     private void sendProduceRequests(Map<Integer, List<RecordBatch>> collated, long now) {
         for (Map.Entry<Integer, List<RecordBatch>> entry : collated.entrySet())
-            sendProduceRequest(now, entry.getKey(), acks, requestTimeout, entry.getValue());
+            this.sendProduceRequest(now, entry.getKey(), acks, requestTimeout, entry.getValue());
     }
 
     /**
@@ -354,8 +359,9 @@ public class Sender implements Runnable {
         ProduceRequest.Builder requestBuilder =
                 new ProduceRequest.Builder(acks, timeout, produceRecordsByPartition);
         RequestCompletionHandler callback = new RequestCompletionHandler() {
+            @Override
             public void onComplete(ClientResponse response) {
-                handleProduceResponse(response, recordsByPartition, time.milliseconds());
+                Sender.this.handleProduceResponse(response, recordsByPartition, time.milliseconds());
             }
         };
 
@@ -442,12 +448,14 @@ public class Sender implements Runnable {
 
             m = metrics.metricName("requests-in-flight", metricGrpName, "The current number of in-flight requests awaiting a response.");
             this.metrics.addMetric(m, new Measurable() {
+                @Override
                 public double measure(MetricConfig config, long now) {
                     return client.inFlightRequestCount();
                 }
             });
             m = metrics.metricName("metadata-age", metricGrpName, "The age in seconds of the current producer metadata being used.");
             metrics.addMetric(m, new Measurable() {
+                @Override
                 public double measure(MetricConfig config, long now) {
                     return (now - metadata.lastSuccessfulUpdate()) / 1000.0;
                 }
@@ -496,7 +504,7 @@ public class Sender implements Runnable {
                 for (RecordBatch batch : nodeBatch) {
                     // register all per-topic metrics at once
                     String topic = batch.topicPartition.topic();
-                    maybeRegisterTopicMetrics(topic);
+                    this.maybeRegisterTopicMetrics(topic);
 
                     // per-topic record send rate
                     String topicRecordsCountName = "topic." + topic + ".records-per-batch";
@@ -529,8 +537,9 @@ public class Sender implements Runnable {
             this.retrySensor.record(count, now);
             String topicRetryName = "topic." + topic + ".record-retries";
             Sensor topicRetrySensor = this.metrics.getSensor(topicRetryName);
-            if (topicRetrySensor != null)
+            if (topicRetrySensor != null) {
                 topicRetrySensor.record(count, now);
+            }
         }
 
         public void recordErrors(String topic, int count) {
@@ -538,8 +547,9 @@ public class Sender implements Runnable {
             this.errorSensor.record(count, now);
             String topicErrorName = "topic." + topic + ".record-errors";
             Sensor topicErrorSensor = this.metrics.getSensor(topicErrorName);
-            if (topicErrorSensor != null)
+            if (topicErrorSensor != null) {
                 topicErrorSensor.record(count, now);
+            }
         }
 
         public void recordLatency(String node, long latency) {
@@ -548,8 +558,9 @@ public class Sender implements Runnable {
             if (!node.isEmpty()) {
                 String nodeTimeName = "node-" + node + ".latency";
                 Sensor nodeRequestTime = this.metrics.getSensor(nodeTimeName);
-                if (nodeRequestTime != null)
+                if (nodeRequestTime != null) {
                     nodeRequestTime.record(latency, now);
+                }
             }
         }
 

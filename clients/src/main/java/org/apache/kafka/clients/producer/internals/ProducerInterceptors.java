@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,8 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.clients.producer.internals;
 
+package org.apache.kafka.clients.producer.internals;
 
 import org.apache.kafka.clients.producer.ProducerInterceptor;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -29,7 +29,7 @@ import java.io.Closeable;
 import java.util.List;
 
 /**
- * A container that holds the list {@link org.apache.kafka.clients.producer.ProducerInterceptor}
+ * A container that holds the list {@link ProducerInterceptor}
  * and wraps calls to the chain of custom interceptors.
  */
 public class ProducerInterceptors<K, V> implements Closeable {
@@ -62,10 +62,11 @@ public class ProducerInterceptors<K, V> implements Closeable {
             } catch (Exception e) {
                 // do not propagate interceptor exception, log and continue calling other interceptors
                 // be careful not to throw exception from here
-                if (record != null)
+                if (record != null) {
                     log.warn("Error executing interceptor onSend callback for topic: {}, partition: {}", record.topic(), record.partition(), e);
-                else
+                } else {
                     log.warn("Error executing interceptor onSend callback", e);
+                }
             }
         }
         return interceptRecord;
@@ -79,7 +80,7 @@ public class ProducerInterceptors<K, V> implements Closeable {
      * This method does not throw exceptions. Exceptions thrown by any of interceptor methods are caught and ignored.
      *
      * @param metadata The metadata for the record that was sent (i.e. the partition and offset).
-     *                 If an error occurred, metadata will only contain valid topic and maybe partition.
+     * If an error occurred, metadata will only contain valid topic and maybe partition.
      * @param exception The exception thrown during processing of this record. Null if no error occurred.
      */
     public void onAcknowledgement(RecordMetadata metadata, Exception exception) {
@@ -99,8 +100,8 @@ public class ProducerInterceptors<K, V> implements Closeable {
      * method for each interceptor
      *
      * @param record The record from client
-     * @param interceptTopicPartition  The topic/partition for the record if an error occurred
-     *        after partition gets assigned; the topic part of interceptTopicPartition is the same as in record.
+     * @param interceptTopicPartition The topic/partition for the record if an error occurred
+     * after partition gets assigned; the topic part of interceptTopicPartition is the same as in record.
      * @param exception The exception thrown during processing of this record.
      */
     public void onSendError(ProducerRecord<K, V> record, TopicPartition interceptTopicPartition, Exception exception) {
@@ -111,10 +112,10 @@ public class ProducerInterceptors<K, V> implements Closeable {
                 } else {
                     if (interceptTopicPartition == null) {
                         interceptTopicPartition = new TopicPartition(record.topic(),
-                                                                     record.partition() == null ? RecordMetadata.UNKNOWN_PARTITION : record.partition());
+                                record.partition() == null ? RecordMetadata.UNKNOWN_PARTITION : record.partition());
                     }
                     interceptor.onAcknowledgement(new RecordMetadata(interceptTopicPartition, -1, -1, Record.NO_TIMESTAMP, -1, -1, -1),
-                                                  exception);
+                            exception);
                 }
             } catch (Exception e) {
                 // do not propagate interceptor exceptions, just log

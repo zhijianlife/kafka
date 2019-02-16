@@ -10,7 +10,19 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.clients;
+
+import org.apache.kafka.common.config.ConfigException;
+import org.apache.kafka.common.config.SaslConfigs;
+import org.apache.kafka.common.network.ChannelBuilder;
+import org.apache.kafka.common.network.ChannelBuilders;
+import org.apache.kafka.common.network.LoginType;
+import org.apache.kafka.common.protocol.SecurityProtocol;
+import static org.apache.kafka.common.utils.Utils.getHost;
+import static org.apache.kafka.common.utils.Utils.getPort;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.Closeable;
 import java.net.InetSocketAddress;
@@ -18,18 +30,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
-
-import org.apache.kafka.common.network.ChannelBuilders;
-import org.apache.kafka.common.network.LoginType;
-import org.apache.kafka.common.protocol.SecurityProtocol;
-import org.apache.kafka.common.network.ChannelBuilder;
-import org.apache.kafka.common.config.ConfigException;
-import org.apache.kafka.common.config.SaslConfigs;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import static org.apache.kafka.common.utils.Utils.getHost;
-import static org.apache.kafka.common.utils.Utils.getPort;
 
 public class ClientUtils {
     private static final Logger log = LoggerFactory.getLogger(ClientUtils.class);
@@ -41,8 +41,9 @@ public class ClientUtils {
                 try {
                     String host = getHost(url);
                     Integer port = getPort(url);
-                    if (host == null || port == null)
+                    if (host == null || port == null) {
                         throw new ConfigException("Invalid url in " + CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG + ": " + url);
+                    }
 
                     InetSocketAddress address = new InetSocketAddress(host, port);
 
@@ -56,8 +57,9 @@ public class ClientUtils {
                 }
             }
         }
-        if (addresses.isEmpty())
+        if (addresses.isEmpty()) {
             throw new ConfigException("No resolvable bootstrap urls given in " + CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG);
+        }
         return addresses;
     }
 
@@ -78,8 +80,9 @@ public class ClientUtils {
      */
     public static ChannelBuilder createChannelBuilder(Map<String, ?> configs) {
         SecurityProtocol securityProtocol = SecurityProtocol.forName((String) configs.get(CommonClientConfigs.SECURITY_PROTOCOL_CONFIG));
-        if (!SecurityProtocol.nonTestingValues().contains(securityProtocol))
+        if (!SecurityProtocol.nonTestingValues().contains(securityProtocol)) {
             throw new ConfigException("Invalid SecurityProtocol " + securityProtocol);
+        }
         String clientSaslMechanism = (String) configs.get(SaslConfigs.SASL_MECHANISM);
         return ChannelBuilders.clientChannelBuilder(securityProtocol, LoginType.CLIENT, configs, clientSaslMechanism, true);
     }
