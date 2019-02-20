@@ -3,13 +3,14 @@
  * file distributed with this work for additional information regarding copyright ownership. The ASF licenses this file
  * to You under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
  * License. You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.common;
 
 import org.apache.kafka.common.utils.Utils;
@@ -30,18 +31,32 @@ import java.util.Set;
 public final class Cluster {
 
     private final boolean isBootstrapConfigured;
+
+    /** kafka 集群中的节点信息列表 */
     private final List<Node> nodes;
     private final Set<String> unauthorizedTopics;
     private final Set<String> internalTopics;
+
+    /** 记录 TopicPartition 与 PartitionInfo 的映射关系 */
     private final Map<TopicPartition, PartitionInfo> partitionsByTopicPartition;
+
+    /** 记录 topic 及其分区信息的映射关系 */
     private final Map<String, List<PartitionInfo>> partitionsByTopic;
+
+    /** 记录 topic 及其分区信息的映射关系（必须包含 leader 副本分区） */
     private final Map<String, List<PartitionInfo>> availablePartitionsByTopic;
+
+    /** 记录节点 ID 与分区信息的映射关系 */
     private final Map<Integer, List<PartitionInfo>> partitionsByNode;
+
+    /** key 是 brokerId，value 是 broker 节点信息，方便基于 brokerId 获取对应的节点信息 */
     private final Map<Integer, Node> nodesById;
+
     private final ClusterResource clusterResource;
 
     /**
      * Create a new cluster with the given nodes and partitions
+     *
      * @param nodes The nodes in the cluster
      * @param partitions Information about a subset of the topic-partitions this cluster hosts
      * @deprecated Use the Cluster constructor with 5 parameters
@@ -53,9 +68,9 @@ public final class Cluster {
         this(null, false, nodes, partitions, unauthorizedTopics, Collections.<String>emptySet());
     }
 
-
     /**
      * Create a new cluster with the given id, nodes and partitions
+     *
      * @param nodes The nodes in the cluster
      * @param partitions Information about a subset of the topic-partitions this cluster hosts
      */
@@ -97,8 +112,9 @@ public final class Cluster {
             partsForNode.put(n.id(), new ArrayList<PartitionInfo>());
         }
         for (PartitionInfo p : partitions) {
-            if (!partsForTopic.containsKey(p.topic()))
+            if (!partsForTopic.containsKey(p.topic())) {
                 partsForTopic.put(p.topic(), new ArrayList<PartitionInfo>());
+            }
             List<PartitionInfo> psTopic = partsForTopic.get(p.topic());
             psTopic.add(p);
 
@@ -115,8 +131,9 @@ public final class Cluster {
             this.partitionsByTopic.put(topic, Collections.unmodifiableList(partitionList));
             List<PartitionInfo> availablePartitions = new ArrayList<>();
             for (PartitionInfo part : partitionList) {
-                if (part.leader() != null)
+                if (part.leader() != null) {
                     availablePartitions.add(part);
+                }
             }
             this.availablePartitionsByTopic.put(topic, Collections.unmodifiableList(availablePartitions));
         }
@@ -138,6 +155,7 @@ public final class Cluster {
 
     /**
      * Create a "bootstrap" cluster using the given list of host/ports
+     *
      * @param addresses The addresses
      * @return A cluster for these hosts/ports
      */
@@ -165,9 +183,10 @@ public final class Cluster {
     public List<Node> nodes() {
         return this.nodes;
     }
-    
+
     /**
      * Get the node by the node id (or null if no such node exists)
+     *
      * @param id The id of the node
      * @return The node, or null if no such node exists
      */
@@ -177,19 +196,22 @@ public final class Cluster {
 
     /**
      * Get the current leader for the given topic-partition
+     *
      * @param topicPartition The topic and partition we want to know the leader for
      * @return The node that is the leader for this topic-partition, or null if there is currently no leader
      */
     public Node leaderFor(TopicPartition topicPartition) {
         PartitionInfo info = partitionsByTopicPartition.get(topicPartition);
-        if (info == null)
+        if (info == null) {
             return null;
-        else
+        } else {
             return info.leader();
+        }
     }
 
     /**
      * Get the metadata for the specified partition
+     *
      * @param topicPartition The topic and partition to fetch info for
      * @return The metadata about the given topic and partition
      */
@@ -199,6 +221,7 @@ public final class Cluster {
 
     /**
      * Get the list of partitions for this topic
+     *
      * @param topic The topic name
      * @return A list of partitions
      */
@@ -208,6 +231,7 @@ public final class Cluster {
 
     /**
      * Get the number of partitions for the given topic
+     *
      * @param topic The topic to get the number of partitions for
      * @return The number of partitions or null if there is no corresponding metadata
      */
@@ -218,6 +242,7 @@ public final class Cluster {
 
     /**
      * Get the list of available partitions for this topic
+     *
      * @param topic The topic name
      * @return A list of partitions
      */
@@ -227,6 +252,7 @@ public final class Cluster {
 
     /**
      * Get the list of partitions whose leader is this node
+     *
      * @param nodeId The node id
      * @return A list of partitions
      */
@@ -236,6 +262,7 @@ public final class Cluster {
 
     /**
      * Get all topics.
+     *
      * @return a set of all topics
      */
     public Set<String> topics() {

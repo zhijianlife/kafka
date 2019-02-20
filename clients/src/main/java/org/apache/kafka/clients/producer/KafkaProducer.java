@@ -486,37 +486,43 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     @Override
     public Future<RecordMetadata> send(ProducerRecord<K, V> record, Callback callback) {
         // intercept the record, which can be potentially modified; this method does not throw exceptions
+        // 遍历注册的拦截器对待发送的消息执行拦截修改
         ProducerRecord<K, V> interceptedRecord = this.interceptors == null ? record : this.interceptors.onSend(record);
         return this.doSend(interceptedRecord, callback);
     }
 
     /**
+     * 真正执行发送消息的方法
      * Implementation of asynchronously send a record to a topic.
      */
     private Future<RecordMetadata> doSend(ProducerRecord<K, V> record, Callback callback) {
         TopicPartition tp = null;
         try {
             // first make sure the metadata for the topic is available
+            // 获取 kafka 集群元数据信息
             ClusterAndWaitTime clusterAndWaitTime = this.waitOnMetadata(record.topic(), record.partition(), maxBlockTimeMs);
             long remainingWaitMs = Math.max(0, maxBlockTimeMs - clusterAndWaitTime.waitedOnMetadataMs);
             Cluster cluster = clusterAndWaitTime.cluster;
+
+            // 基于注册的序列化器对 key 执行序列化
             byte[] serializedKey;
             try {
                 serializedKey = keySerializer.serialize(record.topic(), record.key());
             } catch (ClassCastException cce) {
                 throw new SerializationException("Can't convert key of class " + record.key().getClass().getName() +
-                        " to class " + producerConfig.getClass(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG).getName() +
-                        " specified in key.serializer");
+                        " to class " + producerConfig.getClass(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG).getName() + " specified in key.serializer");
             }
+
+            // 基于注册的序列化器对 value 执行序列化
             byte[] serializedValue;
             try {
                 serializedValue = valueSerializer.serialize(record.topic(), record.value());
             } catch (ClassCastException cce) {
                 throw new SerializationException("Can't convert value of class " + record.value().getClass().getName() +
-                        " to class " + producerConfig.getClass(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG).getName() +
-                        " specified in value.serializer");
+                        " to class " + producerConfig.getClass(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG).getName() + " specified in value.serializer");
             }
 
+            // 为当前消息选择合适的分区
             int partition = this.partition(record, serializedKey, serializedValue, cluster);
             int serializedSize = Records.LOG_OVERHEAD + Record.recordSize(serializedKey, serializedValue);
             this.ensureValidRecordSize(serializedSize);
@@ -525,16 +531,22 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             log.trace("Sending record {} with callback {} to topic {} partition {}", record, callback, record.topic(), partition);
             // producer callback will make sure to call both 'callback' and interceptor callback
             Callback interceptCallback = this.interceptors == null ? callback : new InterceptorCallback<>(callback, this.interceptors, tp);
+
+            // 将消息追加到 RecordAccumulator 中
             RecordAccumulator.RecordAppendResult result = accumulator.append(tp, timestamp, serializedKey, serializedValue, interceptCallback, remainingWaitMs);
             if (result.batchIsFull || result.newBatchCreated) {
                 log.trace("Waking up the sender since topic {} partition {} is either full or getting a new batch", record.topic(), partition);
+                // 唤醒 sender 任务，发送消息
                 this.sender.wakeup();
             }
             return result.future;
-            // handling exceptions and record the errors;
-            // for API exceptions return them in the future,
-            // for other exceptions throw directly
-        } catch (ApiException e) {
+
+        }
+        /*
+         * handling exceptions and record the errors:
+         * - for API exceptions return them in the future,
+         * - for other exceptions throw directly
+         */ catch (ApiException e) {
             log.debug("Exception occurred during message send:", e);
             if (callback != null) {
                 callback.onCompletion(null, e);
@@ -582,11 +594,15 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      */
     private ClusterAndWaitTime waitOnMetadata(String topic, Integer partition, long maxWaitMs) throws InterruptedException {
         // add topic to metadata topic list if it is not there already and reset expiry
+        // 添加 topic 到 topic 集合中，同时更新过期时间
         metadata.add(topic);
+        // 获取当前集群信息
         Cluster cluster = metadata.fetch();
+        // 获取当前 topic 的分区数目
         Integer partitionsCount = cluster.partitionCountForTopic(topic);
-        // Return cached metadata if we have it, and if the record's partition is either undefined
-        // or within the known partition range
+        // Return cached metadata if we have it,
+        // and if the record's partition is either undefined or within the known partition range
+        // 如果参数未指定分区，或指定的分区在当前记录的分区范围之内，则返回历史集群信息
         if (partitionsCount != null && (partition == null || partition < partitionsCount)) {
             return new ClusterAndWaitTime(cluster, 0);
         }
@@ -594,10 +610,14 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
         long begin = time.milliseconds();
         long remainingWaitMs = maxWaitMs;
         long elapsed;
-        // Issue metadata requests until we have metadata for the topic or maxWaitTimeMs is exceeded.
-        // In case we already have cached metadata for the topic, but the requested partition is greater
-        // than expected, issue an update request only once. This is necessary in case the metadata
-        // is stale and the number of partitions for this topic has increased in the meantime.
+
+        /*
+         * 请求集群的元数据信息，直到获取到信息或者超时
+         *
+         * Issue metadata requests until we have metadata for the topic or maxWaitTimeMs is exceeded.
+         * In case we already have cached metadata for the topic, but the requested partition is greater than expected, issue an update request only once.
+         * This is necessary in case the metadata is stale and the number of partitions for this topic has increased in the meantime.
+         */
         do {
             log.trace("Requesting metadata update for topic {}.", topic);
             int version = metadata.requestUpdate();
@@ -611,6 +631,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             cluster = metadata.fetch();
             elapsed = time.milliseconds() - begin;
             if (elapsed >= maxWaitMs) {
+                // 超时
                 throw new TimeoutException("Failed to update metadata after " + maxWaitMs + " ms.");
             }
             if (cluster.unauthorizedTopics().contains(topic)) {
@@ -620,6 +641,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             partitionsCount = cluster.partitionCountForTopic(topic);
         } while (partitionsCount == null);
 
+        // 参数指定的分区非法
         if (partition != null && partition >= partitionsCount) {
             throw new KafkaException(
                     String.format("Invalid partition given with record: %d is not in the range [0...%d).", partition, partitionsCount));

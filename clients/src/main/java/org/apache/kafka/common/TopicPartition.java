@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,17 +14,26 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.kafka.common;
 
 import java.io.Serializable;
 
 /**
  * A topic name and partition number
+ *
+ * 封装一个分区信息，包含分区所属的 topic，以及分区编号
  */
 public final class TopicPartition implements Serializable {
 
+    private static final long serialVersionUID = -6787239681150570012L;
+
     private int hash = 0;
+
+    /** 分区编号 */
     private final int partition;
+
+    /** 分区所属的主题 */
     private final String topic;
 
     public TopicPartition(String topic, int partition) {
@@ -42,8 +51,9 @@ public final class TopicPartition implements Serializable {
 
     @Override
     public int hashCode() {
-        if (hash != 0)
+        if (hash != 0) {
             return hash;
+        }
         final int prime = 31;
         int result = 1;
         result = prime * result + partition;
@@ -54,21 +64,24 @@ public final class TopicPartition implements Serializable {
 
     @Override
     public boolean equals(Object obj) {
-        if (this == obj)
+        if (this == obj) {
             return true;
-        if (obj == null)
+        }
+        if (obj == null) {
             return false;
-        if (getClass() != obj.getClass())
+        }
+        if (getClass() != obj.getClass()) {
             return false;
+        }
         TopicPartition other = (TopicPartition) obj;
-        if (partition != other.partition)
+        if (partition != other.partition) {
             return false;
+        }
         if (topic == null) {
-            if (other.topic != null)
-                return false;
-        } else if (!topic.equals(other.topic))
-            return false;
-        return true;
+            return other.topic == null;
+        } else {
+            return topic.equals(other.topic);
+        }
     }
 
     @Override

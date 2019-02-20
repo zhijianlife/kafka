@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.kafka.clients.producer;
 
 import org.apache.kafka.common.Configurable;
@@ -35,13 +36,14 @@ import org.apache.kafka.common.Configurable;
  * Implement {@link org.apache.kafka.common.ClusterResourceListener} to receive cluster metadata once it's available. Please see the class documentation for ClusterResourceListener for more information.
  */
 public interface ProducerInterceptor<K, V> extends Configurable {
+
     /**
      * This is called from {@link org.apache.kafka.clients.producer.KafkaProducer#send(ProducerRecord)} and
-     * {@link org.apache.kafka.clients.producer.KafkaProducer#send(ProducerRecord, Callback)} methods, before key and value
-     * get serialized and partition is assigned (if partition is not specified in ProducerRecord).
+     * {@link org.apache.kafka.clients.producer.KafkaProducer#send(ProducerRecord, Callback)} methods,
+     * before key and value get serialized and partition is assigned (if partition is not specified in ProducerRecord).
      * <p>
-     * This method is allowed to modify the record, in which case, the new record will be returned. The implication of modifying
-     * key/value is that partition assignment (if not specified in ProducerRecord) will be done based on modified key/value,
+     * This method is allowed to modify the record, in which case, the new record will be returned.
+     * The implication of modifying key/value is that partition assignment (if not specified in ProducerRecord) will be done based on modified key/value,
      * not key/value from the client. Consequently, key and value transformation done in onSend() needs to be consistent:
      * same key and value should mutate to the same (modified) key and value. Otherwise, log compaction would not work
      * as expected.
@@ -64,14 +66,14 @@ public interface ProducerInterceptor<K, V> extends Configurable {
      * @param record the record from client or the record returned by the previous interceptor in the chain of interceptors.
      * @return producer record to send to topic/partition
      */
-    public ProducerRecord<K, V> onSend(ProducerRecord<K, V> record);
+    ProducerRecord<K, V> onSend(ProducerRecord<K, V> record);
 
     /**
-     * This method is called when the record sent to the server has been acknowledged, or when sending the record fails before
-     * it gets sent to the server.
+     * This method is called when the record sent to the server has been acknowledged,
+     * or when sending the record fails before it gets sent to the server.
      * <p>
-     * This method is generally called just before the user callback is called, and in additional cases when <code>KafkaProducer.send()</code>
-     * throws an exception.
+     * This method is generally called just before the user callback is called,
+     * and in additional cases when <code>KafkaProducer.send()</code> throws an exception.
      * <p>
      * Any exception thrown by this method will be ignored by the caller.
      * <p>
@@ -79,17 +81,17 @@ public interface ProducerInterceptor<K, V> extends Configurable {
      * Otherwise, sending of messages from other threads could be delayed.
      *
      * @param metadata The metadata for the record that was sent (i.e. the partition and offset).
-     *                 If an error occurred, metadata will contain only valid topic and maybe
-     *                 partition. If partition is not given in ProducerRecord and an error occurs
-     *                 before partition gets assigned, then partition will be set to RecordMetadata.NO_PARTITION.
-     *                 The metadata may be null if the client passed null record to
-     *                 {@link org.apache.kafka.clients.producer.KafkaProducer#send(ProducerRecord)}.
+     * If an error occurred, metadata will contain only valid topic and maybe
+     * partition. If partition is not given in ProducerRecord and an error occurs
+     * before partition gets assigned, then partition will be set to RecordMetadata.NO_PARTITION.
+     * The metadata may be null if the client passed null record to
+     * {@link org.apache.kafka.clients.producer.KafkaProducer#send(ProducerRecord)}.
      * @param exception The exception thrown during processing of this record. Null if no error occurred.
      */
-    public void onAcknowledgement(RecordMetadata metadata, Exception exception);
+    void onAcknowledgement(RecordMetadata metadata, Exception exception);
 
     /**
      * This is called when interceptor is closed
      */
-    public void close();
+    void close();
 }

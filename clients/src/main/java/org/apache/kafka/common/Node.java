@@ -10,10 +10,13 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.common;
 
 /**
  * Information about a Kafka node
+ *
+ * 封装 kafka 节点信息，包括 id、host、port 等信息
  */
 public class Node {
 
@@ -45,6 +48,7 @@ public class Node {
     /**
      * Check whether this node is empty, which may be the case if noNode() is used as a placeholder
      * in a response payload with an error.
+     *
      * @return true if it is, false otherwise
      */
     public boolean isEmpty() {
@@ -107,28 +111,34 @@ public class Node {
 
     @Override
     public boolean equals(Object obj) {
-        if (this == obj)
+        if (this == obj) {
             return true;
-        if (obj == null)
+        }
+        if (obj == null) {
             return false;
-        if (getClass() != obj.getClass())
+        }
+        if (getClass() != obj.getClass()) {
             return false;
+        }
         Node other = (Node) obj;
         if (host == null) {
-            if (other.host != null)
+            if (other.host != null) {
                 return false;
-        } else if (!host.equals(other.host))
+            }
+        } else if (!host.equals(other.host)) {
             return false;
-        if (id != other.id)
+        }
+        if (id != other.id) {
             return false;
-        if (port != other.port)
+        }
+        if (port != other.port) {
             return false;
+        }
         if (rack == null) {
-            if (other.rack != null)
-                return false;
-        } else if (!rack.equals(other.rack))
-            return false;
-        return true;
+            return other.rack == null;
+        } else {
+            return rack.equals(other.rack);
+        }
     }
 
     @Override

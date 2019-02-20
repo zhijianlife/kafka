@@ -29,11 +29,14 @@ import java.io.Closeable;
 import java.util.List;
 
 /**
- * A container that holds the list {@link ProducerInterceptor}
- * and wraps calls to the chain of custom interceptors.
+ * 封装注册的拦截器的集合
+ *
+ * A container that holds the list {@link ProducerInterceptor} and wraps calls to the chain of custom interceptors.
  */
 public class ProducerInterceptors<K, V> implements Closeable {
+
     private static final Logger log = LoggerFactory.getLogger(ProducerInterceptors.class);
+
     private final List<ProducerInterceptor<K, V>> interceptors;
 
     public ProducerInterceptors(List<ProducerInterceptor<K, V>> interceptors) {
@@ -56,11 +59,12 @@ public class ProducerInterceptors<K, V> implements Closeable {
      */
     public ProducerRecord<K, V> onSend(ProducerRecord<K, V> record) {
         ProducerRecord<K, V> interceptRecord = record;
+        // 遍历应用注册的拦截器
         for (ProducerInterceptor<K, V> interceptor : this.interceptors) {
             try {
                 interceptRecord = interceptor.onSend(interceptRecord);
             } catch (Exception e) {
-                // do not propagate interceptor exception, log and continue calling other interceptors
+                // do not propagate（传播） interceptor exception, log and continue calling other interceptors
                 // be careful not to throw exception from here
                 if (record != null) {
                     log.warn("Error executing interceptor onSend callback for topic: {}, partition: {}", record.topic(), record.partition(), e);

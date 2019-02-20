@@ -10,23 +10,23 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
-package org.apache.kafka.clients.producer.internals;
 
+package org.apache.kafka.clients.producer.internals;
 
 import org.apache.kafka.clients.producer.ProducerInterceptor;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.TopicPartition;
+import static org.junit.Assert.assertEquals;
 import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.Assert.assertEquals;
-
 public class ProducerInterceptorsTest {
+
     private final TopicPartition tp = new TopicPartition("test", 0);
     private final ProducerRecord<Integer, String> producerRecord = new ProducerRecord<>("test", 0, 1, "value");
     private int onAckCount = 0;
@@ -51,8 +51,9 @@ public class ProducerInterceptorsTest {
         @Override
         public ProducerRecord<Integer, String> onSend(ProducerRecord<Integer, String> record) {
             onSendCount++;
-            if (throwExceptionOnSend)
+            if (throwExceptionOnSend) {
                 throw new KafkaException("Injected exception in AppendProducerInterceptor.onSend");
+            }
 
             return new ProducerRecord<>(
                     record.topic(), record.partition(), record.key(), record.value().concat(appendStr));
@@ -67,12 +68,14 @@ public class ProducerInterceptorsTest {
                 // if RecordMetadata.TopicPartition is null
                 if (metadata != null && metadata.topic().length() >= 0) {
                     onErrorAckWithTopicSetCount++;
-                    if (metadata.partition() >= 0)
+                    if (metadata.partition() >= 0) {
                         onErrorAckWithTopicPartitionSetCount++;
+                    }
                 }
             }
-            if (throwExceptionOnAck)
+            if (throwExceptionOnAck) {
                 throw new KafkaException("Injected exception in AppendProducerInterceptor.onAcknowledgement");
+            }
         }
 
         @Override
@@ -165,8 +168,8 @@ public class ProducerInterceptorsTest {
 
         // verify that metadata contains both topic and partition
         interceptors.onSendError(producerRecord,
-                                 new TopicPartition(producerRecord.topic(), producerRecord.partition()),
-                                 new KafkaException("Test"));
+                new TopicPartition(producerRecord.topic(), producerRecord.partition()),
+                new KafkaException("Test"));
         assertEquals(1, onErrorAckCount);
         assertEquals(1, onErrorAckWithTopicPartitionSetCount);
 
@@ -186,8 +189,8 @@ public class ProducerInterceptorsTest {
         // onSendError, then interceptor should get valid partition
         int reassignedPartition = producerRecord.partition() + 1;
         interceptors.onSendError(record2,
-                                 new TopicPartition(record2.topic(), reassignedPartition),
-                                 new KafkaException("Test"));
+                new TopicPartition(record2.topic(), reassignedPartition),
+                new KafkaException("Test"));
         assertEquals(4, onErrorAckCount);
         assertEquals(4, onErrorAckWithTopicSetCount);
         assertEquals(3, onErrorAckWithTopicPartitionSetCount);
