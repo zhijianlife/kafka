@@ -596,10 +596,13 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
         // add topic to metadata topic list if it is not there already and reset expiry
         // 添加 topic 到 topic 集合中，同时更新过期时间
         metadata.add(topic);
+
         // 获取当前集群信息
         Cluster cluster = metadata.fetch();
+
         // 获取当前 topic 的分区数目
         Integer partitionsCount = cluster.partitionCountForTopic(topic);
+
         // Return cached metadata if we have it,
         // and if the record's partition is either undefined or within the known partition range
         // 如果参数未指定分区，或指定的分区在当前记录的分区范围之内，则返回历史集群信息
@@ -620,20 +623,25 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
          */
         do {
             log.trace("Requesting metadata update for topic {}.", topic);
+            // 更新 Metadata.needUpdate 字段，并获取当前元数据的版本号
             int version = metadata.requestUpdate();
+            // 唤醒 sender 线程，由 sender 线程负责更新元数据信息
             sender.wakeup();
             try {
+                // 等待元数据更新完成
                 metadata.awaitUpdate(version, remainingWaitMs);
             } catch (TimeoutException ex) {
                 // Rethrow with original maxWaitMs to prevent logging exception with remainingWaitMs
                 throw new TimeoutException("Failed to update metadata after " + maxWaitMs + " ms.");
             }
+            // 获取更新后的集群信息
             cluster = metadata.fetch();
             elapsed = time.milliseconds() - begin;
             if (elapsed >= maxWaitMs) {
                 // 超时
                 throw new TimeoutException("Failed to update metadata after " + maxWaitMs + " ms.");
             }
+            // 权限检测
             if (cluster.unauthorizedTopics().contains(topic)) {
                 throw new TopicAuthorizationException(topic);
             }
@@ -839,11 +847,12 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      * calls configured partitioner class to compute the partition.
      */
     private int partition(ProducerRecord<K, V> record, byte[] serializedKey, byte[] serializedValue, Cluster cluster) {
+        // 获取当前待发送消息所指定的分区
         Integer partition = record.partition();
+        // 如果未指定分区，则为当前消息计算一个分区值
         return partition != null ?
                 partition :
-                partitioner.partition(
-                        record.topic(), record.key(), serializedKey, record.value(), serializedValue, cluster);
+                partitioner.partition(record.topic(), record.key(), serializedKey, record.value(), serializedValue, cluster);
     }
 
     private static class ClusterAndWaitTime {

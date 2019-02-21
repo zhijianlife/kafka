@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Diagram>
+  <ID>JAVA</ID>
+  <OriginalElement>org.apache.kafka.common.serialization.Serializer</OriginalElement>
+  <nodes>
+    <node x="983.0" y="105.0">org.apache.kafka.connect.json.JsonSerializer</node>
+    <node x="601.0" y="105.0">org.apache.kafka.common.serialization.DoubleSerializer</node>
+    <node x="0.0" y="105.0">org.apache.kafka.common.serialization.ByteArraySerializer</node>
+    <node x="724.0" y="0.0">org.apache.kafka.common.serialization.Serializer</node>
+    <node x="792.0" y="105.0">org.apache.kafka.common.serialization.IntegerSerializer</node>
+    <node x="1326.0" y="105.0">org.apache.kafka.common.serialization.StringSerializer</node>
+    <node x="209.0" y="105.0">org.apache.kafka.common.serialization.ByteBufferSerializer</node>
+    <node x="1152.0" y="105.0">org.apache.kafka.common.serialization.LongSerializer</node>
+    <node x="425.0" y="105.0">org.apache.kafka.common.serialization.BytesSerializer</node>
+  </nodes>
+  <notes />
+  <edges>
+    <edge source="org.apache.kafka.common.serialization.IntegerSerializer" target="org.apache.kafka.common.serialization.Serializer">
+      <point x="0.0" y="-17.5" />
+      <point x="877.5" y="85.0" />
+      <point x="789.25" y="85.0" />
+      <point x="7.25" y="17.5" />
+    </edge>
+    <edge source="org.apache.kafka.common.serialization.LongSerializer" target="org.apache.kafka.common.serialization.Serializer">
+      <point x="0.0" y="-17.5" />
+      <point x="1229.0" y="65.0" />
+      <point x="818.25" y="65.0" />
+      <point x="36.25" y="17.5" />
+    </edge>
+    <edge source="org.apache.kafka.common.serialization.BytesSerializer" target="org.apache.kafka.common.serialization.Serializer">
+      <point x="0.0" y="-17.5" />
+      <point x="503.0" y="75.0" />
+      <point x="760.25" y="75.0" />
+      <point x="-21.75" y="17.5" />
+    </edge>
+    <edge source="org.apache.kafka.common.serialization.ByteArraySerializer" target="org.apache.kafka.common.serialization.Serializer">
+      <point x="0.0" y="-17.5" />
+      <point x="94.5" y="55.0" />
+      <point x="731.25" y="55.0" />
+      <point x="-50.75" y="17.5" />
+    </edge>
+    <edge source="org.apache.kafka.connect.json.JsonSerializer" target="org.apache.kafka.common.serialization.Serializer">
+      <point x="0.0" y="-17.5" />
+      <point x="1057.5" y="75.0" />
+      <point x="803.75" y="75.0" />
+      <point x="21.75" y="17.5" />
+    </edge>
+    <edge source="org.apache.kafka.common.serialization.StringSerializer" target="org.apache.kafka.common.serialization.Serializer">
+      <point x="0.0" y="-17.5" />
+      <point x="1406.5" y="55.0" />
+      <point x="832.75" y="55.0" />
+      <point x="50.75" y="17.5" />
+    </edge>
+    <edge source="org.apache.kafka.common.serialization.DoubleSerializer" target="org.apache.kafka.common.serialization.Serializer">
+      <point x="0.0" y="-17.5" />
+      <point x="686.5" y="85.0" />
+      <point x="774.75" y="85.0" />
+      <point x="-7.25" y="17.5" />
+    </edge>
+    <edge source="org.apache.kafka.common.serialization.ByteBufferSerializer" target="org.apache.kafka.common.serialization.Serializer">
+      <point x="0.0" y="-17.5" />
+      <point x="307.0" y="65.0" />
+      <point x="745.75" y="65.0" />
+      <point x="-36.25" y="17.5" />
+    </edge>
+  </edges>
+  <settings layout="Hierarchic Group" zoom="1.0" x="743.5" y="70.0" />
+  <SelectedNodes />
+  <Categories />
+  <SCOPE>All</SCOPE>
+  <VISIBILITY>private</VISIBILITY>
+</Diagram>
+

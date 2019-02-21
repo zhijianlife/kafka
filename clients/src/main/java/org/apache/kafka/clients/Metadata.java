@@ -151,7 +151,9 @@ public final class Metadata {
      * Request an update of the current cluster metadata info, return the current version before the update
      */
     public synchronized int requestUpdate() {
+        // 将 needUpdate 字段修改为 true，sender 线程在运行时会基于该字段决策是否更新元数据信息
         this.needUpdate = true;
+        // 返回当前集群元数据的版本
         return this.version;
     }
 
@@ -173,8 +175,10 @@ public final class Metadata {
         }
         long begin = System.currentTimeMillis();
         long remainingWaitMs = maxWaitMs;
+        // 如果当前的版本小于等于 lastVersion 则说明元数据未更新完成
         while (this.version <= lastVersion) {
             if (remainingWaitMs != 0) {
+                // 在未超时的情况下等待元数据完成更新
                 this.wait(remainingWaitMs);
             }
             long elapsed = System.currentTimeMillis() - begin;

@@ -47,6 +47,8 @@ public class DefaultPartitioner implements Partitioner {
     /**
      * Compute the partition for the given record.
      *
+     * 在未明确指定分区时为当前消息计算分区值
+     *
      * @param topic The topic name
      * @param key The key to partition on (or null if no key)
      * @param keyBytes serialized key to partition on (or null if no key)
@@ -56,10 +58,15 @@ public class DefaultPartitioner implements Partitioner {
      */
     @Override
     public int partition(String topic, Object key, byte[] keyBytes, Object value, byte[] valueBytes, Cluster cluster) {
+        // 获取当前 topic 的分区详细信息
         List<PartitionInfo> partitions = cluster.partitionsForTopic(topic);
+        // 获取当前 topic 对应的分区数
         int numPartitions = partitions.size();
+        // 如果没有 key，则基于轮询算法
         if (keyBytes == null) {
+            // 获取当前 topic 对应的上次位置值加 1，如果是第一次则随机生成一个
             int nextValue = this.nextValue(topic);
+            // 获取当前 topic 包含 leader 副本的分区详细信息
             List<PartitionInfo> availablePartitions = cluster.availablePartitionsForTopic(topic);
             if (availablePartitions.size() > 0) {
                 int part = Utils.toPositive(nextValue) % availablePartitions.size();
@@ -68,7 +75,9 @@ public class DefaultPartitioner implements Partitioner {
                 // no partitions are available, give a non-available partition
                 return Utils.toPositive(nextValue) % numPartitions;
             }
-        } else {
+        }
+        // 如果指定了 key，则使用 murmur2 算法对 key 做哈希取模
+        else {
             // hash the keyBytes to choose a partition
             return Utils.toPositive(Utils.murmur2(keyBytes)) % numPartitions;
         }
@@ -77,12 +86,14 @@ public class DefaultPartitioner implements Partitioner {
     private int nextValue(String topic) {
         AtomicInteger counter = topicCounterMap.get(topic);
         if (null == counter) {
+            // 随机一个 counter 值
             counter = new AtomicInteger(new Random().nextInt());
             AtomicInteger currentCounter = topicCounterMap.putIfAbsent(topic, counter);
             if (currentCounter != null) {
                 counter = currentCounter;
             }
         }
+        // counter 值加 1
         return counter.getAndIncrement();
     }
 

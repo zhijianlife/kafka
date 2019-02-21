@@ -34,6 +34,8 @@ public final class Cluster {
 
     /** kafka 集群中的节点信息列表 */
     private final List<Node> nodes;
+
+    /** 未授权的 topic 集合 */
     private final Set<String> unauthorizedTopics;
     private final Set<String> internalTopics;
 

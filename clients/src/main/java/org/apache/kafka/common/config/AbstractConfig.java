@@ -33,6 +33,8 @@ import java.util.TreeMap;
  * A convenient base class for configurations to extend.
  * <p>
  * This class holds both the original configuration that was provided as well as the parsed
+ *
+ * 抽象配置类
  */
 public class AbstractConfig {
 
