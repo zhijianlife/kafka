@@ -3,13 +3,14 @@
  * file distributed with this work for additional information regarding copyright ownership. The ASF licenses this file
  * to You under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
  * License. You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.common.record;
 
 import org.apache.kafka.common.TopicPartition;
@@ -26,14 +27,20 @@ import java.util.Iterator;
 import java.util.List;
 
 /**
- * A {@link Records} implementation backed by a ByteBuffer. This is used only for reading or
- * modifying in-place an existing buffer of log entries. To create a new buffer see {@link MemoryRecordsBuilder},
+ * A {@link Records} implementation backed by a ByteBuffer.
+ * This is used only for reading or modifying in-place an existing buffer of log entries.
+ * To create a new buffer see {@link MemoryRecordsBuilder},
  * or one of the {@link #builder(ByteBuffer, byte, CompressionType, TimestampType) builder} variants.
+ *
+ * 用于封装多个消息
  */
 public class MemoryRecords extends AbstractRecords {
+
     private static final Logger log = LoggerFactory.getLogger(MemoryRecords.class);
+
     public final static MemoryRecords EMPTY = MemoryRecords.readableRecords(ByteBuffer.allocate(0));
 
+    /** 用于保存消息 */
     private final ByteBuffer buffer;
 
     private final Iterable<ByteBufferLogEntry> shallowEntries = new Iterable<ByteBufferLogEntry>() {
@@ -57,11 +64,13 @@ public class MemoryRecords extends AbstractRecords {
 
     @Override
     public long writeTo(GatheringByteChannel channel, long position, int length) throws IOException {
-        if (position > Integer.MAX_VALUE)
+        if (position > Integer.MAX_VALUE) {
             throw new IllegalArgumentException("position should not be greater than Integer.MAX_VALUE: " + position);
-        if (position + length > buffer.limit())
+        }
+        if (position + length > buffer.limit()) {
             throw new IllegalArgumentException("position+length should not be greater than buffer.limit(), position: "
                     + position + ", length: " + length + ", buffer.limit(): " + buffer.limit());
+        }
 
         int pos = (int) position;
         ByteBuffer dup = buffer.duplicate();
@@ -72,6 +81,7 @@ public class MemoryRecords extends AbstractRecords {
 
     /**
      * Write all records to the given channel (including partial records).
+     *
      * @param channel The channel to write to
      * @return The number of bytes written
      * @throws IOException For any IO errors writing to the channel
@@ -88,11 +98,13 @@ public class MemoryRecords extends AbstractRecords {
     /**
      * The total number of bytes in this message set not including any partial, trailing messages. This
      * may be smaller than what is returned by {@link #sizeInBytes()}.
+     *
      * @return The number of valid bytes
      */
     public int validBytes() {
-        if (validBytes >= 0)
+        if (validBytes >= 0) {
             return validBytes;
+        }
 
         int bytes = 0;
         for (LogEntry entry : shallowEntries())
@@ -104,6 +116,7 @@ public class MemoryRecords extends AbstractRecords {
 
     /**
      * Filter the records into the provided ByteBuffer.
+     *
      * @param filter The filter function
      * @param destinationBuffer The byte buffer to write the filtered records to
      * @return A FilterResult with a summary of the output (for metrics)
@@ -148,11 +161,13 @@ public class MemoryRecords extends AbstractRecords {
                 if (filter.shouldRetain(deepEntry)) {
                     // Check for log corruption due to KAFKA-4298. If we find it, make sure that we overwrite
                     // the corrupted entry with correct data.
-                    if (shallowMagic != deepRecord.magic())
+                    if (shallowMagic != deepRecord.magic()) {
                         writeOriginalEntry = false;
+                    }
 
-                    if (deepEntry.offset() > maxOffset)
+                    if (deepEntry.offset() > maxOffset) {
                         maxOffset = deepEntry.offset();
+                    }
 
                     retainedEntries.add(deepEntry);
                 } else {
@@ -187,11 +202,12 @@ public class MemoryRecords extends AbstractRecords {
                 messagesRetained += retainedEntries.size();
                 bytesRetained += records.sizeInBytes();
 
-                if (filteredSizeInBytes > shallowEntry.sizeInBytes() && filteredSizeInBytes > maxRecordSize)
+                if (filteredSizeInBytes > shallowEntry.sizeInBytes() && filteredSizeInBytes > maxRecordSize) {
                     log.warn("Record batch from {} with first offset {} exceeded max record size {} after cleaning " +
                                     "(new size is {}). Consumers with version earlier than 0.10.1.0 may need to " +
                                     "increase their fetch sizes.",
                             partition, firstOffset, maxRecordSize, filteredSizeInBytes);
+                }
 
                 MemoryRecordsBuilder.RecordsInfo info = builder.info();
                 if (info.maxTimestamp > maxTimestamp) {
@@ -203,9 +219,10 @@ public class MemoryRecords extends AbstractRecords {
             // If we had to allocate a new buffer to fit the filtered output (see KAFKA-5316), return early to
             // avoid the need for additional allocations.
             ByteBuffer outputBuffer = bufferOutputStream.buffer();
-            if (outputBuffer != destinationBuffer)
+            if (outputBuffer != destinationBuffer) {
                 return new FilterResult(outputBuffer, messagesRead, bytesRead, messagesRetained, bytesRetained,
-                    maxOffset, maxTimestamp, shallowOffsetOfMaxTimestamp);
+                        maxOffset, maxTimestamp, shallowOffsetOfMaxTimestamp);
+            }
         }
 
         return new FilterResult(destinationBuffer, messagesRead, bytesRead, messagesRetained, bytesRetained,
@@ -266,8 +283,9 @@ public class MemoryRecords extends AbstractRecords {
             builder.append("record=");
             builder.append(entry.record());
             builder.append(")");
-            if (iter.hasNext())
+            if (iter.hasNext()) {
                 builder.append(", ");
+            }
         }
         builder.append(']');
         return builder.toString();
@@ -374,7 +392,7 @@ public class MemoryRecords extends AbstractRecords {
         return withLogEntries(TimestampType.CREATE_TIME, compressionType, System.currentTimeMillis(), entries);
     }
 
-    public static MemoryRecords withLogEntries(LogEntry ... entries) {
+    public static MemoryRecords withLogEntries(LogEntry... entries) {
         return withLogEntries(CompressionType.NONE, Arrays.asList(entries));
     }
 
@@ -382,19 +400,19 @@ public class MemoryRecords extends AbstractRecords {
         return withRecords(initialOffset, TimestampType.CREATE_TIME, compressionType, System.currentTimeMillis(), records);
     }
 
-    public static MemoryRecords withRecords(Record ... records) {
+    public static MemoryRecords withRecords(Record... records) {
         return withRecords(CompressionType.NONE, 0L, Arrays.asList(records));
     }
 
-    public static MemoryRecords withRecords(long initialOffset, Record ... records) {
+    public static MemoryRecords withRecords(long initialOffset, Record... records) {
         return withRecords(CompressionType.NONE, initialOffset, Arrays.asList(records));
     }
 
-    public static MemoryRecords withRecords(CompressionType compressionType, Record ... records) {
+    public static MemoryRecords withRecords(CompressionType compressionType, Record... records) {
         return withRecords(compressionType, 0L, Arrays.asList(records));
     }
 
-    public static MemoryRecords withRecords(TimestampType timestampType, CompressionType compressionType, Record ... records) {
+    public static MemoryRecords withRecords(TimestampType timestampType, CompressionType compressionType, Record... records) {
         return withRecords(0L, timestampType, compressionType, System.currentTimeMillis(), Arrays.asList(records));
     }
 
@@ -410,8 +428,9 @@ public class MemoryRecords extends AbstractRecords {
                                                 CompressionType compressionType,
                                                 long logAppendTime,
                                                 List<LogEntry> entries) {
-        if (entries.isEmpty())
+        if (entries.isEmpty()) {
             return MemoryRecords.EMPTY;
+        }
         return builderWithEntries(timestampType, compressionType, logAppendTime, entries).build();
     }
 
@@ -435,8 +454,9 @@ public class MemoryRecords extends AbstractRecords {
                                                            CompressionType compressionType,
                                                            long logAppendTime,
                                                            List<LogEntry> entries) {
-        if (entries.isEmpty())
+        if (entries.isEmpty()) {
             throw new IllegalArgumentException("entries must not be empty");
+        }
 
         LogEntry firstEntry = entries.iterator().next();
         long firstOffset = firstEntry.offset();

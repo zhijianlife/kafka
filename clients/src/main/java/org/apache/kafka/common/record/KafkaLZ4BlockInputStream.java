@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.kafka.common.record;
 
 import net.jpountz.lz4.LZ4Exception;
@@ -21,17 +22,15 @@ import net.jpountz.lz4.LZ4Factory;
 import net.jpountz.lz4.LZ4SafeDecompressor;
 import net.jpountz.xxhash.XXHash32;
 import net.jpountz.xxhash.XXHashFactory;
-
 import org.apache.kafka.common.record.KafkaLZ4BlockOutputStream.BD;
 import org.apache.kafka.common.record.KafkaLZ4BlockOutputStream.FLG;
+import static org.apache.kafka.common.record.KafkaLZ4BlockOutputStream.LZ4_FRAME_INCOMPRESSIBLE_MASK;
+import static org.apache.kafka.common.record.KafkaLZ4BlockOutputStream.MAGIC;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-
-import static org.apache.kafka.common.record.KafkaLZ4BlockOutputStream.LZ4_FRAME_INCOMPRESSIBLE_MASK;
-import static org.apache.kafka.common.record.KafkaLZ4BlockOutputStream.MAGIC;
 
 /**
  * A partial implementation of the v1.5.1 LZ4 Frame format.
@@ -132,9 +131,9 @@ public final class KafkaLZ4BlockInputStream extends InputStream {
         int len = in.position() - in.reset().position();
 
         int hash = in.hasArray() ?
-                       // workaround for https://github.com/lz4/lz4-java/pull/65
-                       CHECKSUM.hash(in.array(), in.arrayOffset() + in.position(), len, 0) :
-                       CHECKSUM.hash(in, in.position(), len, 0);
+                // workaround for https://github.com/lz4/lz4-java/pull/65
+                CHECKSUM.hash(in.array(), in.arrayOffset() + in.position(), len, 0) :
+                CHECKSUM.hash(in, in.position(), len, 0);
         in.position(in.position() + len);
         if (in.get() != (byte) ((hash >> 8) & 0xFF)) {
             throw new IOException(DESCRIPTOR_HASH_MISMATCH);
@@ -159,8 +158,9 @@ public final class KafkaLZ4BlockInputStream extends InputStream {
         // Check for EndMark
         if (blockSize == 0) {
             finished = true;
-            if (flg.isContentChecksumSet())
+            if (flg.isContentChecksumSet()) {
                 in.getInt(); // TODO: verify this content checksum
+            }
             return;
         } else if (blockSize > maxBlockSize) {
             throw new IOException(String.format("Block size %s exceeded max: %s", blockSize, maxBlockSize));
@@ -176,12 +176,12 @@ public final class KafkaLZ4BlockInputStream extends InputStream {
                 final int bufferSize;
                 if (in.hasArray()) {
                     bufferSize = DECOMPRESSOR.decompress(
-                        in.array(),
-                        in.position() + in.arrayOffset(),
-                        blockSize,
-                        decompressionBuffer.array(),
-                        0,
-                        maxBlockSize
+                            in.array(),
+                            in.position() + in.arrayOffset(),
+                            blockSize,
+                            decompressionBuffer.array(),
+                            0,
+                            maxBlockSize
                     );
                 } else {
                     // decompressionBuffer has zero arrayOffset, so we don't need to worry about
@@ -203,8 +203,8 @@ public final class KafkaLZ4BlockInputStream extends InputStream {
         if (flg.isBlockChecksumSet()) {
             // workaround for https://github.com/lz4/lz4-java/pull/65
             int hash = in.hasArray() ?
-                       CHECKSUM.hash(in.array(), in.arrayOffset() + in.position(), blockSize, 0) :
-                       CHECKSUM.hash(in, in.position(), blockSize, 0);
+                    CHECKSUM.hash(in.array(), in.arrayOffset() + in.position(), blockSize, 0) :
+                    CHECKSUM.hash(in, in.position(), blockSize, 0);
             in.position(in.position() + blockSize);
             if (hash != in.getInt()) {
                 throw new IOException(BLOCK_HASH_MISMATCH);

@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.kafka.common.record;
 
 import java.io.IOException;
@@ -39,12 +40,14 @@ public interface Records {
 
     /**
      * The size of these records in bytes.
+     *
      * @return The size in bytes of the records
      */
     int sizeInBytes();
 
     /**
      * Attempts to write the contents of this buffer to a channel.
+     *
      * @param channel The channel to write to
      * @param position The position in the buffer to write from
      * @param length The number of bytes to write
@@ -58,6 +61,7 @@ public interface Records {
      * to return a more specific log entry type. This enables optimizations such as in-place offset
      * assignment (see {@link ByteBufferLogInputStream.ByteBufferLogEntry}), and partial reading of
      * record data (see {@link FileLogInputStream.FileChannelLogEntry#magic()}.
+     *
      * @return An iterator over the shallow entries of the log
      */
     Iterable<? extends LogEntry> shallowEntries();
@@ -69,10 +73,10 @@ public interface Records {
      * as we do for {@link #shallowEntries()}.
      *
      * @param decompressionBufferSupplier The supplier of ByteBuffer(s) used for decompression if supported.
-     *                                    For small record batches, allocating a potentially large buffer (64 KB for LZ4)
-     *                                    will dominate the cost of decompressing and iterating over the records in the
-     *                                    batch. As such, a supplier that reuses buffers will have a significant
-     *                                    performance impact.
+     * For small record batches, allocating a potentially large buffer (64 KB for LZ4)
+     * will dominate the cost of decompressing and iterating over the records in the
+     * batch. As such, a supplier that reuses buffers will have a significant
+     * performance impact.
      * @return An iterator over the deep entries of the log
      */
     Iterable<LogEntry> deepEntries(BufferSupplier decompressionBufferSupplier);
@@ -89,15 +93,16 @@ public interface Records {
 
     /**
      * Check whether all shallow entries in this buffer have a certain magic value.
+     *
      * @param magic The magic value to check
      * @return true if all shallow entries have a matching magic value, false otherwise
      */
     boolean hasMatchingShallowMagic(byte magic);
 
-
     /**
      * Convert all entries in this buffer to the format passed as a parameter. Note that this requires
      * deep iteration since all of the deep records must also be converted to the desired format.
+     *
      * @param toMagic The magic value to convert to
      * @return A Records (which may or may not be the same instance)
      */

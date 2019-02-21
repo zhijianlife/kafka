@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,17 +14,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.kafka.common.record;
 
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.utils.Crc32;
 import org.apache.kafka.common.utils.Utils;
+import static org.apache.kafka.common.utils.Utils.wrapNullable;
 
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-
-import static org.apache.kafka.common.utils.Utils.wrapNullable;
 
 /**
  * A record: a serialized key and value along with the associated CRC and other fields
@@ -141,18 +141,20 @@ public final class Record {
      */
     public void ensureValid() {
         if (!isValid()) {
-            if (sizeInBytes() < CRC_LENGTH)
+            if (sizeInBytes() < CRC_LENGTH) {
                 throw new InvalidRecordException("Record is corrupt (crc could not be retrieved as the record is too "
                         + "small, size = " + sizeInBytes() + ")");
-            else
+            } else {
                 throw new InvalidRecordException("Record is corrupt (stored crc = " + checksum()
                         + ", computed crc = " + computeChecksum() + ")");
+            }
         }
     }
 
     /**
      * The complete serialized size of this record in bytes (including crc, header attributes, etc), but
      * excluding the log overhead (offset and record size).
+     *
      * @return the size in bytes
      */
     public int sizeInBytes() {
@@ -161,17 +163,20 @@ public final class Record {
 
     /**
      * The length of the key in bytes
+     *
      * @return the size in bytes of the key (0 if the key is null)
      */
     public int keySize() {
-        if (magic() == MAGIC_VALUE_V0)
+        if (magic() == MAGIC_VALUE_V0) {
             return buffer.getInt(KEY_SIZE_OFFSET_V0);
-        else
+        } else {
             return buffer.getInt(KEY_SIZE_OFFSET_V1);
+        }
     }
 
     /**
      * Does the record have a key?
+     *
      * @return true if so, false otherwise
      */
     public boolean hasKey() {
@@ -182,14 +187,16 @@ public final class Record {
      * The position where the value size is stored
      */
     private int valueSizeOffset() {
-        if (magic() == MAGIC_VALUE_V0)
+        if (magic() == MAGIC_VALUE_V0) {
             return KEY_OFFSET_V0 + Math.max(0, keySize());
-        else
+        } else {
             return KEY_OFFSET_V1 + Math.max(0, keySize());
+        }
     }
 
     /**
      * The length of the value in bytes
+     *
      * @return the size in bytes of the value (0 if the value is null)
      */
     public int valueSize() {
@@ -198,6 +205,7 @@ public final class Record {
 
     /**
      * Check whether the value field of this record is null.
+     *
      * @return true if the value is null, false otherwise
      */
     public boolean hasNullValue() {
@@ -206,6 +214,7 @@ public final class Record {
 
     /**
      * The magic value (i.e. message format version) of this record
+     *
      * @return the magic value
      */
     public byte magic() {
@@ -214,6 +223,7 @@ public final class Record {
 
     /**
      * The attributes stored with this record
+     *
      * @return the attributes
      */
     public byte attributes() {
@@ -229,28 +239,32 @@ public final class Record {
      * @return the timestamp as determined above
      */
     public long timestamp() {
-        if (magic() == MAGIC_VALUE_V0)
+        if (magic() == MAGIC_VALUE_V0) {
             return NO_TIMESTAMP;
-        else {
+        } else {
             // case 2
-            if (wrapperRecordTimestampType == TimestampType.LOG_APPEND_TIME && wrapperRecordTimestamp != null)
+            if (wrapperRecordTimestampType == TimestampType.LOG_APPEND_TIME && wrapperRecordTimestamp != null) {
                 return wrapperRecordTimestamp;
+            }
             // Case 1, 3
-            else
+            else {
                 return buffer.getLong(TIMESTAMP_OFFSET);
+            }
         }
     }
 
     /**
      * The timestamp of the message.
+     *
      * @return the timstamp type or {@link TimestampType#NO_TIMESTAMP_TYPE} if the magic is 0 or the message has
-     *   been up-converted.
+     * been up-converted.
      */
     public TimestampType timestampType() {
-        if (magic() == 0)
+        if (magic() == 0) {
             return TimestampType.NO_TIMESTAMP_TYPE;
-        else
+        } else {
             return wrapperRecordTimestampType == null ? TimestampType.forAttributes(attributes()) : wrapperRecordTimestampType;
+        }
     }
 
     /**
@@ -262,6 +276,7 @@ public final class Record {
 
     /**
      * A ByteBuffer containing the value of this record
+     *
      * @return the value or null if the value for this record is null
      */
     public ByteBuffer value() {
@@ -270,13 +285,15 @@ public final class Record {
 
     /**
      * A ByteBuffer containing the message key
+     *
      * @return the buffer or null if the key for this record is null
      */
     public ByteBuffer key() {
-        if (magic() == MAGIC_VALUE_V0)
+        if (magic() == MAGIC_VALUE_V0) {
             return Utils.sizeDelimited(buffer, KEY_SIZE_OFFSET_V0);
-        else
+        } else {
             return Utils.sizeDelimited(buffer, KEY_SIZE_OFFSET_V1);
+        }
     }
 
     /**
@@ -288,38 +305,45 @@ public final class Record {
         return this.buffer;
     }
 
+    @Override
     public String toString() {
-        if (magic() > 0)
+        if (magic() > 0) {
             return String.format("Record(magic = %d, attributes = %d, compression = %s, crc = %d, %s = %d, key = %d bytes, value = %d bytes)",
-                                 magic(),
-                                 attributes(),
-                                 compressionType(),
-                                 checksum(),
-                                 timestampType(),
-                                 timestamp(),
-                                 key() == null ? 0 : key().limit(),
-                                 value() == null ? 0 : value().limit());
-        else
+                    magic(),
+                    attributes(),
+                    compressionType(),
+                    checksum(),
+                    timestampType(),
+                    timestamp(),
+                    key() == null ? 0 : key().limit(),
+                    value() == null ? 0 : value().limit());
+        } else {
             return String.format("Record(magic = %d, attributes = %d, compression = %s, crc = %d, key = %d bytes, value = %d bytes)",
-                                 magic(),
-                                 attributes(),
-                                 compressionType(),
-                                 checksum(),
-                                 key() == null ? 0 : key().limit(),
-                                 value() == null ? 0 : value().limit());
+                    magic(),
+                    attributes(),
+                    compressionType(),
+                    checksum(),
+                    key() == null ? 0 : key().limit(),
+                    value() == null ? 0 : value().limit());
+        }
     }
 
+    @Override
     public boolean equals(Object other) {
-        if (this == other)
+        if (this == other) {
             return true;
-        if (other == null)
+        }
+        if (other == null) {
             return false;
-        if (!other.getClass().equals(Record.class))
+        }
+        if (!other.getClass().equals(Record.class)) {
             return false;
+        }
         Record record = (Record) other;
         return this.buffer.equals(record.buffer);
     }
 
+    @Override
     public int hashCode() {
         return buffer.hashCode();
     }
@@ -341,8 +365,9 @@ public final class Record {
      * @return A new record instance with a freshly allocated ByteBuffer.
      */
     public Record convert(byte toMagic) {
-        if (toMagic == magic())
+        if (toMagic == magic()) {
             return this;
+        }
 
         ByteBuffer buffer = ByteBuffer.allocate(convertedSize(toMagic));
         TimestampType timestampType = wrapperRecordTimestampType != null ?
@@ -353,8 +378,9 @@ public final class Record {
     }
 
     private void convertTo(ByteBuffer buffer, byte toMagic, long timestamp, TimestampType timestampType) {
-        if (compressionType() != CompressionType.NONE)
+        if (compressionType() != CompressionType.NONE) {
             throw new IllegalArgumentException("Cannot use convertTo for deep conversion");
+        }
 
         write(buffer, toMagic, timestamp, key(), value(), CompressionType.NONE, timestampType);
     }
@@ -369,8 +395,9 @@ public final class Record {
      * @throws IOException for any IO errors writing the converted record.
      */
     public void convertTo(DataOutputStream out, byte toMagic, long timestamp, TimestampType timestampType) throws IOException {
-        if (compressionType() != CompressionType.NONE)
+        if (compressionType() != CompressionType.NONE) {
             throw new IllegalArgumentException("Cannot use convertTo for deep conversion");
+        }
 
         write(out, toMagic, timestamp, key(), value(), CompressionType.NONE, timestampType);
     }
@@ -512,7 +539,6 @@ public final class Record {
         return crc;
     }
 
-
     /**
      * Write a record using raw fields (without validation). This should only be used in testing.
      */
@@ -535,10 +561,12 @@ public final class Record {
                               long timestamp,
                               ByteBuffer key,
                               ByteBuffer value) throws IOException {
-        if (magic != MAGIC_VALUE_V0 && magic != MAGIC_VALUE_V1)
+        if (magic != MAGIC_VALUE_V0 && magic != MAGIC_VALUE_V1) {
             throw new IllegalArgumentException("Invalid magic value " + magic);
-        if (timestamp < 0 && timestamp != NO_TIMESTAMP)
+        }
+        if (timestamp < 0 && timestamp != NO_TIMESTAMP) {
             throw new IllegalArgumentException("Invalid message timestamp " + timestamp);
+        }
 
         // write crc
         out.writeInt((int) (crc & 0xffffffffL));
@@ -548,8 +576,9 @@ public final class Record {
         out.writeByte(attributes);
 
         // maybe write timestamp
-        if (magic > 0)
+        if (magic > 0) {
             out.writeLong(timestamp);
+        }
 
         // write the key
         if (key == null) {
@@ -584,10 +613,12 @@ public final class Record {
     // visible only for testing
     public static byte computeAttributes(byte magic, CompressionType type, TimestampType timestampType) {
         byte attributes = 0;
-        if (type.id > 0)
+        if (type.id > 0) {
             attributes = (byte) (attributes | (COMPRESSION_CODEC_MASK & type.id));
-        if (magic > 0)
+        }
+        if (magic > 0) {
             return timestampType.updateAttributes(attributes);
+        }
         return attributes;
     }
 
@@ -603,8 +634,9 @@ public final class Record {
         Crc32 crc = new Crc32();
         crc.update(magic);
         crc.update(attributes);
-        if (magic > 0)
+        if (magic > 0) {
             crc.updateLong(timestamp);
+        }
         // update for the key
         if (key == null) {
             crc.updateInt(-1);
@@ -625,14 +657,13 @@ public final class Record {
     }
 
     public static int recordOverhead(byte magic) {
-        if (magic == 0)
-            return RECORD_OVERHEAD_V0;
-        return RECORD_OVERHEAD_V1;
+        return magic == 0 ? RECORD_OVERHEAD_V0 : RECORD_OVERHEAD_V1;
     }
 
     private static int keyOffset(byte magic) {
-        if (magic == 0)
+        if (magic == 0) {
             return KEY_OFFSET_V0;
+        }
         return KEY_OFFSET_V1;
     }
 

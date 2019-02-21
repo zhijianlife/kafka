@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,16 +17,15 @@
 
 package org.apache.kafka.common.record;
 
-import java.io.FilterOutputStream;
-import java.io.IOException;
-import java.io.OutputStream;
-
-import org.apache.kafka.common.utils.Utils;
-
 import net.jpountz.lz4.LZ4Compressor;
 import net.jpountz.lz4.LZ4Factory;
 import net.jpountz.xxhash.XXHash32;
 import net.jpountz.xxhash.XXHashFactory;
+import org.apache.kafka.common.utils.Utils;
+
+import java.io.FilterOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
 
 /**
  * A partial implementation of the v1.5.1 LZ4 Frame format.
@@ -62,11 +61,11 @@ public final class KafkaLZ4BlockOutputStream extends FilterOutputStream {
      *
      * @param out The output stream to compress
      * @param blockSize Default: 4. The block size used during compression. 4=64kb, 5=256kb, 6=1mb, 7=4mb. All other
-     *            values will generate an exception
+     * values will generate an exception
      * @param blockChecksum Default: false. When true, a XXHash32 checksum is computed and appended to the stream for
-     *            every block of data
+     * every block of data
      * @param useBrokenFlagDescriptorChecksum Default: false. When true, writes an incorrect FrameDescriptor checksum
-     *            compatible with older kafka clients.
+     * compatible with older kafka clients.
      * @throws IOException
      */
     public KafkaLZ4BlockOutputStream(OutputStream out, int blockSize, boolean blockChecksum, boolean useBrokenFlagDescriptorChecksum) throws IOException {
@@ -89,9 +88,9 @@ public final class KafkaLZ4BlockOutputStream extends FilterOutputStream {
      *
      * @param out The output stream to compress
      * @param blockSize Default: 4. The block size used during compression. 4=64kb, 5=256kb, 6=1mb, 7=4mb. All other
-     *            values will generate an exception
+     * values will generate an exception
      * @param blockChecksum Default: false. When true, a XXHash32 checksum is computed and appended to the stream for
-     *            every block of data
+     * every block of data
      * @throws IOException
      */
     public KafkaLZ4BlockOutputStream(OutputStream out, int blockSize, boolean blockChecksum) throws IOException {
@@ -103,7 +102,7 @@ public final class KafkaLZ4BlockOutputStream extends FilterOutputStream {
      *
      * @param out The stream to compress
      * @param blockSize Default: 4. The block size used during compression. 4=64kb, 5=256kb, 6=1mb, 7=4mb. All other
-     *            values will generate an exception
+     * values will generate an exception
      * @throws IOException
      */
     public KafkaLZ4BlockOutputStream(OutputStream out, int blockSize) throws IOException {
@@ -313,11 +312,11 @@ public final class KafkaLZ4BlockOutputStream extends FilterOutputStream {
             int version = (flg >>> 6) & 3;
 
             return new FLG(reserved,
-                           contentChecksum,
-                           contentSize,
-                           blockChecksum,
-                           blockIndependence,
-                           version);
+                    contentChecksum,
+                    contentSize,
+                    blockChecksum,
+                    blockIndependence,
+                    version);
         }
 
         public byte toByte() {

@@ -524,15 +524,17 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
 
             // 为当前消息选择合适的分区
             int partition = this.partition(record, serializedKey, serializedValue, cluster);
+
+
+            /* 将消息追加到 RecordAccumulator 中 */
+
             int serializedSize = Records.LOG_OVERHEAD + Record.recordSize(serializedKey, serializedValue);
-            this.ensureValidRecordSize(serializedSize);
+            this.ensureValidRecordSize(serializedSize); // 校验消息大小是否过大
             tp = new TopicPartition(record.topic(), partition);
             long timestamp = record.timestamp() == null ? time.milliseconds() : record.timestamp();
             log.trace("Sending record {} with callback {} to topic {} partition {}", record, callback, record.topic(), partition);
             // producer callback will make sure to call both 'callback' and interceptor callback
             Callback interceptCallback = this.interceptors == null ? callback : new InterceptorCallback<>(callback, this.interceptors, tp);
-
-            // 将消息追加到 RecordAccumulator 中
             RecordAccumulator.RecordAppendResult result = accumulator.append(tp, timestamp, serializedKey, serializedValue, interceptCallback, remainingWaitMs);
             if (result.batchIsFull || result.newBatchCreated) {
                 log.trace("Waking up the sender since topic {} partition {} is either full or getting a new batch", record.topic(), partition);
@@ -665,14 +667,12 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
         if (size > this.maxRequestSize) {
             throw new RecordTooLargeException("The message is " + size +
                     " bytes when serialized which is larger than the maximum request size you have configured with the " +
-                    ProducerConfig.MAX_REQUEST_SIZE_CONFIG +
-                    " configuration.");
+                    ProducerConfig.MAX_REQUEST_SIZE_CONFIG + " configuration.");
         }
         if (size > this.totalMemorySize) {
             throw new RecordTooLargeException("The message is " + size +
                     " bytes when serialized which is larger than the total memory buffer you have configured with the " +
-                    ProducerConfig.BUFFER_MEMORY_CONFIG +
-                    " configuration.");
+                    ProducerConfig.BUFFER_MEMORY_CONFIG + " configuration.");
         }
     }
 
@@ -901,16 +901,16 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     }
 
     /**
-     * A callback called when producer request is complete. It in turn calls user-supplied callback (if given) and
-     * notifies producer interceptors about the request completion.
+     * A callback called when producer request is complete.
+     * It in turn calls user-supplied callback (if given) and notifies producer interceptors about the request completion.
      */
     private static class InterceptorCallback<K, V> implements Callback {
         private final Callback userCallback;
         private final ProducerInterceptors<K, V> interceptors;
         private final TopicPartition tp;
 
-        public InterceptorCallback(Callback userCallback, ProducerInterceptors<K, V> interceptors,
-                                   TopicPartition tp) {
+        public InterceptorCallback(
+                Callback userCallback, ProducerInterceptors<K, V> interceptors, TopicPartition tp) {
             this.userCallback = userCallback;
             this.interceptors = interceptors;
             this.tp = tp;

@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.kafka.common.record;
 
 import org.apache.kafka.common.KafkaException;
@@ -56,7 +57,7 @@ public class MemoryRecordsBuilder {
         @Override
         public Constructor get() throws ClassNotFoundException, NoSuchMethodException {
             return Class.forName("org.xerial.snappy.SnappyOutputStream")
-                .getConstructor(OutputStream.class, Integer.TYPE);
+                    .getConstructor(OutputStream.class, Integer.TYPE);
         }
     });
 
@@ -64,7 +65,7 @@ public class MemoryRecordsBuilder {
         @Override
         public Constructor get() throws ClassNotFoundException, NoSuchMethodException {
             return Class.forName("org.apache.kafka.common.record.KafkaLZ4BlockOutputStream")
-                .getConstructor(OutputStream.class, Boolean.TYPE);
+                    .getConstructor(OutputStream.class, Boolean.TYPE);
         }
     });
 
@@ -72,7 +73,7 @@ public class MemoryRecordsBuilder {
         @Override
         public Constructor get() throws ClassNotFoundException, NoSuchMethodException {
             return Class.forName("org.xerial.snappy.SnappyInputStream")
-                .getConstructor(InputStream.class);
+                    .getConstructor(InputStream.class);
         }
     });
 
@@ -80,7 +81,7 @@ public class MemoryRecordsBuilder {
         @Override
         public Constructor get() throws ClassNotFoundException, NoSuchMethodException {
             return Class.forName("org.apache.kafka.common.record.KafkaLZ4BlockInputStream")
-                .getConstructor(ByteBuffer.class, BufferSupplier.class, Boolean.TYPE);
+                    .getConstructor(ByteBuffer.class, BufferSupplier.class, Boolean.TYPE);
         }
     });
 
@@ -103,7 +104,6 @@ public class MemoryRecordsBuilder {
     private long lastOffset = -1;
 
     private MemoryRecords builtRecords;
-
 
     public MemoryRecordsBuilder(ByteBufferOutputStream bufferStream,
                                 byte magic,
@@ -136,15 +136,15 @@ public class MemoryRecordsBuilder {
      * Construct a new builder.
      *
      * @param buffer The underlying buffer to use (note that this class will allocate a new buffer if necessary
-     *               to fit the records appended)
+     * to fit the records appended)
      * @param magic The magic value to use
      * @param compressionType The compression codec to use
      * @param timestampType The desired timestamp type. For magic > 0, this cannot be {@link TimestampType#NO_TIMESTAMP_TYPE}.
      * @param baseOffset The initial offset to use for
      * @param logAppendTime The log append time of this record set. Can be set to NO_TIMESTAMP if CREATE_TIME is used.
      * @param writeLimit The desired limit on the total bytes for this record set (note that this can be exceeded
-     *                   when compression is used since size estimates are rough, and in the case that the first
-     *                   record added exceeds the size).
+     * when compression is used since size estimates are rough, and in the case that the first
+     * record added exceeds the size).
      */
     public MemoryRecordsBuilder(ByteBuffer buffer,
                                 byte magic,
@@ -171,6 +171,7 @@ public class MemoryRecordsBuilder {
 
     /**
      * Close this builder and return the resulting buffer.
+     *
      * @return The built log buffer
      */
     public MemoryRecords build() {
@@ -181,20 +182,23 @@ public class MemoryRecordsBuilder {
     /**
      * Get the max timestamp and its offset. If the log append time is used, then the offset will
      * be either the first offset in the set if no compression is used or the last offset otherwise.
+     *
      * @return The max timestamp and its offset
      */
     public RecordsInfo info() {
-        if (timestampType == TimestampType.LOG_APPEND_TIME)
-            return new RecordsInfo(logAppendTime,  lastOffset);
-        else if (maxTimestamp == Record.NO_TIMESTAMP)
+        if (timestampType == TimestampType.LOG_APPEND_TIME) {
+            return new RecordsInfo(logAppendTime, lastOffset);
+        } else if (maxTimestamp == Record.NO_TIMESTAMP) {
             return new RecordsInfo(Record.NO_TIMESTAMP, lastOffset);
-        else
+        } else {
             return new RecordsInfo(maxTimestamp, compressionType == CompressionType.NONE ? offsetOfMaxTimestamp : lastOffset);
+        }
     }
 
     public void close() {
-        if (builtRecords != null)
+        if (builtRecords != null) {
             return;
+        }
 
         try {
             appendStream.close();
@@ -202,8 +206,9 @@ public class MemoryRecordsBuilder {
             throw new KafkaException(e);
         }
 
-        if (compressionType != CompressionType.NONE)
+        if (compressionType != CompressionType.NONE) {
             writerCompressedWrapperHeader();
+        }
 
         ByteBuffer buffer = buffer().duplicate();
         buffer.flip();
@@ -228,11 +233,12 @@ public class MemoryRecordsBuilder {
         // update the compression ratio
         this.compressionRate = (float) writtenCompressed / this.writtenUncompressed;
         TYPE_TO_RATE[compressionType.id] = TYPE_TO_RATE[compressionType.id] * COMPRESSION_RATE_DAMPING_FACTOR +
-            compressionRate * (1 - COMPRESSION_RATE_DAMPING_FACTOR);
+                compressionRate * (1 - COMPRESSION_RATE_DAMPING_FACTOR);
     }
 
     /**
      * Append a new record at the given offset.
+     *
      * @param offset The absolute offset of the record in the log buffer
      * @param timestamp The record timestamp
      * @param key The record key
@@ -241,14 +247,16 @@ public class MemoryRecordsBuilder {
      */
     public long appendWithOffset(long offset, long timestamp, byte[] key, byte[] value) {
         try {
-            if (lastOffset >= 0 && offset <= lastOffset)
+            if (lastOffset >= 0 && offset <= lastOffset) {
                 throw new IllegalArgumentException(String.format("Illegal offset %s following previous offset %s (Offsets must increase monotonically).", offset, lastOffset));
+            }
 
             int size = Record.recordSize(magic, key, value);
             LogEntry.writeHeader(appendStream, toInnerOffset(offset), size);
 
-            if (timestampType == TimestampType.LOG_APPEND_TIME)
+            if (timestampType == TimestampType.LOG_APPEND_TIME) {
                 timestamp = logAppendTime;
+            }
             long crc = Record.write(appendStream, magic, timestamp, key, value, CompressionType.NONE, timestampType);
             recordWritten(offset, timestamp, size + Records.LOG_OVERHEAD);
             return crc;
@@ -260,6 +268,7 @@ public class MemoryRecordsBuilder {
     /**
      * Append a new record at the next consecutive offset. If no records have been appended yet, use the base
      * offset of this builder.
+     *
      * @param timestamp The record timestamp
      * @param key The record key
      * @param value The record value
@@ -271,6 +280,7 @@ public class MemoryRecordsBuilder {
 
     /**
      * Add the record at the next consecutive offset, converting to the desired magic value if necessary.
+     *
      * @param record The record to add
      */
     public void convertAndAppend(Record record) {
@@ -279,6 +289,7 @@ public class MemoryRecordsBuilder {
 
     /**
      * Add the record at the given offset, converting to the desired magic value if necessary.
+     *
      * @param offset The offset of the record
      * @param record The record to add
      */
@@ -288,8 +299,9 @@ public class MemoryRecordsBuilder {
             return;
         }
 
-        if (lastOffset >= 0 && offset <= lastOffset)
+        if (lastOffset >= 0 && offset <= lastOffset) {
             throw new IllegalArgumentException(String.format("Illegal offset %s following previous offset %s (Offsets must increase monotonically).", offset, lastOffset));
+        }
 
         try {
             int size = record.convertedSize(magic);
@@ -304,6 +316,7 @@ public class MemoryRecordsBuilder {
 
     /**
      * Add a record without doing offset/magic validation (this should only be used in testing).
+     *
      * @param offset The offset of the record
      * @param record The record to add
      */
@@ -324,20 +337,24 @@ public class MemoryRecordsBuilder {
     /**
      * Add a record with a given offset. The record must have a magic which matches the magic use to
      * construct this builder and the offset must be greater than the last appended entry.
+     *
      * @param offset The offset of the record
      * @param record The record to add
      */
     public void appendWithOffset(long offset, Record record) {
-        if (record.magic() != magic)
+        if (record.magic() != magic) {
             throw new IllegalArgumentException("Inner log entries must have matching magic values as the wrapper");
-        if (lastOffset >= 0 && offset <= lastOffset)
+        }
+        if (lastOffset >= 0 && offset <= lastOffset) {
             throw new IllegalArgumentException(String.format("Illegal offset %s following previous offset %s (Offsets must increase monotonically).", offset, lastOffset));
+        }
         appendUnchecked(offset, record);
     }
 
     /**
      * Append the record at the next consecutive offset. If no records have been appended yet, use the base
      * offset of this builder.
+     *
      * @param record The record to add
      */
     public void append(Record record) {
@@ -346,8 +363,9 @@ public class MemoryRecordsBuilder {
 
     private long toInnerOffset(long offset) {
         // use relative offsets for compressed messages with magic v1
-        if (magic > 0 && compressionType != CompressionType.NONE)
+        if (magic > 0 && compressionType != CompressionType.NONE) {
             return offset - baseOffset;
+        }
         return offset;
     }
 
@@ -364,6 +382,7 @@ public class MemoryRecordsBuilder {
 
     /**
      * Get an estimate of the number of bytes written (based on the estimation factor hard-coded in {@link CompressionType}.
+     *
      * @return The estimated number of bytes written
      */
     private int estimatedBytesWritten() {
@@ -453,9 +472,9 @@ public class MemoryRecordsBuilder {
                 case LZ4:
                     try {
                         return (InputStream) lz4InputStreamSupplier.get().newInstance(
-                            buffer,
-                            bufferSupplier,
-                            messageVersion == Record.MAGIC_VALUE_V0
+                                buffer,
+                                bufferSupplier,
+                                messageVersion == Record.MAGIC_VALUE_V0
                         );
                     } catch (Exception e) {
                         throw new KafkaException(e);

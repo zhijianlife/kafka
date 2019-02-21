@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  **/
+
 package org.apache.kafka.common.record;
 
 import java.util.ArrayList;
@@ -27,14 +28,17 @@ public abstract class AbstractRecords implements Records {
         public Iterator<Record> iterator() {
             return new Iterator<Record>() {
                 private final Iterator<? extends LogEntry> deepEntries = deepEntries(BufferSupplier.NO_CACHING).iterator();
+
                 @Override
                 public boolean hasNext() {
                     return deepEntries.hasNext();
                 }
+
                 @Override
                 public Record next() {
                     return deepEntries.next().record();
                 }
+
                 @Override
                 public void remove() {
                     throw new UnsupportedOperationException("Removal not supported");
@@ -46,8 +50,9 @@ public abstract class AbstractRecords implements Records {
     @Override
     public boolean hasMatchingShallowMagic(byte magic) {
         for (LogEntry entry : shallowEntries())
-            if (entry.magic() != magic)
+            if (entry.magic() != magic) {
                 return false;
+            }
         return true;
     }
 
@@ -90,6 +95,7 @@ public abstract class AbstractRecords implements Records {
 
     /**
      * Get an iterator over the deep records.
+     *
      * @return An iterator over the records
      */
     public Iterable<Record> records() {
