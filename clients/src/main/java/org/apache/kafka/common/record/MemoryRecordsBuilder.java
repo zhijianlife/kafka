@@ -30,8 +30,7 @@ import java.util.zip.GZIPOutputStream;
 
 /**
  * This class is used to write new log data in memory, i.e. this is the write path for {@link MemoryRecords}.
- * It transparently handles compression and exposes methods for appending new entries, possibly with message
- * format conversion.
+ * It transparently handles compression and exposes methods for appending new entries, possibly with message format conversion.
  */
 public class MemoryRecordsBuilder {
 
@@ -42,7 +41,7 @@ public class MemoryRecordsBuilder {
     private static final float[] TYPE_TO_RATE;
 
     static {
-        int maxTypeId = -1;
+        int maxTypeId = -1; // 记录最大的压缩类型 ID
         for (CompressionType type : CompressionType.values())
             maxTypeId = Math.max(maxTypeId, type.id);
         TYPE_TO_RATE = new float[maxTypeId + 1];
@@ -129,7 +128,7 @@ public class MemoryRecordsBuilder {
 
         // create the stream
         this.bufferStream = bufferStream;
-        appendStream = wrapForOutput(bufferStream, compressionType, magic, COMPRESSION_DEFAULT_BUFFER_SIZE);
+        this.appendStream = wrapForOutput(bufferStream, compressionType, magic, COMPRESSION_DEFAULT_BUFFER_SIZE);
     }
 
     /**
@@ -247,6 +246,7 @@ public class MemoryRecordsBuilder {
      */
     public long appendWithOffset(long offset, long timestamp, byte[] key, byte[] value) {
         try {
+            // 校验 offset 是否合法
             if (lastOffset >= 0 && offset <= lastOffset) {
                 throw new IllegalArgumentException(String.format("Illegal offset %s following previous offset %s (Offsets must increase monotonically).", offset, lastOffset));
             }
@@ -266,8 +266,10 @@ public class MemoryRecordsBuilder {
     }
 
     /**
-     * Append a new record at the next consecutive offset. If no records have been appended yet, use the base
-     * offset of this builder.
+     * 添加记录到连续的下一个位置
+     *
+     * Append a new record at the next consecutive offset.
+     * If no records have been appended yet, use the base offset of this builder.
      *
      * @param timestamp The record timestamp
      * @param key The record key
@@ -275,6 +277,7 @@ public class MemoryRecordsBuilder {
      * @return crc of the record
      */
     public long append(long timestamp, byte[] key, byte[] value) {
+        // 如果是第一条记录则使用 baseOffset，否则使用连续的下一个位置
         return appendWithOffset(lastOffset < 0 ? baseOffset : lastOffset + 1, timestamp, key, value);
     }
 
@@ -442,8 +445,7 @@ public class MemoryRecordsBuilder {
                     }
                 case LZ4:
                     try {
-                        OutputStream stream = (OutputStream) lz4OutputStreamSupplier.get().newInstance(buffer,
-                                messageVersion == Record.MAGIC_VALUE_V0);
+                        OutputStream stream = (OutputStream) lz4OutputStreamSupplier.get().newInstance(buffer, messageVersion == Record.MAGIC_VALUE_V0);
                         return new DataOutputStream(stream);
                     } catch (Exception e) {
                         throw new KafkaException(e);
@@ -518,8 +520,7 @@ public class MemoryRecordsBuilder {
         public final long maxTimestamp;
         public final long shallowOffsetOfMaxTimestamp;
 
-        public RecordsInfo(long maxTimestamp,
-                           long shallowOffsetOfMaxTimestamp) {
+        public RecordsInfo(long maxTimestamp, long shallowOffsetOfMaxTimestamp) {
             this.maxTimestamp = maxTimestamp;
             this.shallowOffsetOfMaxTimestamp = shallowOffsetOfMaxTimestamp;
         }

@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Diagram>
+  <ID>JAVA</ID>
+  <OriginalElement>org.apache.kafka.clients.producer.internals.FutureRecordMetadata</OriginalElement>
+  <nodes>
+    <node x="241.0" y="263.0">org.scalatest.fixture.FixtureNodeFamily.Trunk</node>
+    <node x="195.00000000000003" y="0.0">java.util.concurrent.Future</node>
+    <node x="313.0" y="0.0">org.apache.kafka.clients.producer.internals.ProduceRequestResult</node>
+    <node x="228.25000000000003" y="170.0">org.apache.kafka.clients.producer.internals.RecordBatch</node>
+    <node x="119.36041666666671" y="85.0">org.apache.kafka.clients.producer.internals.FutureRecordMetadata</node>
+    <node x="0.0" y="0.0">org.apache.kafka.clients.producer.RecordMetadata</node>
+  </nodes>
+  <notes />
+  <edges>
+    <edge source="org.apache.kafka.clients.producer.internals.RecordBatch" target="org.apache.kafka.clients.producer.internals.ProduceRequestResult">
+      <point x="57.60000000000002" y="-17.5" />
+      <point x="357.85" y="150.0" />
+      <point x="480.01979166666666" y="150.0" />
+      <point x="480.01979166666666" y="65.0" />
+      <point x="503.75" y="65.0" />
+      <point x="81.75" y="17.5" />
+    </edge>
+    <edge source="org.apache.kafka.clients.producer.internals.FutureRecordMetadata" target="java.util.concurrent.Future">
+      <point x="0.0" y="-17.5" />
+      <point x="231.8604166666667" y="65.0" />
+      <point x="244.00000000000003" y="65.0" />
+      <point x="0.0" y="17.5" />
+    </edge>
+    <edge source="org.apache.kafka.clients.producer.internals.FutureRecordMetadata" target="org.apache.kafka.clients.producer.internals.ProduceRequestResult">
+      <point x="90.0" y="-17.5" />
+      <point x="321.8604166666667" y="65.0" />
+      <point x="394.75" y="65.0" />
+      <point x="-27.25" y="17.5" />
+    </edge>
+    <edge source="org.apache.kafka.clients.producer.internals.FutureRecordMetadata" target="org.apache.kafka.clients.producer.RecordMetadata">
+      <point x="-90.0" y="-17.5" />
+      <point x="141.8604166666667" y="65.0" />
+      <point x="87.5" y="65.0" />
+      <point x="0.0" y="17.5" />
+    </edge>
+    <edge source="org.apache.kafka.clients.producer.internals.RecordBatch" target="org.apache.kafka.clients.producer.internals.FutureRecordMetadata">
+      <point x="0.0" y="-17.5" />
+      <point x="300.25" y="150.0" />
+      <point x="288.1104166666667" y="150.0" />
+      <point x="56.25" y="17.5" />
+    </edge>
+    <edge source="org.apache.kafka.clients.producer.internals.RecordBatch" target="org.apache.kafka.clients.producer.RecordMetadata">
+      <point x="-57.599999999999994" y="-17.5" />
+      <point x="242.65000000000003" y="150.0" />
+      <point x="61.603125000000034" y="150.0" />
+      <point x="61.603125000000034" y="65.0" />
+      <point x="29.166666666666686" y="65.0" />
+      <point x="-58.333333333333314" y="17.5" />
+    </edge>
+  </edges>
+  <settings layout="Hierarchic Group" zoom="1.0" x="265.5" y="149.0" />
+  <SelectedNodes />
+  <Categories />
+  <SCOPE>All</SCOPE>
+  <VISIBILITY>private</VISIBILITY>
+</Diagram>
+

@@ -47,6 +47,7 @@ public final class RecordBatch {
      */
     final ProduceRequestResult produceFuture;
 
+    /** 消息的 Callback 队列，每个消息都对应一个 Callback 对象 */
     private final List<Thunk> thunks = new ArrayList<>();
     private final MemoryRecordsBuilder recordsBuilder;
 
@@ -84,22 +85,27 @@ public final class RecordBatch {
     }
 
     /**
-     * Append the record to the current record set and return the relative offset within that record set
+     * Append the record to the current record set and return the relative（相对的） offset within that record set
      *
      * @return The RecordSend corresponding to this record or null if there isn't sufficient room.
      */
     public FutureRecordMetadata tryAppend(long timestamp, byte[] key, byte[] value, Callback callback, long now) {
         if (!recordsBuilder.hasRoomFor(key, value)) {
+            // 如果没有多余的空间容纳该 record，则直接返回
             return null;
         } else {
+            // 添加一条记录到 MemoryRecords，并返回对应的 CRC32 校验码
             long checksum = this.recordsBuilder.append(timestamp, key, value);
+            // 更新最大 record 字节数
             this.maxRecordSize = Math.max(this.maxRecordSize, Record.recordSize(key, value));
+            // 更新最后一次追加记录时间戳
             this.lastAppendTime = now;
             FutureRecordMetadata future = new FutureRecordMetadata(this.produceFuture, this.recordCount,
                     timestamp, checksum,
                     key == null ? -1 : key.length,
                     value == null ? -1 : value.length);
             if (callback != null) {
+                // 如果指定了 Callback，将 Callback 和 FutureRecordMetadata 封装到 Trunk 中
                 thunks.add(new Thunk(callback, future));
             }
             this.recordCount++;
@@ -115,8 +121,7 @@ public final class RecordBatch {
      * @param exception The exception that occurred (or null if the request was successful)
      */
     public void done(long baseOffset, long logAppendTime, RuntimeException exception) {
-        log.trace("Produced messages to topic-partition {} with base offset offset {} and error: {}.",
-                topicPartition, baseOffset, exception);
+        log.trace("Produced messages to topic-partition {} with base offset offset {} and error: {}.", topicPartition, baseOffset, exception);
 
         if (completed.getAndSet(true)) {
             throw new IllegalStateException("Batch has already been completed");
@@ -126,12 +131,17 @@ public final class RecordBatch {
         produceFuture.set(baseOffset, logAppendTime, exception);
 
         // execute callbacks
+        // 循环执行每个消息的 Callback
         for (Thunk thunk : thunks) {
             try {
+                // 消息处理正常
                 if (exception == null) {
+                    // RecordMetadata 是服务端返回的
                     RecordMetadata metadata = thunk.future.value();
                     thunk.callback.onCompletion(metadata, null);
-                } else {
+                }
+                // 消息处理异常
+                else {
                     thunk.callback.onCompletion(null, exception);
                 }
             } catch (Exception e) {
@@ -139,6 +149,7 @@ public final class RecordBatch {
             }
         }
 
+        // 整个 RecordBatch 都处理完成
         produceFuture.done();
     }
 

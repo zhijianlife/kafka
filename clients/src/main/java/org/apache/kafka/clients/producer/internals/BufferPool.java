@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,14 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.clients.producer.internals;
 
-import java.nio.ByteBuffer;
-import java.util.ArrayDeque;
-import java.util.Deque;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.ReentrantLock;
+package org.apache.kafka.clients.producer.internals;
 
 import org.apache.kafka.common.MetricName;
 import org.apache.kafka.common.errors.TimeoutException;
@@ -30,24 +24,45 @@ import org.apache.kafka.common.metrics.Sensor;
 import org.apache.kafka.common.metrics.stats.Rate;
 import org.apache.kafka.common.utils.Time;
 
+import java.nio.ByteBuffer;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * A pool of ByteBuffers kept under a given memory limit. This class is fairly specific to the needs of the producer. In
- * particular it has the following properties:
+ * A pool of ByteBuffers kept under a given memory limit. This class is fairly specific to the needs of the producer.
+ * In particular it has the following properties:
  * <ol>
  * <li>There is a special "poolable size" and buffers of this size are kept in a free list and recycled
- * <li>It is fair. That is all memory is given to the longest waiting thread until it has sufficient memory. This
- * prevents starvation or deadlock when a thread asks for a large chunk of memory and needs to block until multiple
- * buffers are deallocated.
+ * <li>It is fair. That is all memory is given to the longest waiting thread until it has sufficient memory.
+ * This prevents starvation or deadlock when a thread asks for a large chunk of memory and needs to block until multiple buffers are deallocated.
  * </ol>
+ *
+ * 实现 ByteBuffer 的复用，因为 ByteBuffer 的创建和释放都比较消耗资源
  */
 public final class BufferPool {
 
     private final long totalMemory;
+
+    /**
+     * 一个 BufferTool 仅仅管理指定大小的 ByteBuffer，由 poolableSize 指定，
+     *
+     * 对于超过该值的 ByteBuffer 时，{@link org.apache.kafka.common.record.MemoryRecords} 不会复用 BufferTool 中的 ByteBuffer，
+     * 而是会额外分配 ByteBuffer，使用完成直接释放
+     */
     private final int poolableSize;
+
     private final ReentrantLock lock;
+
+    /** 缓存指定大小的 ByteBuffer 对象 */
     private final Deque<ByteBuffer> free;
+
+    /** 记录因申请不到足够空间而阻塞的线程，记录的是阻塞线程对应的 Condition 对象 */
     private final Deque<Condition> waiters;
+
+    /** 记录可用的空间大小 */
     private long availableMemory;
     private final Metrics metrics;
     private final Time time;
@@ -55,7 +70,7 @@ public final class BufferPool {
 
     /**
      * Create a new buffer pool
-     * 
+     *
      * @param memory The maximum amount of memory that this buffer pool can allocate
      * @param poolableSize The buffer size to cache in the free list rather than deallocating
      * @param metrics instance of Metrics
@@ -65,45 +80,47 @@ public final class BufferPool {
     public BufferPool(long memory, int poolableSize, Metrics metrics, Time time, String metricGrpName) {
         this.poolableSize = poolableSize;
         this.lock = new ReentrantLock();
-        this.free = new ArrayDeque<ByteBuffer>();
-        this.waiters = new ArrayDeque<Condition>();
+        this.free = new ArrayDeque<>();
+        this.waiters = new ArrayDeque<>();
         this.totalMemory = memory;
         this.availableMemory = memory;
         this.metrics = metrics;
         this.time = time;
         this.waitTime = this.metrics.sensor("bufferpool-wait-time");
-        MetricName metricName = metrics.metricName("bufferpool-wait-ratio",
-                                                   metricGrpName,
-                                                   "The fraction of time an appender waits for space allocation.");
+        MetricName metricName = metrics.metricName(
+                "bufferpool-wait-ratio", metricGrpName, "The fraction of time an appender waits for space allocation.");
         this.waitTime.add(metricName, new Rate(TimeUnit.NANOSECONDS));
     }
 
     /**
-     * Allocate a buffer of the given size. This method blocks if there is not enough memory and the buffer pool
-     * is configured with blocking mode.
-     * 
+     * 从缓存池中申请 ByteBuffer，当空间不足时会阻塞调用线程
+     *
+     * Allocate a buffer of the given size.
+     * This method blocks if there is not enough memory and the buffer pool is configured with blocking mode.
+     *
      * @param size The buffer size to allocate in bytes
      * @param maxTimeToBlockMs The maximum time in milliseconds to block for buffer memory to be available
      * @return The buffer
-     * @throws InterruptedException If the thread is interrupted while blocked
+     * @throws InterruptedException     If the thread is interrupted while blocked
      * @throws IllegalArgumentException if size is larger than the total memory controlled by the pool (and hence we would block
-     *         forever)
+     *                                  forever)
      */
     public ByteBuffer allocate(int size, long maxTimeToBlockMs) throws InterruptedException {
-        if (size > this.totalMemory)
+        if (size > this.totalMemory) {
             throw new IllegalArgumentException("Attempt to allocate " + size
-                                               + " bytes, but there is a hard limit of "
-                                               + this.totalMemory
-                                               + " on memory allocations.");
+                    + " bytes, but there is a hard limit of " + this.totalMemory + " on memory allocations.");
+        }
 
+        // 加锁
         this.lock.lock();
         try {
             // check if we have a free buffer of the right size pooled
-            if (size == poolableSize && !this.free.isEmpty())
+            // 如果有空闲可用的 buffer 则直接返回
+            if (size == poolableSize && !this.free.isEmpty()) {
                 return this.free.pollFirst();
+            }
 
-            // now check if the request is immediately satisfiable with the
-            // memory on hand or if we need to block
+            // now check if the request is immediately satisfiable with the memory on hand or if we need to block
             int freeListSize = this.free.size() * this.poolableSize;
             if (this.availableMemory + freeListSize >= size) {
                 // we have enough unallocated or pooled memory to immediately
@@ -161,26 +178,30 @@ public final class BufferPool {
                 // remove the condition for this thread to let the next thread
                 // in line start getting memory
                 Condition removed = this.waiters.removeFirst();
-                if (removed != moreMemory)
+                if (removed != moreMemory) {
                     throw new IllegalStateException("Wrong condition: this shouldn't happen.");
+                }
 
                 // signal any additional waiters if there is more memory left
                 // over for them
                 if (this.availableMemory > 0 || !this.free.isEmpty()) {
-                    if (!this.waiters.isEmpty())
+                    if (!this.waiters.isEmpty()) {
                         this.waiters.peekFirst().signal();
+                    }
                 }
 
                 // unlock and return the buffer
                 lock.unlock();
-                if (buffer == null)
+                if (buffer == null) {
                     return ByteBuffer.allocate(size);
-                else
+                } else {
                     return buffer;
+                }
             }
         } finally {
-            if (lock.isHeldByCurrentThread())
+            if (lock.isHeldByCurrentThread()) {
                 lock.unlock();
+            }
         }
     }
 
@@ -196,10 +217,10 @@ public final class BufferPool {
     /**
      * Return buffers to the pool. If they are of the poolable size add them to the free list, otherwise just mark the
      * memory as free.
-     * 
+     *
      * @param buffer The buffer to return
      * @param size The size of the buffer to mark as deallocated, note that this may be smaller than buffer.capacity
-     *             since the buffer may re-allocate itself during in-place compression
+     * since the buffer may re-allocate itself during in-place compression
      */
     public void deallocate(ByteBuffer buffer, int size) {
         lock.lock();
@@ -211,8 +232,9 @@ public final class BufferPool {
                 this.availableMemory += size;
             }
             Condition moreMem = this.waiters.peekFirst();
-            if (moreMem != null)
+            if (moreMem != null) {
                 moreMem.signal();
+            }
         } finally {
             lock.unlock();
         }

@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,15 +14,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.kafka.common.record;
+
+import static org.apache.kafka.common.record.Records.LOG_OVERHEAD;
 
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Collections;
 import java.util.Iterator;
-
-import static org.apache.kafka.common.record.Records.LOG_OVERHEAD;
 
 /**
  * An offset and record pair
@@ -32,12 +33,14 @@ public abstract class LogEntry implements Iterable<LogEntry> {
     /**
      * Get the offset of this entry. Note that if this entry contains a compressed
      * message set, then this offset will be the last offset of the nested entries
+     *
      * @return the last offset contained in this entry
      */
     public abstract long offset();
 
     /**
      * Get the shallow record for this log entry.
+     *
      * @return the shallow record
      */
     public abstract Record record();
@@ -46,6 +49,7 @@ public abstract class LogEntry implements Iterable<LogEntry> {
      * Get the first offset of the records contained in this entry. Note that this
      * generally requires deep iteration, which requires decompression, so this should
      * be used with caution.
+     *
      * @return The first offset contained in this entry
      */
     public long firstOffset() {
@@ -54,6 +58,7 @@ public abstract class LogEntry implements Iterable<LogEntry> {
 
     /**
      * Get the offset following this entry (i.e. the last offset contained in this entry plus one).
+     *
      * @return the next consecutive offset following this entry
      */
     public long nextOffset() {
@@ -62,6 +67,7 @@ public abstract class LogEntry implements Iterable<LogEntry> {
 
     /**
      * Get the message format version of this entry (i.e its magic value).
+     *
      * @return the magic byte
      */
     public byte magic() {
@@ -75,6 +81,7 @@ public abstract class LogEntry implements Iterable<LogEntry> {
 
     /**
      * Get the size in bytes of this entry, including the size of the record and the log overhead.
+     *
      * @return The size in bytes of this entry
      */
     public int sizeInBytes() {
@@ -83,6 +90,7 @@ public abstract class LogEntry implements Iterable<LogEntry> {
 
     /**
      * Check whether this entry contains a compressed message set.
+     *
      * @return true if so, false otherwise
      */
     public boolean isCompressed() {
@@ -91,6 +99,7 @@ public abstract class LogEntry implements Iterable<LogEntry> {
 
     /**
      * Write this entry into a buffer.
+     *
      * @param buffer The buffer to write the entry to
      */
     public void writeTo(ByteBuffer buffer) {
@@ -102,12 +111,14 @@ public abstract class LogEntry implements Iterable<LogEntry> {
      * Get an iterator for the nested entries contained within this log entry. Note that
      * if the entry is not compressed, then this method will return an iterator over the
      * shallow entry only (i.e. this object).
+     *
      * @return An iterator over the entries contained within this log entry
      */
     @Override
     public Iterator<LogEntry> iterator() {
-        if (isCompressed())
+        if (isCompressed()) {
             return new RecordsIterator.DeepRecordsIterator(this, false, Integer.MAX_VALUE, BufferSupplier.NO_CACHING);
+        }
         return Collections.singletonList(this).iterator();
     }
 
