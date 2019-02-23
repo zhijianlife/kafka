@@ -197,6 +197,8 @@ public final class Cluster {
     }
 
     /**
+     * 获取当前分区 leader 副本所在的节点
+     *
      * Get the current leader for the given topic-partition
      *
      * @param topicPartition The topic and partition we want to know the leader for
