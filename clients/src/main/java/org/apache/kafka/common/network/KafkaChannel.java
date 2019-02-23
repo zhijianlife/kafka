@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,18 +17,19 @@
 
 package org.apache.kafka.common.network;
 
+import org.apache.kafka.common.utils.Utils;
 
 import java.io.IOException;
-
 import java.net.InetAddress;
 import java.net.Socket;
 import java.nio.channels.SelectionKey;
-
 import java.security.Principal;
 
-import org.apache.kafka.common.utils.Utils;
-
+/**
+ * 对 SocketChannel 的封装
+ */
 public class KafkaChannel {
+
     private final String id;
     private final TransportLayer transportLayer;
     private final Authenticator authenticator;
@@ -65,17 +66,18 @@ public class KafkaChannel {
      * Does handshake of transportLayer and authentication using configured authenticator
      */
     public void prepare() throws IOException {
-        if (!transportLayer.ready())
+        if (!transportLayer.ready()) {
             transportLayer.handshake();
-        if (transportLayer.ready() && !authenticator.complete())
+        }
+        if (transportLayer.ready() && !authenticator.complete()) {
             authenticator.authenticate();
+        }
     }
 
     public void disconnect() {
         disconnected = true;
         transportLayer.disconnect();
     }
-
 
     public boolean finishConnect() throws IOException {
         return transportLayer.finishConnect();
@@ -90,14 +92,16 @@ public class KafkaChannel {
     }
 
     public void mute() {
-        if (!disconnected)
+        if (!disconnected) {
             transportLayer.removeInterestOps(SelectionKey.OP_READ);
+        }
         muted = true;
     }
 
     public void unmute() {
-        if (!disconnected)
+        if (!disconnected) {
             transportLayer.addInterestOps(SelectionKey.OP_READ);
+        }
         muted = false;
     }
 
@@ -128,14 +132,16 @@ public class KafkaChannel {
 
     public String socketDescription() {
         Socket socket = transportLayer.socketChannel().socket();
-        if (socket.getInetAddress() == null)
+        if (socket.getInetAddress() == null) {
             return socket.getLocalAddress().toString();
+        }
         return socket.getInetAddress().toString();
     }
 
     public void setSend(Send send) {
-        if (this.send != null)
+        if (this.send != null) {
             throw new IllegalStateException("Attempt to begin a send operation with prior send operation still in progress.");
+        }
         this.send = send;
         this.transportLayer.addInterestOps(SelectionKey.OP_WRITE);
     }
@@ -171,8 +177,9 @@ public class KafkaChannel {
 
     private boolean send(Send send) throws IOException {
         send.writeTo(transportLayer);
-        if (send.completed())
+        if (send.completed()) {
             transportLayer.removeInterestOps(SelectionKey.OP_WRITE);
+        }
 
         return send.completed();
     }

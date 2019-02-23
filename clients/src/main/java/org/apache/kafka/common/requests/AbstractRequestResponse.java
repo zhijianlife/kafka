@@ -10,6 +10,7 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.common.requests;
 
 import org.apache.kafka.common.protocol.types.Struct;
@@ -17,6 +18,7 @@ import org.apache.kafka.common.protocol.types.Struct;
 import java.nio.ByteBuffer;
 
 public abstract class AbstractRequestResponse {
+
     protected final Struct struct;
 
     public AbstractRequestResponse(Struct struct) {
@@ -53,12 +55,15 @@ public abstract class AbstractRequestResponse {
 
     @Override
     public boolean equals(Object obj) {
-        if (this == obj)
+        if (this == obj) {
             return true;
-        if (obj == null)
+        }
+        if (obj == null) {
             return false;
-        if (getClass() != obj.getClass())
+        }
+        if (getClass() != obj.getClass()) {
             return false;
+        }
         AbstractRequestResponse other = (AbstractRequestResponse) obj;
         return struct.equals(other.struct);
     }

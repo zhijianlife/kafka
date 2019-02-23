@@ -3,20 +3,21 @@
  * file distributed with this work for additional information regarding copyright ownership. The ASF licenses this file
  * to You under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
  * License. You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
-package org.apache.kafka.clients;
 
-import java.io.Closeable;
-import java.util.List;
+package org.apache.kafka.clients;
 
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.requests.AbstractRequest;
+
+import java.io.Closeable;
+import java.util.List;
 
 /**
  * The interface for {@link NetworkClient}
@@ -24,9 +25,8 @@ import org.apache.kafka.common.requests.AbstractRequest;
 public interface KafkaClient extends Closeable {
 
     /**
-     * Check if we are currently ready to send another request to the given node but don't attempt to connect if we
-     * aren't.
-     * 
+     * Check if we are currently ready to send another request to the given node but don't attempt to connect if we aren't.
+     *
      * @param node The node to check
      * @param now The current timestamp
      */
@@ -35,7 +35,7 @@ public interface KafkaClient extends Closeable {
     /**
      * Initiate a connection to the given node (if necessary), and return true if already connected. The readiness of a
      * node will change only when poll is invoked.
-     * 
+     *
      * @param node The node to connect to.
      * @param now The current time
      * @return true iff we are ready to immediately initiate the sending of another request to the given node.
@@ -46,7 +46,7 @@ public interface KafkaClient extends Closeable {
      * Returns the number of milliseconds to wait, based on the connection state, before attempting to send data. When
      * disconnected, this respects the reconnect backoff time. When connecting or connected, this handles slow/stalled
      * connections.
-     * 
+     *
      * @param node The node to check
      * @param now The current timestamp
      * @return The number of milliseconds to wait.
@@ -65,6 +65,7 @@ public interface KafkaClient extends Closeable {
 
     /**
      * Queue up the given request for sending. Requests can only be sent on ready connections.
+     *
      * @param request The request
      * @param now The current timestamp
      */
@@ -72,10 +73,10 @@ public interface KafkaClient extends Closeable {
 
     /**
      * Do actual reads and writes from sockets.
-     * 
+     *
      * @param timeout The maximum amount of time to wait for responses in ms, must be non-negative. The implementation
-     *                is free to use a lower value if appropriate (common reasons for this are a lower request or
-     *                metadata update timeout)
+     * is free to use a lower value if appropriate (common reasons for this are a lower request or
+     * metadata update timeout)
      * @param now The current time in ms
      * @throws IllegalStateException If a request is sent to an unready node
      */
@@ -92,7 +93,7 @@ public interface KafkaClient extends Closeable {
      * Choose the node with the fewest outstanding requests. This method will prefer a node with an existing connection,
      * but will potentially choose a node for which we don't yet have a connection if all existing connections are in
      * use.
-     * 
+     *
      * @param now The current time in ms
      * @return The node with the fewest in-flight requests.
      */
@@ -105,7 +106,7 @@ public interface KafkaClient extends Closeable {
 
     /**
      * Get the total in-flight requests for a particular node
-     * 
+     *
      * @param nodeId The id of the node
      */
     int inFlightRequestCount(String nodeId);
@@ -132,10 +133,12 @@ public interface KafkaClient extends Closeable {
      * @param nodeId the node to send to
      * @param requestBuilder the request builder to use
      * @param createdTimeMs the time in milliseconds to use as the creation time of the request
-     * @param expectResponse true iff we expect a response
+     * @param expectResponse true if we expect a response
      * @param callback the callback to invoke when we get a response
      */
-    ClientRequest newClientRequest(String nodeId, AbstractRequest.Builder<?> requestBuilder,
-                                          long createdTimeMs, boolean expectResponse,
-                                          RequestCompletionHandler callback);
+    ClientRequest newClientRequest(String nodeId,
+                                   AbstractRequest.Builder<?> requestBuilder,
+                                   long createdTimeMs,
+                                   boolean expectResponse,
+                                   RequestCompletionHandler callback);
 }

@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 
 public class ProduceRequest extends AbstractRequest {
+
     private static final String ACKS_KEY_NAME = "acks";
     private static final String TIMEOUT_KEY_NAME = "timeout";
     private static final String TOPIC_DATA_KEY_NAME = "topic_data";
@@ -99,8 +100,8 @@ public class ProduceRequest extends AbstractRequest {
             for (Map.Entry<Integer, MemoryRecords> partitionEntry : entry.getValue().entrySet()) {
                 MemoryRecords records = partitionEntry.getValue();
                 Struct part = topicData.instance(PARTITION_DATA_KEY_NAME)
-                                       .set(PARTITION_KEY_NAME, partitionEntry.getKey())
-                                       .set(RECORD_SET_KEY_NAME, records);
+                        .set(PARTITION_KEY_NAME, partitionEntry.getKey())
+                        .set(RECORD_SET_KEY_NAME, records);
                 partitionArray.add(part);
             }
             topicData.set(PARTITION_DATA_KEY_NAME, partitionArray.toArray());
@@ -153,8 +154,9 @@ public class ProduceRequest extends AbstractRequest {
     @Override
     public AbstractResponse getErrorResponse(Throwable e) {
         /* In case the producer doesn't actually want any response */
-        if (acks == 0)
+        if (acks == 0) {
             return null;
+        }
 
         Map<TopicPartition, ProduceResponse.PartitionResponse> responseMap = new HashMap<>();
         ProduceResponse.PartitionResponse partitionResponse = new ProduceResponse.PartitionResponse(Errors.forException(e));
@@ -193,9 +195,10 @@ public class ProduceRequest extends AbstractRequest {
     public Map<TopicPartition, MemoryRecords> partitionRecordsOrFail() {
         // Store it in a local variable to protect against concurrent updates
         Map<TopicPartition, MemoryRecords> partitionRecords = this.partitionRecords;
-        if (partitionRecords == null)
+        if (partitionRecords == null) {
             throw new IllegalStateException("The partition records are no longer available because " +
                     "clearPartitionRecords() has been invoked.");
+        }
         return partitionRecords;
     }
 

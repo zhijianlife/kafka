@@ -54,6 +54,7 @@ interface MetadataUpdater {
      *
      * This provides a mechanism for the `MetadataUpdater` implementation to use the NetworkClient instance for its own
      * requests with special handling for disconnections of such requests.
+     *
      * @param destination
      */
     void handleDisconnection(String destination);

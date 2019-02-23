@@ -3,13 +3,14 @@
  * file distributed with this work for additional information regarding copyright ownership. The ASF licenses this file
  * to You under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
  * License. You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.clients;
 
 import java.util.ArrayDeque;
@@ -22,10 +23,14 @@ import java.util.Map;
 
 /**
  * The set of requests which have been sent or are being sent but haven't yet received a response
+ *
+ * 缓存已经发送出去但还没有收到响应的 ClientRequest
  */
 final class InFlightRequests {
 
     private final int maxInFlightRequestsPerConnection;
+
+    /** key 是节点 ID，value 是发送到该节点的 ClientRequest 对象集合 */
     private final Map<String, Deque<NetworkClient.InFlightRequest>> requests = new HashMap<>();
 
     public InFlightRequests(int maxInFlightRequestsPerConnection) {
@@ -50,8 +55,9 @@ final class InFlightRequests {
      */
     private Deque<NetworkClient.InFlightRequest> requestQueue(String node) {
         Deque<NetworkClient.InFlightRequest> reqs = requests.get(node);
-        if (reqs == null || reqs.isEmpty())
+        if (reqs == null || reqs.isEmpty()) {
             throw new IllegalStateException("Response from server for which there are no in-flight requests.");
+        }
         return reqs;
     }
 
@@ -64,6 +70,7 @@ final class InFlightRequests {
 
     /**
      * Get the last request we sent to the given node (but don't remove it from the queue)
+     *
      * @param node The node id
      */
     public NetworkClient.InFlightRequest lastSent(String node) {
@@ -72,6 +79,7 @@ final class InFlightRequests {
 
     /**
      * Complete the last request that was sent to a particular node.
+     *
      * @param node The node the request was sent to
      * @return The request
      */
@@ -80,6 +88,8 @@ final class InFlightRequests {
     }
 
     /**
+     * NetworkClient 调用此方法判断是否可以向指定节点发送请求
+     *
      * Can we send more requests to this node?
      *
      * @param node Node in question
@@ -88,11 +98,12 @@ final class InFlightRequests {
     public boolean canSendMore(String node) {
         Deque<NetworkClient.InFlightRequest> queue = requests.get(node);
         return queue == null || queue.isEmpty() ||
-               (queue.peekFirst().send.completed() && queue.size() < this.maxInFlightRequestsPerConnection);
+                (queue.peekFirst().send.completed() && queue.size() < this.maxInFlightRequestsPerConnection);
     }
 
     /**
      * Return the number of inflight requests directed at the given node
+     *
      * @param node The node
      * @return The request count.
      */
@@ -142,12 +153,13 @@ final class InFlightRequests {
             if (!deque.isEmpty()) {
                 NetworkClient.InFlightRequest request = deque.peekLast();
                 long timeSinceSend = now - request.sendTimeMs;
-                if (timeSinceSend > requestTimeout)
+                if (timeSinceSend > requestTimeout) {
                     nodeIds.add(nodeId);
+                }
             }
         }
 
         return nodeIds;
     }
-    
+
 }

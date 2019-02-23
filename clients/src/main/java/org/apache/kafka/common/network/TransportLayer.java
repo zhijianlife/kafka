@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,22 +17,20 @@
 
 package org.apache.kafka.common.network;
 
-/*
+import java.io.IOException;
+import java.nio.channels.FileChannel;
+import java.nio.channels.GatheringByteChannel;
+import java.nio.channels.ScatteringByteChannel;
+import java.nio.channels.SocketChannel;
+import java.security.Principal;
+
+/**
  * Transport layer for underlying communication.
  * At very basic level it is wrapper around SocketChannel and can be used as substitute for SocketChannel
  * and other network Channel implementations.
  * As NetworkClient replaces BlockingChannel and other implementations we will be using KafkaChannel as
  * a network I/O channel.
  */
-import java.io.IOException;
-import java.nio.channels.FileChannel;
-import java.nio.channels.SocketChannel;
-import java.nio.channels.ScatteringByteChannel;
-import java.nio.channels.GatheringByteChannel;
-
-import java.security.Principal;
-
-
 public interface TransportLayer extends ScatteringByteChannel, GatheringByteChannel {
 
     /**
@@ -60,12 +58,12 @@ public interface TransportLayer extends ScatteringByteChannel, GatheringByteChan
      */
     SocketChannel socketChannel();
 
-
     /**
      * Performs SSL handshake hence is a no-op for the non-secure
      * implementation
+     *
      * @throws IOException
-    */
+     */
     void handshake() throws IOException;
 
     /**
