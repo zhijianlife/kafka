@@ -66,7 +66,7 @@ public class NetworkClient implements KafkaClient {
 
     private final Random randOffset;
 
-    /* the state of each node's connection */
+    /** the state of each node's connection */
     private final ClusterConnectionStates connectionStates;
 
     /* the set of requests currently being sent or awaiting a response */
@@ -270,9 +270,10 @@ public class NetworkClient implements KafkaClient {
         doSend(request, false, now);
     }
 
-    private void sendInternalMetadataRequest(MetadataRequest.Builder builder,
-                                             String nodeConnectionId, long now) {
+    private void sendInternalMetadataRequest(MetadataRequest.Builder builder, String nodeConnectionId, long now) {
+        // 将 MetadataRequest 封装成 ClientRequest
         ClientRequest clientRequest = newClientRequest(nodeConnectionId, builder, now, true);
+        // 缓存请求，在下次 poll 操作中进行发送
         doSend(clientRequest, true, now);
     }
 
@@ -658,9 +659,11 @@ public class NetworkClient implements KafkaClient {
     class DefaultMetadataUpdater implements MetadataUpdater {
 
         /* the current cluster metadata */
+        /** 记录了集群元数据的 metadata 对象 */
         private final Metadata metadata;
 
         /* true iff there is a metadata request that has been sent and for which we have not yet received a response */
+        /** 标识是否已经发送了 MetadataRequest 请求更新 Metadata，如果已经发送则没有必要重复 */
         private boolean metadataFetchInProgress;
 
         DefaultMetadataUpdater(Metadata metadata) {
@@ -678,26 +681,40 @@ public class NetworkClient implements KafkaClient {
             return !this.metadataFetchInProgress && this.metadata.timeToNextUpdate(now) == 0;
         }
 
+        /**
+         * 用来判断当前的 metadata 中保存的集群元数据是否需要更新
+         *
+         * @param now
+         * @return
+         */
         @Override
         public long maybeUpdate(long now) {
             // should we update our metadata?
+            // 获取下次更新集群信息的时间戳
             long timeToNextMetadataUpdate = metadata.timeToNextUpdate(now);
+            // 检查是否已经发送了 MetadataRequest 请求
             long waitForMetadataFetch = this.metadataFetchInProgress ? requestTimeoutMs : 0;
 
+            // 计算当前距离下次发送 MetadataRequest 请求的时间差
             long metadataTimeout = Math.max(timeToNextMetadataUpdate, waitForMetadataFetch);
             if (metadataTimeout > 0) {
+                // 如果时间还未到，则暂时不更新
                 return metadataTimeout;
             }
 
-            // Beware that the behavior of this method and the computation of timeouts for poll() are
-            // highly dependent on the behavior of leastLoadedNode.
+            /*
+             * Beware that the behavior of this method and the computation of timeouts for poll()
+             * are highly dependent on the behavior of leastLoadedNode.
+             *
+             * 找到负载最小的节点，如果没有可用的节点则返回 null
+             */
             Node node = leastLoadedNode(now);
             if (node == null) {
                 log.debug("Give up sending metadata request since no node is available");
                 return reconnectBackoffMs;
             }
 
-            return maybeUpdate(now, node);
+            return this.maybeUpdate(now, node);
         }
 
         @Override
@@ -716,7 +733,9 @@ public class NetworkClient implements KafkaClient {
 
         @Override
         public void handleCompletedMetadataResponse(RequestHeader requestHeader, long now, MetadataResponse response) {
+            // 标识是发送的 MetadataRequest 请求更新 Metadata 已经结束
             this.metadataFetchInProgress = false;
+            // 获取响应中的集群信息
             Cluster cluster = response.cluster();
             // check if any topics metadata failed to get updated
             Map<String, Errors> errors = response.errors();
@@ -757,55 +776,69 @@ public class NetworkClient implements KafkaClient {
         private long maybeUpdate(long now, Node node) {
             String nodeConnectionId = node.idString();
 
+            // 如果允许向该节点发送请求
             if (canSendRequest(nodeConnectionId)) {
+                // 标识已经发送了 MetadataRequest 请求
                 this.metadataFetchInProgress = true;
                 MetadataRequest.Builder metadataRequest;
                 if (metadata.needMetadataForAllTopics()) {
+                    // 需要更新所有 topic 的元数据信息
                     metadataRequest = MetadataRequest.Builder.allTopics();
                 } else {
                     metadataRequest = new MetadataRequest.Builder(new ArrayList<>(metadata.topics()));
                 }
 
+                // 将 MetadataRequest 包装成 ClientRequest 进行发送
                 log.debug("Sending metadata request {} to node {}", metadataRequest, node.id());
                 sendInternalMetadataRequest(metadataRequest, nodeConnectionId, now);
                 return requestTimeoutMs;
             }
 
-            // If there's any connection establishment underway, wait until it completes. This prevents
-            // the client from unnecessarily connecting to additional nodes while a previous connection
-            // attempt has not been completed.
+            /*
+             * If there's any connection establishment underway, wait until it completes.
+             * This prevents the client from unnecessarily connecting to additional nodes
+             * while a previous connection attempt has not been completed.
+             */
             if (isAnyNodeConnecting()) {
-                // Strictly the timeout we should return here is "connect timeout", but as we don't
-                // have such application level configuration, using reconnect backoff instead.
+                /*
+                 * Strictly the timeout we should return here is "connect timeout",
+                 * but as we don't have such application level configuration, using reconnect backoff instead.
+                 */
                 return reconnectBackoffMs;
             }
 
             if (connectionStates.canConnect(nodeConnectionId, now)) {
                 // we don't have a connection to this node right now, make one
                 log.debug("Initialize connection to node {} for sending metadata request", node.id());
-                initiateConnect(node, now);
+                initiateConnect(node, now); // 初始化连接
                 return reconnectBackoffMs;
             }
 
-            // connected, but can't send more OR connecting
-            // In either case, we just need to wait for a network event to let us know the selected
-            // connection might be usable again.
+            /*
+             * connected, but can't send more OR connecting
+             * In either case, we just need to wait for a network event to let us know the selected
+             * connection might be usable again.
+             */
             return Long.MAX_VALUE;
         }
 
     }
 
     @Override
-    public ClientRequest newClientRequest(String nodeId, AbstractRequest.Builder<?> requestBuilder, long createdTimeMs,
+    public ClientRequest newClientRequest(String nodeId,
+                                          AbstractRequest.Builder<?> requestBuilder,
+                                          long createdTimeMs,
                                           boolean expectResponse) {
         return newClientRequest(nodeId, requestBuilder, createdTimeMs, expectResponse, null);
     }
 
     @Override
-    public ClientRequest newClientRequest(String nodeId, AbstractRequest.Builder<?> requestBuilder, long createdTimeMs,
-                                          boolean expectResponse, RequestCompletionHandler callback) {
-        return new ClientRequest(nodeId, requestBuilder, correlation++, clientId, createdTimeMs, expectResponse,
-                callback);
+    public ClientRequest newClientRequest(String nodeId,
+                                          AbstractRequest.Builder<?> requestBuilder,
+                                          long createdTimeMs,
+                                          boolean expectResponse,
+                                          RequestCompletionHandler callback) {
+        return new ClientRequest(nodeId, requestBuilder, correlation++, clientId, createdTimeMs, expectResponse, callback);
     }
 
     static class InFlightRequest {

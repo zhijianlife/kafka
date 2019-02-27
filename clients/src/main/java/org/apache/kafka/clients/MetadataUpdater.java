@@ -20,10 +20,12 @@ import org.apache.kafka.common.requests.RequestHeader;
 import java.util.List;
 
 /**
- * The interface used by `NetworkClient` to request cluster metadata info to be updated and to retrieve the cluster nodes
- * from such metadata. This is an internal class.
+ * The interface used by `NetworkClient` to request cluster metadata info to be updated,
+ * and to retrieve the cluster nodes from such metadata. This is an internal class.
  * <p>
  * This class is not thread-safe!
+ *
+ * 辅助 {@link NetworkClient} 更新元数据的接口
  */
 interface MetadataUpdater {
 

@@ -10,6 +10,7 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.common.requests;
 
 import org.apache.kafka.common.Node;
@@ -64,7 +65,7 @@ public class MetadataRequest extends AbstractRequest {
         public String toString() {
             StringBuilder bld = new StringBuilder();
             bld.append("(type=MetadataRequest").
-                append(", topics=");
+                    append(", topics=");
             if (topics == null) {
                 bld.append("<ALL>");
             } else {
@@ -91,10 +92,11 @@ public class MetadataRequest extends AbstractRequest {
     public MetadataRequest(List<String> topics, short version) {
         super(new Struct(ProtoUtils.requestSchema(ApiKeys.METADATA.id, version)),
                 version);
-        if (topics == null)
+        if (topics == null) {
             struct.set(TOPICS_KEY_NAME, null);
-        else
+        } else {
             struct.set(TOPICS_KEY_NAME, topics.toArray());
+        }
         this.topics = topics;
     }
 
@@ -103,7 +105,7 @@ public class MetadataRequest extends AbstractRequest {
         Object[] topicArray = struct.getArray(TOPICS_KEY_NAME);
         if (topicArray != null) {
             topics = new ArrayList<>();
-            for (Object topicObj: topicArray) {
+            for (Object topicObj : topicArray) {
                 topics.add((String) topicObj);
             }
         } else {

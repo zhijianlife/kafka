@@ -69,7 +69,7 @@ public final class Metadata {
     /** 集群信息 */
     private Cluster cluster;
 
-    /** 标记是不是需要强制更新集群信息 */
+    /** 标记是否需要强制更新集群信息 */
     private boolean needUpdate;
 
     /** Topics with expiry time，记录集群中所有的 topic 信息 */
@@ -138,8 +138,7 @@ public final class Metadata {
 
     /**
      * The next time to update the cluster info is the maximum of the time the current info will expire and the time the
-     * current info can be updated (i.e. backoff time has elapsed); If an update has been request then the expiry time
-     * is now
+     * current info can be updated (i.e. backoff time has elapsed); If an update has been request then the expiry time is now
      */
     public synchronized long timeToNextUpdate(long nowMs) {
         long timeToExpire = needUpdate ? 0 : Math.max(this.lastSuccessfulRefreshMs + this.metadataExpireMs - nowMs, 0);

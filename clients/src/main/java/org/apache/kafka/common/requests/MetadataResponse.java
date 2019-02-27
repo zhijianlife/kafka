@@ -10,6 +10,7 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.common.requests;
 
 import org.apache.kafka.common.Cluster;
@@ -107,19 +108,22 @@ public class MetadataResponse extends AbstractResponse {
             broker.set(HOST_KEY_NAME, node.host());
             broker.set(PORT_KEY_NAME, node.port());
             // This field only exists in v1+
-            if (broker.hasField(RACK_KEY_NAME))
+            if (broker.hasField(RACK_KEY_NAME)) {
                 broker.set(RACK_KEY_NAME, node.rack());
+            }
             brokerArray.add(broker);
         }
         struct.set(BROKERS_KEY_NAME, brokerArray.toArray());
 
         // This field only exists in v1+
-        if (struct.hasField(CONTROLLER_ID_KEY_NAME))
+        if (struct.hasField(CONTROLLER_ID_KEY_NAME)) {
             struct.set(CONTROLLER_ID_KEY_NAME, controllerId);
+        }
 
         // This field only exists in v2+
-        if (struct.hasField(CLUSTER_ID_KEY_NAME))
+        if (struct.hasField(CLUSTER_ID_KEY_NAME)) {
             struct.set(CLUSTER_ID_KEY_NAME, clusterId);
+        }
 
         List<Struct> topicMetadataArray = new ArrayList<>(topicMetadata.size());
         for (TopicMetadata metadata : topicMetadata) {
@@ -127,8 +131,9 @@ public class MetadataResponse extends AbstractResponse {
             topicData.set(TOPIC_KEY_NAME, metadata.topic);
             topicData.set(TOPIC_ERROR_CODE_KEY_NAME, metadata.error.code());
             // This field only exists in v1+
-            if (topicData.hasField(IS_INTERNAL_KEY_NAME))
+            if (topicData.hasField(IS_INTERNAL_KEY_NAME)) {
                 topicData.set(IS_INTERNAL_KEY_NAME, metadata.isInternal());
+            }
 
             List<Struct> partitionMetadataArray = new ArrayList<>(metadata.partitionMetadata.size());
             for (PartitionMetadata partitionMetadata : metadata.partitionMetadata()) {
@@ -165,15 +170,16 @@ public class MetadataResponse extends AbstractResponse {
             int port = broker.getInt(PORT_KEY_NAME);
             // This field only exists in v1+
             // When we can't know if a rack exists in a v0 response we default to null
-            String rack =  broker.hasField(RACK_KEY_NAME) ? broker.getString(RACK_KEY_NAME) : null;
+            String rack = broker.hasField(RACK_KEY_NAME) ? broker.getString(RACK_KEY_NAME) : null;
             brokers.put(nodeId, new Node(nodeId, host, port, rack));
         }
 
         // This field only exists in v1+
         // When we can't know the controller id in a v0 response we default to NO_CONTROLLER_ID
         int controllerId = NO_CONTROLLER_ID;
-        if (struct.hasField(CONTROLLER_ID_KEY_NAME))
+        if (struct.hasField(CONTROLLER_ID_KEY_NAME)) {
             controllerId = struct.getInt(CONTROLLER_ID_KEY_NAME);
+        }
 
         // This field only exists in v2+
         if (struct.hasField(CLUSTER_ID_KEY_NAME)) {
@@ -205,18 +211,20 @@ public class MetadataResponse extends AbstractResponse {
 
                 List<Node> replicaNodes = new ArrayList<>(replicas.length);
                 for (Object replicaNodeId : replicas)
-                    if (brokers.containsKey(replicaNodeId))
+                    if (brokers.containsKey(replicaNodeId)) {
                         replicaNodes.add(brokers.get(replicaNodeId));
-                    else
+                    } else {
                         replicaNodes.add(new Node((int) replicaNodeId, "", -1));
+                    }
 
                 Object[] isr = (Object[]) partitionInfo.get(ISR_KEY_NAME);
                 List<Node> isrNodes = new ArrayList<>(isr.length);
                 for (Object isrNode : isr)
-                    if (brokers.containsKey(isrNode))
+                    if (brokers.containsKey(isrNode)) {
                         isrNodes.add(brokers.get(isrNode));
-                    else
+                    } else {
                         isrNodes.add(new Node((int) isrNode, "", -1));
+                    }
 
                 partitionMetadata.add(new PartitionMetadata(partitionError, partition, leaderNode, replicaNodes, isrNodes));
             }
@@ -231,21 +239,24 @@ public class MetadataResponse extends AbstractResponse {
 
     private Node getControllerNode(int controllerId, Collection<Node> brokers) {
         for (Node broker : brokers) {
-            if (broker.id() == controllerId)
+            if (broker.id() == controllerId) {
                 return broker;
+            }
         }
         return null;
     }
 
     /**
      * Get a map of the topics which had metadata errors
+     *
      * @return the map
      */
     public Map<String, Errors> errors() {
         Map<String, Errors> errors = new HashMap<>();
         for (TopicMetadata metadata : topicMetadata) {
-            if (metadata.error != Errors.NONE)
+            if (metadata.error != Errors.NONE) {
                 errors.put(metadata.topic(), metadata.error);
+            }
         }
         return errors;
     }
@@ -256,8 +267,9 @@ public class MetadataResponse extends AbstractResponse {
     public Set<String> topicsByError(Errors error) {
         Set<String> errorTopics = new HashSet<>();
         for (TopicMetadata metadata : topicMetadata) {
-            if (metadata.error == error)
+            if (metadata.error == error) {
                 errorTopics.add(metadata.topic());
+            }
         }
         return errorTopics;
     }
@@ -271,9 +283,9 @@ public class MetadataResponse extends AbstractResponse {
     public Set<String> unavailableTopics() {
         Set<String> invalidMetadataTopics = new HashSet<>();
         for (TopicMetadata topicMetadata : this.topicMetadata) {
-            if (topicMetadata.error.exception() instanceof InvalidMetadataException)
+            if (topicMetadata.error.exception() instanceof InvalidMetadataException) {
                 invalidMetadataTopics.add(topicMetadata.topic);
-            else {
+            } else {
                 for (PartitionMetadata partitionMetadata : topicMetadata.partitionMetadata) {
                     if (partitionMetadata.error.exception() instanceof InvalidMetadataException) {
                         invalidMetadataTopics.add(topicMetadata.topic);
@@ -287,6 +299,7 @@ public class MetadataResponse extends AbstractResponse {
 
     /**
      * Get a snapshot of the cluster metadata from this response
+     *
      * @return the cluster snapshot
      */
     public Cluster cluster() {
@@ -294,8 +307,9 @@ public class MetadataResponse extends AbstractResponse {
         List<PartitionInfo> partitions = new ArrayList<>();
         for (TopicMetadata metadata : topicMetadata) {
             if (metadata.error == Errors.NONE) {
-                if (metadata.isInternal)
+                if (metadata.isInternal) {
                     internalTopics.add(metadata.topic);
+                }
                 for (PartitionMetadata partitionMetadata : metadata.partitionMetadata)
                     partitions.add(new PartitionInfo(
                             metadata.topic,
@@ -311,6 +325,7 @@ public class MetadataResponse extends AbstractResponse {
 
     /**
      * Get all brokers returned in metadata response
+     *
      * @return the brokers
      */
     public Collection<Node> brokers() {
@@ -319,6 +334,7 @@ public class MetadataResponse extends AbstractResponse {
 
     /**
      * Get all topic metadata returned in the metadata response
+     *
      * @return the topicMetadata
      */
     public Collection<TopicMetadata> topicMetadata() {
@@ -327,6 +343,7 @@ public class MetadataResponse extends AbstractResponse {
 
     /**
      * The controller node returned in metadata response
+     *
      * @return the controller node or null if it doesn't exist
      */
     public Node controller() {
@@ -335,6 +352,7 @@ public class MetadataResponse extends AbstractResponse {
 
     /**
      * The cluster identifier returned in the metadata response.
+     *
      * @return cluster identifier if it is present in the response, null otherwise.
      */
     public String clusterId() {

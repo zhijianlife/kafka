@@ -24,7 +24,7 @@ import java.util.Map;
 /**
  * The set of requests which have been sent or are being sent but haven't yet received a response
  *
- * 缓存已经发送出去但还没有收到响应的 ClientRequest
+ * 缓存已经发出去但没有收到响应的 {@link ClientRequest}
  */
 final class InFlightRequests {
 
