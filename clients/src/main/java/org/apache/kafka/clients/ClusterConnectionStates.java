@@ -23,6 +23,7 @@ final class ClusterConnectionStates {
 
     private final long reconnectBackoffMs;
 
+    /** key 是节点 ID， value 是对应节点的连接状态 */
     private final Map<String, NodeConnectionState> nodeState;
 
     public ClusterConnectionStates(long reconnectBackoffMs) {
@@ -43,7 +44,12 @@ final class ClusterConnectionStates {
         if (state == null) {
             return true;
         } else {
-            return state.state == ConnectionState.DISCONNECTED && now - state.lastConnectAttemptMs >= this.reconnectBackoffMs;
+            /*
+             * 1. 连接状态是 DISCONNECTED
+             * 2. 两次重试连接的间隔大于重试的退避时间
+             */
+            return state.state == ConnectionState.DISCONNECTED
+                    && now - state.lastConnectAttemptMs >= this.reconnectBackoffMs;
         }
     }
 
@@ -184,7 +190,10 @@ final class ClusterConnectionStates {
      */
     private static class NodeConnectionState {
 
+        /** 节点连接状态 */
         ConnectionState state;
+
+        /** 最近一次尝试连接的时间戳 */
         long lastConnectAttemptMs;
 
         public NodeConnectionState(ConnectionState state, long lastConnectAttempt) {

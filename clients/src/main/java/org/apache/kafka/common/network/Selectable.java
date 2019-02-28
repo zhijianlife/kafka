@@ -70,6 +70,8 @@ public interface Selectable {
 
     /**
      * The list of sends that completed on the last {@link #poll(long) poll()} call.
+     *
+     * 保存最近一次 poll 请求中发送成功的请求
      */
     List<Send> completedSends();
 

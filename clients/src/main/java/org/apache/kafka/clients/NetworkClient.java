@@ -54,6 +54,8 @@ import java.util.Set;
  * user-facing producer and consumer clients.
  * <p>
  * This class is not thread-safe!
+ *
+ * 通用网络客户端
  */
 public class NetworkClient implements KafkaClient {
 
@@ -69,7 +71,7 @@ public class NetworkClient implements KafkaClient {
     /** the state of each node's connection */
     private final ClusterConnectionStates connectionStates;
 
-    /* the set of requests currently being sent or awaiting a response */
+    /** the set of requests currently being sent or awaiting a response */
     private final InFlightRequests inFlightRequests;
 
     /* the socket send buffer size in bytes */
@@ -171,6 +173,8 @@ public class NetworkClient implements KafkaClient {
     /**
      * Begin connecting to the given node, return true if we are already connected and ready to send to that node.
      *
+     * 检查目标节点是否准备好接收请求
+     *
      * @param node The node to check
      * @param now The current timestamp
      * @return True if we are ready to send to the given node
@@ -181,14 +185,17 @@ public class NetworkClient implements KafkaClient {
             throw new IllegalArgumentException("Cannot connect to empty node " + node);
         }
 
-        if (isReady(node, now)) {
+        if (this.isReady(node, now)) {
+            // 目标节点已经准备好接收请求
             return true;
         }
 
-        if (connectionStates.canConnect(node.idString(), now))
+        // 目标节点未准备好接收请求
+
         // if we are interested in sending to a node and we don't have a connection to it, initiate one
-        {
-            initiateConnect(node, now);
+        if (connectionStates.canConnect(node.idString(), now)) {
+            // 当前允许创建连接，创建到目标节点的连接
+            this.initiateConnect(node, now);
         }
 
         return false;
@@ -245,8 +252,14 @@ public class NetworkClient implements KafkaClient {
      */
     @Override
     public boolean isReady(Node node, long now) {
-        // if we need to update our metadata now declare all requests unready to make metadata requests first
-        // priority
+        /*
+         * if we need to update our metadata now declare all requests unready to make metadata requests first priority
+         *
+         * 判定 ready 的 3 个条件：
+         * 1. metadata 并未处于正在更新或需要更新的状态
+         * 2. 连接已经建立成功且连接正常
+         * 3. InFlightRequests.canSendMore 方法返回 true
+         */
         return !metadataUpdater.isUpdateDue(now) && canSendRequest(node.idString());
     }
 
@@ -256,7 +269,9 @@ public class NetworkClient implements KafkaClient {
      * @param node The node
      */
     private boolean canSendRequest(String node) {
-        return connectionStates.isReady(node) && selector.isChannelReady(node) && inFlightRequests.canSendMore(node);
+        return connectionStates.isReady(node) // 连接已经准备好
+                && selector.isChannelReady(node) // 网络协议正常，且通过了身份认证
+                && inFlightRequests.canSendMore(node); //
     }
 
     /**
@@ -267,7 +282,7 @@ public class NetworkClient implements KafkaClient {
      */
     @Override
     public void send(ClientRequest request, long now) {
-        doSend(request, false, now);
+        this.doSend(request, false, now);
     }
 
     private void sendInternalMetadataRequest(MetadataRequest.Builder builder, String nodeConnectionId, long now) {
@@ -280,43 +295,45 @@ public class NetworkClient implements KafkaClient {
     private void doSend(ClientRequest clientRequest, boolean isInternalRequest, long now) {
         String nodeId = clientRequest.destination();
         if (!isInternalRequest) {
-            // If this request came from outside the NetworkClient, validate
-            // that we can send data.  If the request is internal, we trust
-            // that that internal code has done this validation.  Validation
-            // will be slightly different for some internal requests (for
-            // example, ApiVersionsRequests can be sent prior to being in
-            // READY state.)
-            if (!canSendRequest(nodeId)) {
+            /*
+             * If this request came from outside the NetworkClient, validate that we can send data.
+             * If the request is internal, we trust that internal code has done this validation.
+             * Validation will be slightly different for some internal requests
+             * (for example, ApiVersionsRequests can be sent prior to being in READY state.)
+             */
+            // 检测是否可以向目标节点发送请求
+            if (!this.canSendRequest(nodeId)) {
                 throw new IllegalStateException("Attempt to send a request to node " + nodeId + " which is not ready.");
             }
         }
-        AbstractRequest request = null;
+        AbstractRequest request;
         AbstractRequest.Builder<?> builder = clientRequest.requestBuilder();
         try {
             NodeApiVersions versionInfo = nodeApiVersions.get(nodeId);
-            // Note: if versionInfo is null, we have no server version information. This would be
-            // the case when sending the initial ApiVersionRequest which fetches the version
-            // information itself.  It is also the case when discoverBrokerVersions is set to false.
+            /*
+             * Note: if versionInfo is null, we have no server version information.
+             * This would be the case when sending the initial ApiVersionRequest which fetches the version information itself.
+             * It is also the case when discoverBrokerVersions is set to false.
+             */
             if (versionInfo == null) {
                 if (discoverBrokerVersions && log.isTraceEnabled()) {
-                    log.trace("No version information found when sending message of type {} to node {}. " +
-                            "Assuming version {}.", clientRequest.apiKey(), nodeId, builder.version());
+                    log.trace("No version information found when sending message of type {} to node {}. Assuming version {}.", clientRequest.apiKey(), nodeId, builder.version());
                 }
             } else {
                 short version = versionInfo.usableVersion(clientRequest.apiKey());
                 builder.setVersion(version);
             }
-            // The call to build may also throw UnsupportedVersionException, if there are essential
-            // fields that cannot be represented in the chosen version.
+            /*
+             * The call to build may also throw UnsupportedVersionException,
+             * if there are essential fields that cannot be represented in the chosen version.
+             */
             request = builder.build();
         } catch (UnsupportedVersionException e) {
             // If the version is not supported, skip sending the request over the wire.
             // Instead, simply add it to the local queue of aborted requests.
-            log.debug("Version mismatch when attempting to send {} to {}",
-                    clientRequest.toString(), clientRequest.destination(), e);
+            log.debug("Version mismatch when attempting to send {} to {}", clientRequest.toString(), clientRequest.destination(), e);
             ClientResponse clientResponse = new ClientResponse(clientRequest.makeHeader(),
-                    clientRequest.callback(), clientRequest.destination(), now, now,
-                    false, e, null);
+                    clientRequest.callback(), clientRequest.destination(), now, now, false, e, null);
             abortedSends.add(clientResponse);
             return;
         }
@@ -326,10 +343,11 @@ public class NetworkClient implements KafkaClient {
             if (header.apiVersion() == latestClientVersion) {
                 log.trace("Sending {} to node {}.", request, nodeId);
             } else {
-                log.debug("Using older server API v{} to send {} to node {}.",
-                        header.apiVersion(), request, nodeId);
+                log.debug("Using older server API v{} to send {} to node {}.", header.apiVersion(), request, nodeId);
             }
         }
+
+        // 构建 InFlightRequest 并添加到 InFlightRequests 队列中等待响应
         Send send = request.toSend(nodeId, header);
         InFlightRequest inFlightRequest = new InFlightRequest(
                 header,
@@ -348,15 +366,16 @@ public class NetworkClient implements KafkaClient {
      * Do actual reads and writes to sockets.
      *
      * @param timeout The maximum amount of time to wait (in ms) for responses if there are none immediately,
-     * must be non-negative. The actual timeout will be the minimum of timeout, request timeout and
-     * metadata timeout
+     * must be non-negative. The actual timeout will be the minimum of timeout, request timeout and metadata timeout
      * @param now The current time in milliseconds
      * @return The list of responses received
      */
     @Override
     public List<ClientResponse> poll(long timeout, long now) {
+        // 更新 Metadata
         long metadataTimeout = metadataUpdater.maybeUpdate(now);
         try {
+            // 执行网络 IO
             this.selector.poll(Utils.min(timeout, metadataTimeout, requestTimeoutMs));
         } catch (IOException e) {
             log.error("Unexpected error during I/O", e);
@@ -364,16 +383,23 @@ public class NetworkClient implements KafkaClient {
 
         // process completed actions
         long updatedNow = this.time.milliseconds();
-        List<ClientResponse> responses = new ArrayList<>();
-        handleAbortedSends(responses);
-        handleCompletedSends(responses, updatedNow);
-        handleCompletedReceives(responses, updatedNow);
-        handleDisconnections(responses, updatedNow);
-        handleConnections();
-        handleInitiateApiVersionRequests(updatedNow);
-        handleTimedOutRequests(responses, updatedNow);
+        List<ClientResponse> responses = new ArrayList<>(); // 响应队列
+        // 处理 abortedSends 队列
+        this.handleAbortedSends(responses);
+        // 处理 completedSends 队列
+        this.handleCompletedSends(responses, updatedNow);
+        // 处理 completedReceives 队列
+        this.handleCompletedReceives(responses, updatedNow);
+        // 处理 disconnections 列表
+        this.handleDisconnections(responses, updatedNow);
+        // 处理 connections 列表
+        this.handleConnections();
+        // 处理初始化 API 版本的请求
+        this.handleInitiateApiVersionRequests(updatedNow);
+        // 处理 InFlightRequests 中的超时请求
+        this.handleTimedOutRequests(responses, updatedNow);
 
-        // invoke callbacks
+        // 循环执行注册的 callback
         for (ClientResponse response : responses) {
             try {
                 response.onComplete();
@@ -518,7 +544,8 @@ public class NetworkClient implements KafkaClient {
     }
 
     /**
-     * Handle any completed request send. In particular if no response is expected consider the request complete.
+     * Handle any completed request send.
+     * In particular if no response is expected consider the request complete.
      *
      * @param responses The list of responses to update
      * @param now The current time
@@ -526,9 +553,13 @@ public class NetworkClient implements KafkaClient {
     private void handleCompletedSends(List<ClientResponse> responses, long now) {
         // if no response is expected then when the send is completed, return it
         for (Send send : this.selector.completedSends()) {
+            // 获取节点请求队列中的第一个请求
             InFlightRequest request = this.inFlightRequests.lastSent(send.destination());
+            // 检测请求是否期望响应
             if (!request.expectResponse) {
+                // 当前请求不期望响应，则从 InFlightRequests 中删除
                 this.inFlightRequests.completeLastSent(send.destination());
+                // 为当前请求生成 ClientResponse 对象
                 responses.add(request.completed(null, now));
             }
         }
@@ -542,8 +573,11 @@ public class NetworkClient implements KafkaClient {
      */
     private void handleCompletedReceives(List<ClientResponse> responses, long now) {
         for (NetworkReceive receive : this.selector.completedReceives()) {
+            // 获取返回响应的节点 ID
             String source = receive.source();
+            // 获取节点对应的最老的请求
             InFlightRequest req = inFlightRequests.completeNext(source);
+            // 解析响应
             AbstractResponse body = parseResponse(receive.payload(), req.header);
             log.trace("Completed receive from node {}, for key {}, received {}", req.destination, req.header.apiKey(), body);
             if (req.isInternalRequest && body instanceof MetadataResponse) {
@@ -556,19 +590,19 @@ public class NetworkClient implements KafkaClient {
         }
     }
 
-    private void handleApiVersionsResponse(List<ClientResponse> responses,
-                                           InFlightRequest req, long now, ApiVersionsResponse apiVersionsResponse) {
+    private void handleApiVersionsResponse(
+            List<ClientResponse> responses, InFlightRequest req, long now, ApiVersionsResponse apiVersionsResponse) {
         final String node = req.destination;
         if (apiVersionsResponse.errorCode() != Errors.NONE.code()) {
-            log.warn("Node {} got error {} when making an ApiVersionsRequest.  Disconnecting.",
-                    node, Errors.forCode(apiVersionsResponse.errorCode()));
+            log.warn("Node {} got error {} when making an ApiVersionsRequest." +
+                    "Disconnecting.", node, Errors.forCode(apiVersionsResponse.errorCode()));
             this.selector.close(node);
             processDisconnection(responses, node, now);
             return;
         }
         NodeApiVersions nodeVersionInfo = new NodeApiVersions(apiVersionsResponse.apiVersions());
         nodeApiVersions.put(node, nodeVersionInfo);
-        this.connectionStates.ready(node);
+        connectionStates.ready(node);
         if (log.isDebugEnabled()) {
             log.debug("Recorded API versions for node {}: {}", node, nodeVersionInfo);
         }
@@ -583,10 +617,12 @@ public class NetworkClient implements KafkaClient {
     private void handleDisconnections(List<ClientResponse> responses, long now) {
         for (String node : this.selector.disconnected()) {
             log.debug("Node {} disconnected.", node);
-            processDisconnection(responses, node, now);
+            // 更新连接状态
+            this.processDisconnection(responses, node, now);
         }
         // we got a disconnect so we should probably refresh our metadata and see if that broker is dead
         if (this.selector.disconnected().size() > 0) {
+            // 标识需要更新集群元数据
             metadataUpdater.requestUpdate();
         }
     }

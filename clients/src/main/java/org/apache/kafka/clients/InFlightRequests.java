@@ -71,6 +71,8 @@ final class InFlightRequests {
     /**
      * Get the last request we sent to the given node (but don't remove it from the queue)
      *
+     * 获取发送到目标节点的最后一次请求
+     *
      * @param node The node id
      */
     public NetworkClient.InFlightRequest lastSent(String node) {
