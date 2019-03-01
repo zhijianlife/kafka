@@ -40,13 +40,16 @@ public class AbstractConfig {
 
     private final Logger log = LoggerFactory.getLogger(this.getClass());
 
-    /* configs for which values have been requested, used to detect unused configs */
+    /** configs for which values have been requested, used to detect unused configs */
+    /** 记录已经使用的配置 */
     private final Set<String> used;
 
-    /* the original values passed in by the user */
+    /** the original values passed in by the user */
+    /** 用户传递的配置 */
     private final Map<String, ?> originals;
 
-    /* the parsed values */
+    /** the parsed values */
+    /** 解析后的配置 */
     private final Map<String, Object> values;
 
     @SuppressWarnings("unchecked")
@@ -54,9 +57,11 @@ public class AbstractConfig {
         /* check that all the keys are really strings */
         for (Object key : originals.keySet())
             if (!(key instanceof String)) {
+                // 配置的 key 必须是字符串
                 throw new ConfigException(key.toString(), originals.get(key), "Key must be a string.");
             }
         this.originals = (Map<String, ?>) originals;
+        // 解析并校验配置
         this.values = definition.parse(this.originals);
         this.used = Collections.synchronizedSet(new HashSet<String>());
         if (doLog) {
@@ -123,6 +128,11 @@ public class AbstractConfig {
         return (Class<?>) this.get(key);
     }
 
+    /**
+     * 获取未使用的配置
+     *
+     * @return
+     */
     public Set<String> unused() {
         Set<String> keys = new HashSet<>(originals.keySet());
         keys.removeAll(used);
@@ -201,19 +211,26 @@ public class AbstractConfig {
      * Get a configured instance of the give class specified by the given configuration key.
      * If the object implements Configurable configure it using the configuration.
      *
+     * 获取指定 key 配置的 class 对象，并反射创建对应对象，同时校验对象是 t 类型
+     * 如果 class 实现了 Configurable 接口，则会触发 Configurable#configure(java.util.Map) 方法
+     *
      * @param key The configuration key for the class
      * @param t The interface the class should implement
      * @return A configured instance of the class
      */
     public <T> T getConfiguredInstance(String key, Class<T> t) {
+        // 基于 key 获取配置的 class 对象
         Class<?> c = this.getClass(key);
         if (c == null) {
             return null;
         }
+        // 反射创建对象
         Object o = Utils.newInstance(c);
+        // 校验对象是不是期望类型 t
         if (!t.isInstance(o)) {
             throw new KafkaException(c.getName() + " is not an instance of " + t.getName());
         }
+        // 如果类实现了 Configurable 接口，则触发 configure 方法
         if (o instanceof Configurable) {
             ((Configurable) o).configure(this.originals());
         }

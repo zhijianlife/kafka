@@ -343,7 +343,9 @@ public class MemoryRecords extends AbstractRecords {
                                                CompressionType compressionType,
                                                TimestampType timestampType,
                                                int writeLimit) {
-        return new MemoryRecordsBuilder(buffer, Record.CURRENT_MAGIC_VALUE, compressionType, timestampType, 0L, System.currentTimeMillis(), writeLimit);
+        return new MemoryRecordsBuilder(
+                buffer, Record.CURRENT_MAGIC_VALUE, compressionType,
+                timestampType, 0L, System.currentTimeMillis(), writeLimit);
     }
 
     public static MemoryRecordsBuilder builder(ByteBuffer buffer,

@@ -3,16 +3,19 @@
  * file distributed with this work for additional information regarding copyright ownership. The ASF licenses this file
  * to You under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
  * License. You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.clients.producer;
 
 /**
+ * 封装用户发送的消息
+ *
  * A key/value pair to be sent to Kafka. This consists of a topic name to which the record is being sent, an optional
  * partition number, and an optional key and value.
  * <p>
@@ -38,7 +41,9 @@ package org.apache.kafka.clients.producer;
  */
 public class ProducerRecord<K, V> {
 
+    /** 主题 */
     private final String topic;
+    /** 分区 */
     private final Integer partition;
     private final K key;
     private final V value;
@@ -46,7 +51,7 @@ public class ProducerRecord<K, V> {
 
     /**
      * Creates a record with a specified timestamp to be sent to a specified topic and partition
-     * 
+     *
      * @param topic The topic the record will be appended to
      * @param partition The partition to which the record should be sent
      * @param timestamp The timestamp of the record
@@ -54,14 +59,17 @@ public class ProducerRecord<K, V> {
      * @param value The record contents
      */
     public ProducerRecord(String topic, Integer partition, Long timestamp, K key, V value) {
-        if (topic == null)
+        if (topic == null) {
             throw new IllegalArgumentException("Topic cannot be null.");
-        if (timestamp != null && timestamp < 0)
+        }
+        if (timestamp != null && timestamp < 0) {
             throw new IllegalArgumentException(
                     String.format("Invalid timestamp: %d. Timestamp should always be non-negative or null.", timestamp));
-        if (partition != null && partition < 0)
+        }
+        if (partition != null && partition < 0) {
             throw new IllegalArgumentException(
                     String.format("Invalid partition: %d. Partition number should always be non-negative or null.", partition));
+        }
         this.topic = topic;
         this.partition = partition;
         this.key = key;
@@ -83,7 +91,7 @@ public class ProducerRecord<K, V> {
 
     /**
      * Create a record to be sent to Kafka
-     * 
+     *
      * @param topic The topic the record will be appended to
      * @param key The key that will be included in the record
      * @param value The record contents
@@ -94,7 +102,7 @@ public class ProducerRecord<K, V> {
 
     /**
      * Create a record with no key
-     * 
+     *
      * @param topic The topic this record should be sent to
      * @param value The record contents
      */
@@ -143,28 +151,30 @@ public class ProducerRecord<K, V> {
         String value = this.value == null ? "null" : this.value.toString();
         String timestamp = this.timestamp == null ? "null" : this.timestamp.toString();
         return "ProducerRecord(topic=" + topic + ", partition=" + partition + ", key=" + key + ", value=" + value +
-            ", timestamp=" + timestamp + ")";
+                ", timestamp=" + timestamp + ")";
     }
 
     @Override
     public boolean equals(Object o) {
-        if (this == o)
+        if (this == o) {
             return true;
-        else if (!(o instanceof ProducerRecord))
+        } else if (!(o instanceof ProducerRecord)) {
             return false;
+        }
 
         ProducerRecord<?, ?> that = (ProducerRecord<?, ?>) o;
 
-        if (key != null ? !key.equals(that.key) : that.key != null) 
+        if (key != null ? !key.equals(that.key) : that.key != null) {
             return false;
-        else if (partition != null ? !partition.equals(that.partition) : that.partition != null) 
+        } else if (partition != null ? !partition.equals(that.partition) : that.partition != null) {
             return false;
-        else if (topic != null ? !topic.equals(that.topic) : that.topic != null) 
+        } else if (topic != null ? !topic.equals(that.topic) : that.topic != null) {
             return false;
-        else if (value != null ? !value.equals(that.value) : that.value != null) 
+        } else if (value != null ? !value.equals(that.value) : that.value != null) {
             return false;
-        else if (timestamp != null ? !timestamp.equals(that.timestamp) : that.timestamp != null)
+        } else if (timestamp != null ? !timestamp.equals(that.timestamp) : that.timestamp != null) {
             return false;
+        }
 
         return true;
     }

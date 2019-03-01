@@ -33,6 +33,8 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
+ * 封装集群元数据信息
+ *
  * A class encapsulating some of the logic around metadata.
  * <p>
  * This class is shared by the client thread (for partitioning) and the background sender thread.
@@ -54,7 +56,7 @@ public final class Metadata {
     /** 更新 cluster 保存的元数据信息的最小间隔时间差，默认是 100 毫秒，防止更新太频繁 */
     private final long refreshBackoffMs;
 
-    /** 指定元数据更新时间间隔，默认为 5 分钟 */
+    /** 元数据更新时间间隔，默认为 5 分钟 */
     private final long metadataExpireMs;
 
     /** 集群元数据信息版本号，每更新成功一次则版本号加 1 */
@@ -82,6 +84,8 @@ public final class Metadata {
 
     /** 标记是否需要更新所有 topic 的元数据信息，一般只更新当前用到的 topic 的元数据信息 */
     private boolean needMetadataForAllTopics;
+
+    /** 标识允许 topic 过期 */
     private final boolean topicExpiryEnabled;
 
     /**
@@ -132,6 +136,7 @@ public final class Metadata {
      */
     public synchronized void add(String topic) {
         if (topics.put(topic, TOPIC_EXPIRY_NEEDS_UPDATE) == null) {
+            // 当前 topic 是新加入的，标记需要立即更新集群元数据信息
             this.requestUpdateForNewTopics();
         }
     }
@@ -222,8 +227,8 @@ public final class Metadata {
     }
 
     /**
-     * Updates the cluster metadata. If topic expiry is enabled, expiry time
-     * is set for topics if required and expired topics are removed from the metadata.
+     * Updates the cluster metadata. If topic expiry is enabled,
+     * expiry time is set for topics if required and expired topics are removed from the metadata.
      *
      * @param cluster the cluster containing metadata for topics with valid metadata
      * @param unavailableTopics topics which are non-existent or have one or more partitions whose
@@ -236,10 +241,11 @@ public final class Metadata {
         this.needUpdate = false;
         this.lastRefreshMs = now;
         this.lastSuccessfulRefreshMs = now;
-        this.version += 1;
+        this.version += 1; // 元数据版本加 1
 
+        // 如果允许 topic 过期
         if (topicExpiryEnabled) {
-            // Handle expiry of topics from the metadata refresh set.
+            // 遍历集群中所有的 topic，移除已经过期的 topic
             for (Iterator<Map.Entry<String, Long>> it = topics.entrySet().iterator(); it.hasNext(); ) {
                 Map.Entry<String, Long> entry = it.next();
                 long expireMs = entry.getValue();
@@ -252,6 +258,7 @@ public final class Metadata {
             }
         }
 
+        // 遍历并应用所有注册的集群元数据更新监听器
         for (Listener listener : listeners)
             listener.onMetadataUpdate(cluster, unavailableTopics);
 
@@ -348,6 +355,9 @@ public final class Metadata {
         void onMetadataUpdate(Cluster cluster, Set<String> unavailableTopics);
     }
 
+    /**
+     *
+     */
     private synchronized void requestUpdateForNewTopics() {
         // Override the timestamp of last refresh to let immediate update.
         this.lastRefreshMs = 0;

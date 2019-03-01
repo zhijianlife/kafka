@@ -44,19 +44,22 @@ public class MemoryRecordsBuilder {
         int maxTypeId = -1; // 记录最大的压缩类型 ID
         for (CompressionType type : CompressionType.values())
             maxTypeId = Math.max(maxTypeId, type.id);
+
         TYPE_TO_RATE = new float[maxTypeId + 1];
         for (CompressionType type : CompressionType.values()) {
             TYPE_TO_RATE[type.id] = type.rate;
         }
     }
 
-    // dynamically load the snappy and lz4 classes to avoid runtime dependency if we are not using compression
-    // caching constructors to avoid invoking of Class.forName method for each batch
+    /*
+     * dynamically load the snappy and lz4 classes to avoid runtime dependency if we are not using compression
+     * caching constructors to avoid invoking of Class.forName method for each batch
+     */
+
     private static MemoizingConstructorSupplier snappyOutputStreamSupplier = new MemoizingConstructorSupplier(new ConstructorSupplier() {
         @Override
         public Constructor get() throws ClassNotFoundException, NoSuchMethodException {
-            return Class.forName("org.xerial.snappy.SnappyOutputStream")
-                    .getConstructor(OutputStream.class, Integer.TYPE);
+            return Class.forName("org.xerial.snappy.SnappyOutputStream").getConstructor(OutputStream.class, Integer.TYPE);
         }
     });
 
@@ -71,8 +74,7 @@ public class MemoryRecordsBuilder {
     private static MemoizingConstructorSupplier snappyInputStreamSupplier = new MemoizingConstructorSupplier(new ConstructorSupplier() {
         @Override
         public Constructor get() throws ClassNotFoundException, NoSuchMethodException {
-            return Class.forName("org.xerial.snappy.SnappyInputStream")
-                    .getConstructor(InputStream.class);
+            return Class.forName("org.xerial.snappy.SnappyInputStream").getConstructor(InputStream.class);
         }
     });
 
@@ -84,10 +86,15 @@ public class MemoryRecordsBuilder {
         }
     });
 
+    /** 时间戳类型 */
     private final TimestampType timestampType;
+
+    /** 消息压缩类型 */
     private final CompressionType compressionType;
+
     private final DataOutputStream appendStream;
     private final ByteBufferOutputStream bufferStream;
+
     private final byte magic;
     private final int initPos;
     private final long baseOffset;
@@ -100,6 +107,8 @@ public class MemoryRecordsBuilder {
     private float compressionRate = 1;
     private long maxTimestamp = Record.NO_TIMESTAMP;
     private long offsetOfMaxTimestamp = -1;
+
+    /** 最末端位移指针 */
     private long lastOffset = -1;
 
     private MemoryRecords builtRecords;
@@ -238,6 +247,8 @@ public class MemoryRecordsBuilder {
     /**
      * Append a new record at the given offset.
      *
+     * 添加消息到指定位移位置
+     *
      * @param offset The absolute offset of the record in the log buffer
      * @param timestamp The record timestamp
      * @param key The record key
@@ -248,17 +259,22 @@ public class MemoryRecordsBuilder {
         try {
             // 校验 offset 是否合法
             if (lastOffset >= 0 && offset <= lastOffset) {
-                throw new IllegalArgumentException(String.format("Illegal offset %s following previous offset %s (Offsets must increase monotonically).", offset, lastOffset));
+                throw new IllegalArgumentException(
+                        String.format("Illegal offset %s following previous offset %s (Offsets must increase monotonically).", offset, lastOffset));
             }
 
             int size = Record.recordSize(magic, key, value);
-            LogEntry.writeHeader(appendStream, toInnerOffset(offset), size);
 
+            // 追加当前消息的偏移位置和大小
+            LogEntry.writeHeader(appendStream, this.toInnerOffset(offset), size);
+
+            // 如果当前执行时间戳类型是 LOG_APPEND_TIME，则更新时间戳为相应类型值
             if (timestampType == TimestampType.LOG_APPEND_TIME) {
                 timestamp = logAppendTime;
             }
+            // 追加当前消息内容，并返回 CRC 校验码
             long crc = Record.write(appendStream, magic, timestamp, key, value, CompressionType.NONE, timestampType);
-            recordWritten(offset, timestamp, size + Records.LOG_OVERHEAD);
+            this.recordWritten(offset, timestamp, size + Records.LOG_OVERHEAD);
             return crc;
         } catch (IOException e) {
             throw new KafkaException("I/O exception when writing to the append stream, closing", e);
@@ -278,7 +294,7 @@ public class MemoryRecordsBuilder {
      */
     public long append(long timestamp, byte[] key, byte[] value) {
         // 如果是第一条记录则使用 baseOffset，否则使用连续的下一个位置
-        return appendWithOffset(lastOffset < 0 ? baseOffset : lastOffset + 1, timestamp, key, value);
+        return this.appendWithOffset(lastOffset < 0 ? baseOffset : lastOffset + 1, timestamp, key, value);
     }
 
     /**

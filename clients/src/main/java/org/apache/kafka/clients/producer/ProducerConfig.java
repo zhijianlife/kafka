@@ -103,7 +103,12 @@ public class ProducerConfig extends AbstractConfig {
             + "requested number of acknowledgments are not met when the timeout elapses an error will be returned. This timeout "
             + "is measured on the server side and does not include the network latency of the request.";
 
-    /** <code>linger.ms</code> */
+    /**
+     * <code>linger.ms</code>
+     *
+     * 对于同一个分区的消息，生产者会将其缓存在相同的批次中，batch.size 参数用于指定一个批次允许使用的内存大小（单位：字节），
+     * 当达到设置的最大值时会将批次发送给服务端，不过即使没有达到最大值，当超过一定时间（通过 `linger.ms` 参数指定）或有空闲的线程，也会将批次发送给服务端。
+     */
     public static final String LINGER_MS_CONFIG = "linger.ms";
     private static final String LINGER_MS_DOC = "The producer groups together any records that arrive in between request transmissions into a single batched request. "
             + "Normally this occurs only under load when records arrive faster than they can be sent out. However in some circumstances the client may want to "
@@ -222,15 +227,13 @@ public class ProducerConfig extends AbstractConfig {
             + "received by the producer before they are published to the Kafka cluster. By default, there are no interceptors.";
 
     static {
-        CONFIG = new ConfigDef().define(BOOTSTRAP_SERVERS_CONFIG, Type.LIST, Importance.HIGH, CommonClientConfigs.BOOTSTRAP_SERVERS_DOC)
+        CONFIG = new ConfigDef()
+                // bootstrap.servers
+                .define(BOOTSTRAP_SERVERS_CONFIG, Type.LIST, Importance.HIGH, CommonClientConfigs.BOOTSTRAP_SERVERS_DOC)
+                // buffer.memory
                 .define(BUFFER_MEMORY_CONFIG, Type.LONG, 32 * 1024 * 1024L, atLeast(0L), Importance.HIGH, BUFFER_MEMORY_DOC)
                 .define(RETRIES_CONFIG, Type.INT, 0, between(0, Integer.MAX_VALUE), Importance.HIGH, RETRIES_DOC)
-                .define(ACKS_CONFIG,
-                        Type.STRING,
-                        "1",
-                        in("all", "-1", "0", "1"),
-                        Importance.HIGH,
-                        ACKS_DOC)
+                .define(ACKS_CONFIG, Type.STRING, "1", in("all", "-1", "0", "1"), Importance.HIGH, ACKS_DOC)
                 .define(COMPRESSION_TYPE_CONFIG, Type.STRING, "none", Importance.HIGH, COMPRESSION_TYPE_DOC)
                 .define(BATCH_SIZE_CONFIG, Type.INT, 16384, atLeast(0), Importance.MEDIUM, BATCH_SIZE_DOC)
                 .define(TIMEOUT_CONFIG, Type.INT, 30 * 1000, atLeast(0), Importance.MEDIUM, TIMEOUT_DOC)
@@ -240,7 +243,7 @@ public class ProducerConfig extends AbstractConfig {
                 .define(RECEIVE_BUFFER_CONFIG, Type.INT, 32 * 1024, atLeast(-1), Importance.MEDIUM, CommonClientConfigs.RECEIVE_BUFFER_DOC)
                 .define(MAX_REQUEST_SIZE_CONFIG,
                         Type.INT,
-                        1 * 1024 * 1024,
+                        1024 * 1024,
                         atLeast(0),
                         Importance.MEDIUM,
                         MAX_REQUEST_SIZE_DOC)

@@ -42,13 +42,11 @@ public final class RecordBatch {
     /** 当前缓存的消息的目标 TopicPartition */
     final TopicPartition topicPartition;
 
-    /**
-     *
-     */
     final ProduceRequestResult produceFuture;
 
     /** 消息的 Callback 队列，每个消息都对应一个 Callback 对象 */
     private final List<Thunk> thunks = new ArrayList<>();
+
     private final MemoryRecordsBuilder recordsBuilder;
 
     /** 尝试发送的次数 */
@@ -90,27 +88,28 @@ public final class RecordBatch {
      * @return The RecordSend corresponding to this record or null if there isn't sufficient room.
      */
     public FutureRecordMetadata tryAppend(long timestamp, byte[] key, byte[] value, Callback callback, long now) {
+        // 检测是否还有多余的空间容纳该消息
         if (!recordsBuilder.hasRoomFor(key, value)) {
-            // 如果没有多余的空间容纳该 record，则直接返回
+            // 没有多余的空间容纳该 record，直接返回，后面会尝试申请新的空间
             return null;
-        } else {
-            // 添加一条记录到 MemoryRecords，并返回对应的 CRC32 校验码
-            long checksum = this.recordsBuilder.append(timestamp, key, value);
-            // 更新最大 record 字节数
-            this.maxRecordSize = Math.max(this.maxRecordSize, Record.recordSize(key, value));
-            // 更新最后一次追加记录时间戳
-            this.lastAppendTime = now;
-            FutureRecordMetadata future = new FutureRecordMetadata(this.produceFuture, this.recordCount,
-                    timestamp, checksum,
-                    key == null ? -1 : key.length,
-                    value == null ? -1 : value.length);
-            if (callback != null) {
-                // 如果指定了 Callback，将 Callback 和 FutureRecordMetadata 封装到 Trunk 中
-                thunks.add(new Thunk(callback, future));
-            }
-            this.recordCount++;
-            return future;
         }
+        // 添加当前消息到 MemoryRecords 的指定偏移位置，并返回消息对应的 CRC32 校验码
+        long checksum = this.recordsBuilder.append(timestamp, key, value);
+        // 更新最大 record 字节数
+        this.maxRecordSize = Math.max(this.maxRecordSize, Record.recordSize(key, value));
+        // 更新最后一次追加记录时间戳
+        this.lastAppendTime = now;
+        FutureRecordMetadata future = new FutureRecordMetadata(
+                produceFuture, recordCount,
+                timestamp, checksum,
+                key == null ? -1 : key.length,
+                value == null ? -1 : value.length);
+        if (callback != null) {
+            // 如果指定了 Callback，将 Callback 和 FutureRecordMetadata 封装到 Trunk 中
+            thunks.add(new Thunk(callback, future));
+        }
+        this.recordCount++;
+        return future;
     }
 
     /**

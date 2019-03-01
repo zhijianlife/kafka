@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -33,6 +33,7 @@ public class ClusterResourceListeners {
 
     /**
      * Add only if the candidate implements {@link ClusterResourceListener}.
+     *
      * @param candidate Object which might implement {@link ClusterResourceListener}
      */
     public void maybeAdd(Object candidate) {
@@ -43,6 +44,7 @@ public class ClusterResourceListeners {
 
     /**
      * Add all items who implement {@link ClusterResourceListener} from the list.
+     *
      * @param candidateList List of objects which might implement {@link ClusterResourceListener}
      */
     public void maybeAddAll(List<?> candidateList) {
@@ -53,6 +55,7 @@ public class ClusterResourceListeners {
 
     /**
      * Send the updated cluster metadata to all {@link ClusterResourceListener}.
+     *
      * @param cluster Cluster metadata
      */
     public void onUpdate(ClusterResource cluster) {

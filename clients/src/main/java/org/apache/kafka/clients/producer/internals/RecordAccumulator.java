@@ -180,18 +180,17 @@ public final class RecordAccumulator {
                                      long maxTimeToBlock) throws InterruptedException {
         // We keep track of the number of appending thread，
         // to make sure we do not miss batches in abortIncompleteBatches().
-        // 记录正在向 RecordAccumulator 追加数据的线程数
+        // 记录正在向收集器中追加消息的线程数
         appendsInProgress.incrementAndGet();
         try {
-            // check if we have an in-progress batch
             // 获取当前 TopicPartition 对应的 Deque，如果不存在则创建一个
-            Deque<RecordBatch> dq = getOrCreateDeque(tp);
+            Deque<RecordBatch> dq = this.getOrCreateDeque(tp);
             synchronized (dq) {
                 if (closed) {
                     // producer 已经被关闭了
                     throw new IllegalStateException("Cannot send after the producer is closed.");
                 }
-                // 向 Deque 中最后一个 RecordBatch 追加 Record
+                // 向 Deque 中最后一个 RecordBatch 追加 Record，并返回对应的 RecordAppendResult 对象
                 RecordAppendResult appendResult = this.tryAppend(timestamp, key, value, callback, dq);
                 if (appendResult != null) {
                     // 追加成功，直接返回
@@ -199,10 +198,12 @@ public final class RecordAccumulator {
                 }
             }
 
+            /* 追加 Record 失败，尝试申请新的 buffer */
+
             // we don't have an in-progress record batch try to allocate a new batch
             int size = Math.max(this.batchSize, Records.LOG_OVERHEAD + Record.recordSize(key, value));
             log.trace("Allocating a new {} byte message buffer for topic {} partition {}", size, tp.topic(), tp.partition());
-            // 追加 record 失败，申请新的 buffer
+            // 申请新的 buffer
             ByteBuffer buffer = free.allocate(size, maxTimeToBlock);
             synchronized (dq) {
                 // Need to check if producer is closed again after grabbing the dequeue lock.
@@ -213,20 +214,21 @@ public final class RecordAccumulator {
                 // 再次尝试向 Deque 中最后一个 RecordBatch 追加 Record
                 RecordAppendResult appendResult = this.tryAppend(timestamp, key, value, callback, dq);
                 if (appendResult != null) {
-                    // Somebody else found us a batch, return the one we waited for! Hopefully this doesn't happen often...
                     // 追加成功则返回，同时归还之前申请的 buffer
                     free.deallocate(buffer);
                     return appendResult;
                 }
 
+                /* 仍然追加失败，创建一个新的 RecordBatch 进行追加 */
+
                 MemoryRecordsBuilder recordsBuilder = MemoryRecords.builder(buffer, compression, TimestampType.CREATE_TIME, this.batchSize);
                 RecordBatch batch = new RecordBatch(tp, recordsBuilder, time.milliseconds());
                 // 在新创建的 RecordBatch 中追加 Record
                 FutureRecordMetadata future = Utils.notNull(batch.tryAppend(timestamp, key, value, callback, time.milliseconds()));
-
                 dq.addLast(batch);
                 // 追加到未完成的集合中
                 incomplete.add(batch);
+                // 封装成 RecordAppendResult 对象返回
                 return new RecordAppendResult(future, dq.size() > 1 || batch.isFull(), true);
             }
         } finally {
@@ -239,9 +241,10 @@ public final class RecordAccumulator {
      * close its memory records to release temporary resources (like compression streams buffers).
      */
     private RecordAppendResult tryAppend(long timestamp, byte[] key, byte[] value, Callback callback, Deque<RecordBatch> deque) {
-        // 获取 deque 的最后一个元素
+        // 获取 deque 的最后一个 RecordBatch
         RecordBatch last = deque.peekLast();
         if (last != null) {
+            // 尝试往该 RecordBatch 末尾追加消息
             FutureRecordMetadata future = last.tryAppend(timestamp, key, value, callback, time.milliseconds());
             if (future == null) {
                 last.close();
@@ -642,7 +645,7 @@ public final class RecordAccumulator {
     }
 
     /**
-     * A threadsafe helper class to hold RecordBatches that haven't been ack'd yet
+     * A threadsafe helper class to hold RecordBatches that haven't been acked yet
      */
     private final static class IncompleteRecordBatches {
 

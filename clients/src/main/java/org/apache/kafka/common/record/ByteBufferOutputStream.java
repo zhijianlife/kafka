@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,14 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.kafka.common.record;
 
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
 
 /**
- * A ByteBuffer-backed OutputStream that expands the internal ByteBuffer as required. Given this, the caller should
- * always access the underlying ByteBuffer via the {@link #buffer()} method until all writes are completed.
+ * A ByteBuffer-backed OutputStream that expands the internal ByteBuffer as required.
+ * Given this, the caller should always access the underlying ByteBuffer via the {@link #buffer()} method until all writes are completed.
  *
  * This class is typically used for 2 purposes:
  *
@@ -61,11 +62,13 @@ public class ByteBufferOutputStream extends OutputStream {
         this(directBuffer ? ByteBuffer.allocateDirect(initialCapacity) : ByteBuffer.allocate(initialCapacity));
     }
 
+    @Override
     public void write(int b) {
         maybeExpandBuffer(1);
         buffer.put((byte) b);
     }
 
+    @Override
     public void write(byte[] bytes, int off, int len) {
         maybeExpandBuffer(len);
         buffer.put(bytes, off, len);
@@ -106,8 +109,9 @@ public class ByteBufferOutputStream extends OutputStream {
     }
 
     private void maybeExpandBuffer(int remainingRequired) {
-        if (remainingRequired > buffer.remaining())
+        if (remainingRequired > buffer.remaining()) {
             expandBuffer(remainingRequired);
+        }
     }
 
     private void expandBuffer(int remainingRequired) {

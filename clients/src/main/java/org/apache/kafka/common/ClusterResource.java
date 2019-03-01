@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,7 +16,6 @@
  */
 
 package org.apache.kafka.common;
-
 
 /**
  * The <code>ClusterResource</code> class encapsulates metadata for a Kafka cluster.
@@ -29,6 +28,7 @@ public class ClusterResource {
      * Create {@link ClusterResource} with a cluster id. Note that cluster id may be {@code null} if the
      * metadata request was sent to a broker without support for cluster ids. The first version of Kafka
      * to support cluster id is 0.10.1.0.
+     *
      * @param clusterId
      */
     public ClusterResource(String clusterId) {

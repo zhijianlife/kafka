@@ -32,8 +32,15 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class ClientUtils {
+
     private static final Logger log = LoggerFactory.getLogger(ClientUtils.class);
 
+    /**
+     * 解析并验证字符串类型的主机列表，解析成 {@link InetSocketAddress} 格式
+     *
+     * @param urls
+     * @return
+     */
     public static List<InetSocketAddress> parseAndValidateAddresses(List<String> urls) {
         List<InetSocketAddress> addresses = new ArrayList<>();
         for (String url : urls) {
@@ -46,7 +53,6 @@ public class ClientUtils {
                     }
 
                     InetSocketAddress address = new InetSocketAddress(host, port);
-
                     if (address.isUnresolved()) {
                         log.warn("Removing server {} from {} as DNS resolution failed for {}", url, CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, host);
                     } else {
