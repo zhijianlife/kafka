@@ -59,13 +59,26 @@ public class Sender implements Runnable {
     /** the state of each nodes connection */
     private final KafkaClient client;
 
-    /* the record accumulator that batches records */
+    /** the record accumulator that batches records */
     private final RecordAccumulator accumulator;
 
-    /* the metadata for the client */
+    /** the metadata for the client */
     private final Metadata metadata;
 
-    /** the flag indicating whether the producer should guarantee the message order on the broker or not. */
+    /**
+     * the flag indicating whether the producer should guarantee the message order on the broker or not.
+     *
+     * 该参数使用 max.in.flight.requests.per.connection 进行配置，当 max.in.flight.requests.per.connection == 1 时为 true
+     *
+     * 用于指定生产者在收到服务器响应之前可以发送多少个消息，设置为 1 时可以保证消息按照发送的顺序写入服务器，即使发生重试。
+     *
+     * 消息的顺序性保证：
+     * Kafka 可以保证同一个分区中消息的顺序性，不过如果参数配置不当也会违背顺序性保证。
+     * 例如当允许生产者重试时将 max.in.flight.requests.per.connection 设置为大于 1 的值，如果生产者发送了两条位于同一个分区的消息 A 和 B，
+     * 但是 A 失败 B 成功，此时生产者会重发消息 A，结果就变成了 B 排在了 A 的前面。
+     * 要防止这种情况，可以将 max.in.flight.requests.per.connection 参数设置为 1，从而禁止生产者一次发送多条消息，
+     * 不过这样会严重降低吞吐量，只有在对消息有严格要求时才这样做。
+     */
     private final boolean guaranteeMessageOrder;
 
     /* the maximum request size to attempt to send to the server */
@@ -80,10 +93,10 @@ public class Sender implements Runnable {
     /* the clock instance used for getting the time */
     private final Time time;
 
-    /* true while the sender thread is still running */
+    /** true while the sender thread is still running */
     private volatile boolean running;
 
-    /* true when the caller wants to ignore all unsent/inflight messages and force close.  */
+    /** true when the caller wants to ignore all unsent/inflight messages and force close. */
     private volatile boolean forceClose;
 
     /* metrics */
@@ -131,18 +144,26 @@ public class Sender implements Runnable {
             }
         }
 
+        /* 客户端被关闭，尝试发送剩余的消息 */
+
         log.debug("Beginning shutdown of Kafka producer I/O thread, sending remaining records.");
 
-        // okay we stopped accepting requests but there may still be
-        // requests in the accumulator or waiting for acknowledgment,
-        // wait until these are completed.
-        while (!forceClose && (this.accumulator.hasUnsent() || this.client.inFlightRequestCount() > 0)) {
+        /*
+         * okay we stopped accepting requests but there may still be
+         * requests in the accumulator or waiting for acknowledgment,
+         * wait until these are completed.
+         */
+        while (!forceClose // 不是强制关闭
+                // 存在未发送或已发送待响应的请求
+                && (this.accumulator.hasUnsent() || this.client.inFlightRequestCount() > 0)) {
             try {
                 this.run(time.milliseconds());
             } catch (Exception e) {
                 log.error("Uncaught error in kafka producer I/O thread: ", e);
             }
         }
+
+        // 强制关闭，忽略所有未发送和已发送待响应的请求
         if (forceClose) {
             // We need to fail all the incomplete batches and wake up the threads waiting on the futures.
             this.accumulator.abortIncompleteBatches();
@@ -165,10 +186,9 @@ public class Sender implements Runnable {
         // 获取 kafka 集群信息
         Cluster cluster = metadata.fetch();
         // get the list of partitions with data ready to send
-        // 计算可以向哪些节点发送消息
+        // 计算可以向哪些节点发送请求
         RecordAccumulator.ReadyCheckResult result = this.accumulator.ready(cluster, now);
 
-        // if there are any partitions whose leaders are not known yet, force metadata update
         // 如果存在未知 leader 分区的 topic，则标记需要更新 kafka 的集群信息
         if (!result.unknownLeaderTopics.isEmpty()) {
             // The set of topics with unknown leader contains topics with leader election pending as well as
@@ -179,9 +199,8 @@ public class Sender implements Runnable {
             this.metadata.requestUpdate();
         }
 
-        // remove any nodes we aren't ready to send to
-        // 遍历处理可以发送消息的节点，并基于 KafkaClient.ready 方法检查对应节点是否可用
-        // 对于不可用的几点则剔除
+        // 遍历处理可以发送请求的节点，并基于 KafkaClient.ready 方法检查对应节点是否可用
+        // 对于不可用的节点则剔除
         Iterator<Node> iter = result.readyNodes.iterator();
         long notReadyTimeout = Long.MAX_VALUE;
         while (iter.hasNext()) {
@@ -192,26 +211,25 @@ public class Sender implements Runnable {
             }
         }
 
-        // create produce requests
-        // 获取每个节点待发送消息集合
-        Map<Integer, List<RecordBatch>> batches = this.accumulator.drain(cluster, result.readyNodes, this.maxRequestSize, now);
+        // 获取每个节点待发送 RecordBatch 集合
+        Map<Integer, List<RecordBatch>> batches =
+                this.accumulator.drain(cluster, result.readyNodes, this.maxRequestSize, now);
         // 如果需要保证消息的顺序
         if (guaranteeMessageOrder) {
-            // Mute all the partitions drained
+            // 将所有 RecordBatch 的 TopicPartition 加入到 RecordAccumulator.muted 集合中
+            // 防止同一时间往同一个 topic 分区发送多条消息
             for (List<RecordBatch> batchList : batches.values()) {
-                // 遍历处理一个节点下的 RecordBatch
                 for (RecordBatch batch : batchList)
-                    // 将当前 TopicPartition 加入到 RecordAccumulator.muted 集合中
                     this.accumulator.mutePartition(batch.topicPartition);
             }
         }
 
         // 处理超时的消息
         List<RecordBatch> expiredBatches = this.accumulator.abortExpiredBatches(this.requestTimeout, now);
-
-        // update sensors
         for (RecordBatch expiredBatch : expiredBatches)
-            this.sensors.recordErrors(expiredBatch.topicPartition.topic(), expiredBatch.recordCount);
+            // update sensors
+            sensors.recordErrors(expiredBatch.topicPartition.topic(), expiredBatch.recordCount);
+
         sensors.updateProduceRequestMetrics(batches);
 
         /*
@@ -228,10 +246,12 @@ public class Sender implements Runnable {
         }
         this.sendProduceRequests(batches, now);
 
-        // if some partitions are already ready to be sent, the select time would be 0;
-        // otherwise if some partition already has some data accumulated but not ready yet,
-        // the select time will be the time difference between now and its linger expiry time;
-        // otherwise the select time will be the time difference between now and the metadata expiry time;
+        /*
+         * if some partitions are already ready to be sent, the select time would be 0;
+         * otherwise if some partition already has some data accumulated but not ready yet,
+         * the select time will be the time difference between now and its linger expiry time;
+         * otherwise the select time will be the time difference between now and the metadata expiry time;
+         */
         this.client.poll(pollTimeout, now);
     }
 

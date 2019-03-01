@@ -342,7 +342,7 @@ public final class RecordAccumulator {
      * </ol>
      */
     public ReadyCheckResult ready(Cluster cluster, long nowMs) {
-        // 用于记录可以发送消息的节点
+        // 用于记录可以发送请求的节点
         Set<Node> readyNodes = new HashSet<>();
         // 记录下次调用 ready 方法的时间间隔
         long nextReadyCheckDelayMs = Long.MAX_VALUE;
@@ -400,6 +400,8 @@ public final class RecordAccumulator {
     }
 
     /**
+     * 当前 accumulator 是否存在未发送的消息
+     *
      * @return Whether there is any unsent record in the accumulator.
      */
     public boolean hasUnsent() {
