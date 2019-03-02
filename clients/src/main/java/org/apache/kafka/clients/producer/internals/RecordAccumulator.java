@@ -51,10 +51,12 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
+ * 消息收集器，可以看做是一个本地的消息队列，本质上使用 {@link MemoryRecords} 存储消息
+ *
  * This class acts as a queue that accumulates records into {@link MemoryRecords} instances to be sent to the server.
  * <p>
- * The accumulator uses a bounded amount of memory and append calls will block when that memory is exhausted, unless
- * this behavior is explicitly disabled.
+ * The accumulator uses a bounded amount of memory and append calls will block when that memory is exhausted,
+ * unless this behavior is explicitly disabled.
  */
 public final class RecordAccumulator {
 
@@ -62,17 +64,27 @@ public final class RecordAccumulator {
 
     /** 标识当前 accumulator 是否被关闭，对应 producer 被关闭 */
     private volatile boolean closed;
+    /** 记录正在执行 flush 操作的线程数 */
     private final AtomicInteger flushesInProgress;
+    /** 记录正在执行 append 操作的线程数 */
     private final AtomicInteger appendsInProgress;
 
     /** 指定每个 RecordBatch 中 ByteBuffer 的大小 */
     private final int batchSize;
 
-    /** 指定消息压缩类型 */
+    /** 消息压缩类型 */
     private final CompressionType compression;
+
+    /** 通过参数 linger.ms 指定，当本地消息缓存时间超过该值时即使消息量未达到阈值也会进行投递 */
     private final long lingerMs;
+
+    /** 生产者重试时间间隔 */
     private final long retryBackoffMs;
+
+    /** 缓存（ByteBuffer）管理工具 */
     private final BufferPool free;
+
+    /** 时间戳工具 */
     private final Time time;
 
     /** 记录 TopicPartition 与 RecordBatch 的映射关系，对应的 RecordBatch 都是发往该 TopicPartition */
@@ -83,9 +95,13 @@ public final class RecordAccumulator {
 
     /* The following variables are only accessed by the sender thread, so we don't need to protect them. */
 
+    /**
+     * 消息顺序性保证，
+     * 缓存当前待发送消息的目标 TopicPartition，防止对于同一个 TopicPartition 同时存在多个未完成的消息，可能导致消息顺序性错乱
+     */
     private final Set<TopicPartition> muted;
 
-    /** 记录 drain 方法批量导出 RecordBatch 时上次发送停止时的位置 */
+    /** 记录 drain 方法批量导出 RecordBatch 时上次的偏移量 */
     private int drainIndex;
 
     /**
@@ -247,8 +263,10 @@ public final class RecordAccumulator {
             // 尝试往该 RecordBatch 末尾追加消息
             FutureRecordMetadata future = last.tryAppend(timestamp, key, value, callback, time.milliseconds());
             if (future == null) {
+                // 追加失败
                 last.close();
             } else {
+                // 追加成功，将结果封装成 RecordAppendResult 对象返回
                 return new RecordAppendResult(future, deque.size() > 1 || last.isFull(), false);
             }
         }
@@ -621,7 +639,9 @@ public final class RecordAccumulator {
      */
     public final static class RecordAppendResult {
         public final FutureRecordMetadata future;
+        /** 标记追加过程中某个 RecordBatch 是否已满 */
         public final boolean batchIsFull;
+        /** 标记追加过程中是否创建了新的 RecordBatch */
         public final boolean newBatchCreated;
 
         public RecordAppendResult(FutureRecordMetadata future, boolean batchIsFull, boolean newBatchCreated) {

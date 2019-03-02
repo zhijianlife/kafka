@@ -32,11 +32,12 @@ public final class Cluster {
 
     private final boolean isBootstrapConfigured;
 
-    /** kafka 集群中的节点信息列表 */
+    /** kafka 集群中的节点信息列表（包括 id、host、port 等信息） */
     private final List<Node> nodes;
 
     /** 未授权的 topic 集合 */
     private final Set<String> unauthorizedTopics;
+    /** 内部 topic 集合 */
     private final Set<String> internalTopics;
 
     /** 记录 TopicPartition 与 PartitionInfo 的映射关系 */
@@ -45,7 +46,7 @@ public final class Cluster {
     /** 记录 topic 及其分区信息的映射关系 */
     private final Map<String, List<PartitionInfo>> partitionsByTopic;
 
-    /** 记录 topic 及其分区信息的映射关系（必须包含 leader 副本分区） */
+    /** 记录 topic 及其分区信息的映射关系（必须包含 leader 副本） */
     private final Map<String, List<PartitionInfo>> availablePartitionsByTopic;
 
     /** 记录节点 ID 与分区信息的映射关系 */

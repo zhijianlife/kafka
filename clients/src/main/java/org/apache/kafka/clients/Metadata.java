@@ -53,13 +53,13 @@ public final class Metadata {
     public static final long TOPIC_EXPIRY_MS = 5 * 60 * 1000;
     private static final long TOPIC_EXPIRY_NEEDS_UPDATE = -1L;
 
-    /** 更新 cluster 保存的元数据信息的最小间隔时间差，默认是 100 毫秒，防止更新太频繁 */
+    /** 元数据更新最小时间间隔，默认是 100 毫秒，防止更新太频繁 */
     private final long refreshBackoffMs;
 
     /** 元数据更新时间间隔，默认为 5 分钟 */
     private final long metadataExpireMs;
 
-    /** 集群元数据信息版本号，每更新成功一次则版本号加 1 */
+    /** 元数据版本号，每更新成功一次则版本号加 1 */
     private int version;
 
     /** 上一次更新元数据的时间戳，不管成功还是失败 */
@@ -71,13 +71,13 @@ public final class Metadata {
     /** 集群信息 */
     private Cluster cluster;
 
-    /** 标记是否需要强制更新集群信息 */
+    /** 标记是否需要更新集群元数据信息 */
     private boolean needUpdate;
 
-    /** Topics with expiry time，记录集群中所有的 topic 信息 */
+    /** 记录集群中所有的 topic 信息，key 是 topic，value 是 topic 过期的时间戳 */
     private final Map<String, Long> topics;
 
-    /** 注册的元数据更新监听器 */
+    /** 元数据更新监听器 */
     private final List<Listener> listeners;
 
     private final ClusterResourceListeners clusterResourceListeners;
@@ -85,7 +85,7 @@ public final class Metadata {
     /** 标记是否需要更新所有 topic 的元数据信息，一般只更新当前用到的 topic 的元数据信息 */
     private boolean needMetadataForAllTopics;
 
-    /** 标识允许 topic 过期 */
+    /** 是否允许 topic 过期 */
     private final boolean topicExpiryEnabled;
 
     /**
@@ -136,7 +136,7 @@ public final class Metadata {
      */
     public synchronized void add(String topic) {
         if (topics.put(topic, TOPIC_EXPIRY_NEEDS_UPDATE) == null) {
-            // 当前 topic 是新加入的，标记需要立即更新集群元数据信息
+            // 当前 topic 是新加入的，标记需要更新集群元数据信息
             this.requestUpdateForNewTopics();
         }
     }
@@ -155,7 +155,7 @@ public final class Metadata {
      * Request an update of the current cluster metadata info, return the current version before the update
      */
     public synchronized int requestUpdate() {
-        // 将 needUpdate 字段修改为 true，sender 线程在运行时会基于该字段决策是否更新元数据信息
+        // 将 needUpdate 字段修改为 true，sender 线程在运行时会基于该字段决定是否更新元数据信息
         this.needUpdate = true;
         // 返回当前集群元数据的版本
         return this.version;

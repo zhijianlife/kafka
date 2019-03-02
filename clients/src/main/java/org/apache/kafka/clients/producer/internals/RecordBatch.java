@@ -37,20 +37,25 @@ public final class RecordBatch {
 
     private static final Logger log = LoggerFactory.getLogger(RecordBatch.class);
 
+    /** 当前 RecordBatch 创建的时间戳 */
     final long createdMs;
 
-    /** 当前缓存的消息的目标 TopicPartition */
+    /** 当前缓存的消息的目标 TopicPartition 对象 */
     final TopicPartition topicPartition;
 
+    /** 标识当前 RecordBatch 发送之后的状态 */
     final ProduceRequestResult produceFuture;
 
     /** 消息的 Callback 队列，每个消息都对应一个 Callback 对象 */
     private final List<Thunk> thunks = new ArrayList<>();
 
+    /** 用来存储数据的 {@link MemoryRecords} 对应的 builder 对象 */
     private final MemoryRecordsBuilder recordsBuilder;
 
-    /** 尝试发送的次数 */
+    /** 尝试发送当前 RecordBatch 的次数 */
     volatile int attempts;
+    /** 最后一次尝试发送的时间戳` */
+    long lastAttemptMs;
 
     /** 记录保存的 record 个数 */
     int recordCount;
@@ -58,13 +63,10 @@ public final class RecordBatch {
     /** 记录最大的 record 字节数 */
     int maxRecordSize;
 
-    /**
-     *
-     */
+    /** 记录上次投递当前 BatchRecord 的时间戳 */
     long drainedMs;
 
-    /** 最后一次尝试发送的时间戳` */
-    long lastAttemptMs;
+    /** 追后一次向当前 RecordBatch 追加消息的时间戳 */
     long lastAppendTime;
     private String expiryErrorMessage;
     private AtomicBoolean completed;
@@ -90,10 +92,10 @@ public final class RecordBatch {
     public FutureRecordMetadata tryAppend(long timestamp, byte[] key, byte[] value, Callback callback, long now) {
         // 检测是否还有多余的空间容纳该消息
         if (!recordsBuilder.hasRoomFor(key, value)) {
-            // 没有多余的空间容纳该 record，直接返回，后面会尝试申请新的空间
+            // 没有多余的空间则直接返回，后面会尝试申请新的空间
             return null;
         }
-        // 添加当前消息到 MemoryRecords 的指定偏移位置，并返回消息对应的 CRC32 校验码
+        // 添加当前消息到 MemoryRecords，并返回消息对应的 CRC32 校验码
         long checksum = this.recordsBuilder.append(timestamp, key, value);
         // 更新最大 record 字节数
         this.maxRecordSize = Math.max(this.maxRecordSize, Record.recordSize(key, value));

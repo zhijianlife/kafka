@@ -32,7 +32,7 @@ import java.util.List;
  * To create a new buffer see {@link MemoryRecordsBuilder},
  * or one of the {@link #builder(ByteBuffer, byte, CompressionType, TimestampType) builder} variants.
  *
- * 用于封装多个消息
+ * 用于封装多个消息，使用 ByteBuffer 进行存储
  */
 public class MemoryRecords extends AbstractRecords {
 
@@ -121,8 +121,7 @@ public class MemoryRecords extends AbstractRecords {
      * @param destinationBuffer The byte buffer to write the filtered records to
      * @return A FilterResult with a summary of the output (for metrics)
      */
-    public FilterResult filterTo(TopicPartition partition, LogEntryFilter filter, ByteBuffer destinationBuffer,
-                                 int maxRecordSize) {
+    public FilterResult filterTo(TopicPartition partition, LogEntryFilter filter, ByteBuffer destinationBuffer, int maxRecordSize) {
         return filterTo(partition, shallowEntries(), filter, destinationBuffer, maxRecordSize);
     }
 

@@ -3,13 +3,14 @@
  * file distributed with this work for additional information regarding copyright ownership. The ASF licenses this file
  * to You under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
  * License. You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.common.metrics;
 
 import org.apache.kafka.common.MetricName;
@@ -26,9 +27,9 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
- * A sensor applies a continuous sequence of numerical values to a set of associated metrics. For example a sensor on
- * message size would record a sequence of message sizes using the {@link #record(double)} api and would maintain a set
- * of metrics about request sizes such as the average or max.
+ * A sensor applies a continuous sequence of numerical values to a set of associated metrics.
+ * For example a sensor on message size would record a sequence of message sizes using the
+ * {@link #record(double)} api and would maintain a set of metrics about request sizes such as the average or max.
  */
 public final class Sensor {
 
@@ -43,7 +44,8 @@ public final class Sensor {
     private final long inactiveSensorExpirationTimeMs;
 
     public enum RecordingLevel {
-        INFO(0, "INFO"), DEBUG(1, "DEBUG");
+        INFO(0, "INFO"),
+        DEBUG(1, "DEBUG");
 
         private static final RecordingLevel[] ID_TO_TYPE;
         private static final int MIN_RECORDING_LEVEL_KEY = 0;
@@ -74,9 +76,10 @@ public final class Sensor {
         }
 
         public static RecordingLevel forId(int id) {
-            if (id < MIN_RECORDING_LEVEL_KEY || id > MAX_RECORDING_LEVEL_KEY)
+            if (id < MIN_RECORDING_LEVEL_KEY || id > MAX_RECORDING_LEVEL_KEY) {
                 throw new IllegalArgumentException(String.format("Unexpected RecordLevel id `%s`, it should be between `%s` " +
-                    "and `%s` (inclusive)", id, MIN_RECORDING_LEVEL_KEY, MAX_RECORDING_LEVEL_KEY));
+                        "and `%s` (inclusive)", id, MIN_RECORDING_LEVEL_KEY, MAX_RECORDING_LEVEL_KEY));
+            }
             return ID_TO_TYPE[id];
         }
 
@@ -115,8 +118,9 @@ public final class Sensor {
 
     /* Validate that this sensor doesn't end up referencing itself */
     private void checkForest(Set<Sensor> sensors) {
-        if (!sensors.add(this))
+        if (!sensors.add(this)) {
             throw new IllegalArgumentException("Circular dependency in sensors: " + name() + " is its own parent.");
+        }
         for (int i = 0; i < parents.length; i++)
             parents[i].checkForest(sensors);
     }
@@ -143,11 +147,13 @@ public final class Sensor {
     public boolean shouldRecord() {
         return this.recordingLevel.shouldRecord(config.recordLevel().id);
     }
+
     /**
      * Record a value with this sensor
+     *
      * @param value The value to record
      * @throws QuotaViolationException if recording this value moves a metric beyond its configured maximum or minimum
-     *         bound
+     *                                 bound
      */
     public void record(double value) {
         if (shouldRecord()) {
@@ -158,10 +164,11 @@ public final class Sensor {
     /**
      * Record a value at a known time. This method is slightly faster than {@link #record(double)} since it will reuse
      * the time stamp.
+     *
      * @param value The value we are recording
      * @param timeMs The current POSIX time in milliseconds
      * @throws QuotaViolationException if recording this value moves a metric beyond its configured maximum or minimum
-     *         bound
+     *                                 bound
      */
     public void record(double value, long timeMs) {
         if (shouldRecord()) {
@@ -194,9 +201,9 @@ public final class Sensor {
                     double value = metric.value(timeMs);
                     if (!quota.acceptable(value)) {
                         throw new QuotaViolationException(
-                            metric.metricName(),
-                            value,
-                            quota.bound());
+                                metric.metricName(),
+                                value,
+                                quota.bound());
                     }
                 }
             }
@@ -212,9 +219,10 @@ public final class Sensor {
 
     /**
      * Register a compound statistic with this sensor which yields multiple measurable quantities (like a histogram)
+     *
      * @param stat The stat to register
      * @param config The configuration for this stat. If null then the stat will use the default configuration for this
-     *        sensor.
+     * sensor.
      */
     public synchronized void add(CompoundStat stat, MetricConfig config) {
         this.stats.add(Utils.notNull(stat));
@@ -227,6 +235,7 @@ public final class Sensor {
 
     /**
      * Register a metric with this sensor
+     *
      * @param metricName The name of the metric
      * @param stat The statistic to keep
      */
@@ -236,16 +245,17 @@ public final class Sensor {
 
     /**
      * Register a metric with this sensor
+     *
      * @param metricName The name of the metric
      * @param stat The statistic to keep
      * @param config A special configuration for this metric. If null use the sensor default configuration.
      */
     public synchronized void add(MetricName metricName, MeasurableStat stat, MetricConfig config) {
         KafkaMetric metric = new KafkaMetric(new Object(),
-                                             Utils.notNull(metricName),
-                                             Utils.notNull(stat),
-                                             config == null ? this.config : config,
-                                             time);
+                Utils.notNull(metricName),
+                Utils.notNull(stat),
+                config == null ? this.config : config,
+                time);
         this.registry.registerMetric(metric);
         this.metrics.add(metric);
         this.stats.add(stat);
@@ -253,7 +263,7 @@ public final class Sensor {
 
     /**
      * Return true if the Sensor is eligible for removal due to inactivity.
-     *        false otherwise
+     * false otherwise
      */
     public boolean hasExpired() {
         return (time.milliseconds() - this.lastRecordTime) > this.inactiveSensorExpirationTimeMs;

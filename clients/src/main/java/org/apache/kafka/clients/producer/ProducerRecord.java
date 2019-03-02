@@ -45,8 +45,11 @@ public class ProducerRecord<K, V> {
     private final String topic;
     /** 分区 */
     private final Integer partition;
+    /** 消息对应的 key */
     private final K key;
+    /** 消息内容 */
     private final V value;
+    /** 时间戳 */
     private final Long timestamp;
 
     /**

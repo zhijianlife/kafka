@@ -62,7 +62,7 @@ public class DefaultPartitioner implements Partitioner {
         List<PartitionInfo> partitions = cluster.partitionsForTopic(topic);
         // 获取当前 topic 对应的分区数
         int numPartitions = partitions.size();
-        // 如果没有 key，则基于轮询算法
+        // 如果没有设置 key，则基于轮询算法
         if (keyBytes == null) {
             // 获取当前 topic 对应的上次位置值加 1，如果是第一次则随机生成一个
             int nextValue = this.nextValue(topic);

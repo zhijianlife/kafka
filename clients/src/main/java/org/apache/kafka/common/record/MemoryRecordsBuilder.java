@@ -161,8 +161,7 @@ public class MemoryRecordsBuilder {
                                 long baseOffset,
                                 long logAppendTime,
                                 int writeLimit) {
-        this(new ByteBufferOutputStream(buffer), magic, compressionType, timestampType, baseOffset, logAppendTime,
-                writeLimit);
+        this(new ByteBufferOutputStream(buffer), magic, compressionType, timestampType, baseOffset, logAppendTime, writeLimit);
     }
 
     public ByteBuffer buffer() {
@@ -183,7 +182,7 @@ public class MemoryRecordsBuilder {
      * @return The built log buffer
      */
     public MemoryRecords build() {
-        close();
+        this.close();
         return builtRecords;
     }
 
