@@ -166,9 +166,11 @@ public class Sender implements Runnable {
         // 强制关闭，忽略所有未发送和已发送待响应的请求
         if (forceClose) {
             // We need to fail all the incomplete batches and wake up the threads waiting on the futures.
+            // 丢弃所有未发送完成的 RecordBatch
             this.accumulator.abortIncompleteBatches();
         }
         try {
+            // 关闭网络连接
             this.client.close();
         } catch (Exception e) {
             log.error("Failed to close network client", e);
@@ -183,48 +185,48 @@ public class Sender implements Runnable {
      * @param now The current POSIX time in milliseconds
      */
     void run(long now) {
-        // 获取 kafka 集群信息
-        Cluster cluster = metadata.fetch();
-        // get the list of partitions with data ready to send
-        // 计算可以向哪些节点发送请求
-        RecordAccumulator.ReadyCheckResult result = this.accumulator.ready(cluster, now);
 
-        // 如果存在未知 leader 分区的 topic，则标记需要更新 kafka 的集群信息
+        // 1. 计算需要以及可以向哪些节点发送请求
+        Cluster cluster = metadata.fetch(); // 获取 kafka 集群信息
+        RecordAccumulator.ReadyCheckResult result = this.accumulator.ready(cluster, now); // 计算可以向哪些节点发送请求
+
+        // 2. 存在未知 leader 分区的 topic，标记需要更新本地集群元数据信息
         if (!result.unknownLeaderTopics.isEmpty()) {
-            // The set of topics with unknown leader contains topics with leader election pending as well as
-            // topics which may have expired. Add the topic again to metadata to ensure it is included
-            // and request metadata update, since there are messages to send to the topic.
+            // The set of topics with unknown leader contains topics with leader election pending as well as topics which may have expired.
+            // Add the topic again to metadata to ensure it is included and request metadata update, since there are messages to send to the topic.
             for (String topic : result.unknownLeaderTopics)
                 this.metadata.add(topic);
             this.metadata.requestUpdate();
         }
 
-        // 遍历处理可以发送请求的节点，并基于 KafkaClient.ready 方法检查对应节点是否可用
-        // 对于不可用的节点则剔除
+        // 3. 遍历处理可以发送请求的节点，并基于网络 IO 检查对应节点是否可用，对于不可用的节点则剔除
         Iterator<Node> iter = result.readyNodes.iterator();
         long notReadyTimeout = Long.MAX_VALUE;
         while (iter.hasNext()) {
             Node node = iter.next();
+            // 检查目标节点是否准备好接收请求，如果未准备但目标节点允许创建连接，则创建到目标节点的连接
             if (!this.client.ready(node, now)) {
+                // 对于未准备好的节点，则从 ready 集合中删除
                 iter.remove();
                 notReadyTimeout = Math.min(notReadyTimeout, this.client.connectionDelay(node, now));
             }
         }
 
-        // 获取每个节点待发送 RecordBatch 集合
+        // 4. 获取每个节点待发送 RecordBatch 集合，key 是对应的节点 ID
         Map<Integer, List<RecordBatch>> batches =
                 this.accumulator.drain(cluster, result.readyNodes, this.maxRequestSize, now);
-        // 如果需要保证消息的顺序
+
+        // 5. 如果需要保证消息的顺序性，则缓存对应 TopicPartition，防止同一时间往同一个 TopicPartition 发送多条处于未完成状态的消息
         if (guaranteeMessageOrder) {
             // 将所有 RecordBatch 的 TopicPartition 加入到 RecordAccumulator.muted 集合中
-            // 防止同一时间往同一个 topic 分区发送多条消息
+            // 防止同一时间往同一个 topic 分区发送多条处于未完成状态的消息
             for (List<RecordBatch> batchList : batches.values()) {
                 for (RecordBatch batch : batchList)
                     this.accumulator.mutePartition(batch.topicPartition);
             }
         }
 
-        // 处理超时的消息
+        // 6. 处理本地过期的消息，返回 TimeoutException，并释放空间
         List<RecordBatch> expiredBatches = this.accumulator.abortExpiredBatches(this.requestTimeout, now);
         for (RecordBatch expiredBatch : expiredBatches)
             // update sensors
@@ -244,6 +246,8 @@ public class Sender implements Runnable {
             log.trace("Nodes with data ready to send: {}", result.readyNodes);
             pollTimeout = 0;
         }
+
+        // 7. 发送请求到服务端，并处理服务端响应
         this.sendProduceRequests(batches, now);
 
         /*
@@ -369,6 +373,7 @@ public class Sender implements Runnable {
      * Transfer the record batches into a list of produce requests on a per-node basis
      */
     private void sendProduceRequests(Map<Integer, List<RecordBatch>> collated, long now) {
+        // 遍历处理待发送消息集合，key 是目标节点 ID
         for (Map.Entry<Integer, List<RecordBatch>> entry : collated.entrySet())
             this.sendProduceRequest(now, entry.getKey(), acks, requestTimeout, entry.getValue());
     }
@@ -377,7 +382,7 @@ public class Sender implements Runnable {
      * Create a produce request from the given record batches
      *
      * @param now 当前时间戳
-     * @param destination 目标节点 id
+     * @param destination 目标节点 ID
      * @param acks 指定服务端响应此请求之前，需要多少副本成功复制了请求的消息
      * @param timeout 响应超时时间
      * @param batches 发送的 RecordBatch 集合
@@ -395,7 +400,7 @@ public class Sender implements Runnable {
         // 创建 ProduceRequest 构造器
         ProduceRequest.Builder requestBuilder = new ProduceRequest.Builder(acks, timeout, produceRecordsByPartition);
 
-        // 创建回调对象
+        // 创建回调对象，用于处理响应
         RequestCompletionHandler callback = new RequestCompletionHandler() {
             @Override
             public void onComplete(ClientResponse response) {
@@ -407,6 +412,7 @@ public class Sender implements Runnable {
 
         // 创建 ClientRequest 对象，如果 acks 不等于 0 则表示期望获取服务端响应
         ClientRequest clientRequest = client.newClientRequest(nodeId, requestBuilder, now, acks != 0, callback);
+        // 发送请求，并处理响应
         client.send(clientRequest, now);
         log.trace("Sent produce request to {}: {}", nodeId, requestBuilder);
     }

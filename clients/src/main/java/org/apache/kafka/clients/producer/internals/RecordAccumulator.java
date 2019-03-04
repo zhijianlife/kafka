@@ -274,12 +274,13 @@ public final class RecordAccumulator {
     }
 
     /**
-     * Abort the batches that have been sitting in RecordAccumulator for more than the configured requestTimeout
-     * due to metadata being unavailable
+     * Abort the batches that have been sitting in RecordAccumulator
+     * for more than the configured requestTimeout due to metadata being unavailable
      */
     public List<RecordBatch> abortExpiredBatches(int requestTimeout, long now) {
         List<RecordBatch> expiredBatches = new ArrayList<>();
         int count = 0;
+        // 遍历各个 TopicPartition 对应的 RecordBatch 集合
         for (Map.Entry<TopicPartition, Deque<RecordBatch>> entry : this.batches.entrySet()) {
             Deque<RecordBatch> dq = entry.getValue();
             TopicPartition tp = entry.getKey();
@@ -295,11 +296,14 @@ public final class RecordAccumulator {
                     while (batchIterator.hasNext()) {
                         RecordBatch batch = batchIterator.next();
                         boolean isFull = batch != lastBatch || batch.isFull();
-                        // Check if the batch has expired. Expired batches are closed by maybeExpire, but callbacks
-                        // are invoked after completing the iterations, since sends invoked from callbacks
-                        // may append more batches to the deque being iterated. The batch is deallocated after
-                        // callbacks are invoked.
-                        if (batch.maybeExpire(requestTimeout, retryBackoffMs, now, this.lingerMs, isFull)) {
+                        /*
+                         * Check if the batch has expired.
+                         * Expired batches are closed by maybeExpire, but callbacks are invoked after completing the iterations,
+                         * since sends invoked from callbacks may append more batches to the deque being iterated.
+                         * The batch is deallocated after callbacks are invoked.
+                         */
+                        if (batch.maybeExpire(requestTimeout, retryBackoffMs, now, lingerMs, isFull)) {
+                            // 当前 RecordBatch 已经过期
                             expiredBatches.add(batch);
                             count++;
                             batchIterator.remove();
@@ -314,8 +318,9 @@ public final class RecordAccumulator {
         if (!expiredBatches.isEmpty()) {
             log.trace("Expired {} batches in accumulator", count);
             for (RecordBatch batch : expiredBatches) {
+                // 结束当前的请求
                 batch.expirationDone();
-                deallocate(batch);
+                this.deallocate(batch);
             }
         }
 
@@ -353,8 +358,7 @@ public final class RecordAccumulator {
      * <ul>
      * <li>The record set is full</li>
      * <li>The record set has sat in the accumulator for at least lingerMs milliseconds</li>
-     * <li>The accumulator is out of memory and threads are blocking waiting for data (in this case all partitions
-     * are immediately considered ready).</li>
+     * <li>The accumulator is out of memory and threads are blocking waiting for data (in this case all partitions are immediately considered ready).</li>
      * <li>The accumulator has been closed</li>
      * </ul>
      * </ol>
@@ -367,7 +371,7 @@ public final class RecordAccumulator {
         // 记录找不到 leader 分区的 topic 集合
         Set<String> unknownLeaderTopics = new HashSet<>();
 
-        // 是否有线程在等待 BufferPool 释放空间
+        // 是否有线程在等待 BufferPool 分配空间
         boolean exhausted = this.free.queued() > 0;
         // 遍历 batches，对每个分区的 leader 副本所在的 node 执行判断
         for (Map.Entry<TopicPartition, Deque<RecordBatch>> entry : this.batches.entrySet()) {
@@ -377,30 +381,33 @@ public final class RecordAccumulator {
             // 获取当前分区 leader 副本所在的节点
             Node leader = cluster.leaderFor(part);
             synchronized (deque) {
-                // 当前分区不存在 leader，且存在发往该分区的消息
+                // 当前分区不存在 leader，但存在发往该分区的消息
                 if (leader == null && !deque.isEmpty()) {
                     // This is a partition for which leader is not known, but messages are available to send.
                     // Note that entries are currently not removed from batches when deque is empty.
                     unknownLeaderTopics.add(part.topic());
-                } else if (!readyNodes.contains(leader) && !muted.contains(part)) {
+                }
+                // 如果需要保证顺序性，则不应该存在多个发往该 leader 节点且未完成的消息
+                else if (!readyNodes.contains(leader) && !muted.contains(part)) {
                     RecordBatch batch = deque.peekFirst();
                     if (batch != null) {
+                        // 重试 && 重试时间间隔未达到阈值时间
                         boolean backingOff = batch.attempts > 0 && batch.lastAttemptMs + retryBackoffMs > nowMs;
+                        // 重试等待的时间
                         long waitedTimeMs = nowMs - batch.lastAttemptMs;
                         long timeToWaitMs = backingOff ? retryBackoffMs : lingerMs;
                         long timeLeftMs = Math.max(timeToWaitMs - waitedTimeMs, 0);
-                        // 1. 队列中有多个 RecordBatch，或第一个 RecordBatch 已满
                         boolean full = deque.size() > 1 || batch.isFull();
-                        // 2. 超时了
                         boolean expired = waitedTimeMs >= timeToWaitMs;
-                        // 3. 是否有其他线程在等待 BufferPoll 释放空间
-                        boolean sendable = full || expired || exhausted
-                                // 4. producer 已经关闭
-                                || closed
-                                // 5. 有线程正在等待 flush 操作完成
-                                || flushInProgress();
+
+                        // 标记当前节点
+                        boolean sendable = full // 1. 队列中有多个 RecordBatch || 第一个 RecordBatch 已满
+                                || expired // 2. 当前等待重试的时间过长
+                                || exhausted // 3. 有其他线程在等待 BufferPoll 分配空间
+                                || closed // 4. producer 已经关闭
+                                || flushInProgress(); // 5. 有线程正在等待 flush 操作完成
                         if (sendable && !backingOff) {
-                            // 允许发送，则将记录可以发送消息的节点
+                            // 允许发送，记录可以发送消息的节点
                             readyNodes.add(leader);
                         } else {
                             // Note that this results in a conservative estimate since an un-sendable partition may have
@@ -414,6 +421,7 @@ public final class RecordAccumulator {
             }
         }
 
+        // 封装结果返回
         return new ReadyCheckResult(readyNodes, nextReadyCheckDelayMs, unknownLeaderTopics);
     }
 
@@ -449,21 +457,18 @@ public final class RecordAccumulator {
      * @param now The current unix time in milliseconds
      * @return A list of {@link RecordBatch} for each node specified with total size less than the requested maxSize.
      */
-    public Map<Integer, List<RecordBatch>> drain(Cluster cluster,
-                                                 Set<Node> nodes,
-                                                 int maxSize,
-                                                 long now) {
+    public Map<Integer, List<RecordBatch>> drain(Cluster cluster, Set<Node> nodes, int maxSize, long now) {
         if (nodes.isEmpty()) {
             return Collections.emptyMap();
         }
 
-        // 记录转换后的结果
+        // 记录转换后的结果，key 是目标节点 ID
         Map<Integer, List<RecordBatch>> batches = new HashMap<>();
         for (Node node : nodes) {
             int size = 0;
             // 获取当前节点上的分区信息
             List<PartitionInfo> parts = cluster.partitionsForNode(node.id());
-            // 记录要发送的 RecordBatch
+            // 记录要发送的 RecordBatch 集合
             List<RecordBatch> ready = new ArrayList<>();
             /*
              * to make starvation（饥饿） less likely this loop doesn't start at 0
@@ -483,13 +488,14 @@ public final class RecordAccumulator {
                         synchronized (deque) {
                             RecordBatch first = deque.peekFirst();
                             if (first != null) {
+                                // 重试 && 重试时间间隔未达到阈值时间
                                 boolean backoff = first.attempts > 0 && first.lastAttemptMs + retryBackoffMs > now;
                                 // Only drain the batch if it is not during backoff period.
-                                if (!backoff) {
+                                if (!backoff) { // 第一次发送，或重试等待时间较长
                                     if (size + first.sizeInBytes() > maxSize && !ready.isEmpty()) {
                                         // there is a rare case that a single batch size is larger than the request size due to compression;
                                         // in this case we will still eventually send this batch in a single request
-                                        // 数量已满，结束循环，一般对应一个请求的大小
+                                        // 数据量已达到上限，结束循环，一般对应一个请求的大小
                                         break;
                                     } else {
                                         // 每次仅获取第一个 RecordBatch，并放入 read 列表中，这样给每个分区一个机会，保证公平，防止饥饿
@@ -585,8 +591,8 @@ public final class RecordAccumulator {
     }
 
     /**
-     * This function is only called when sender is closed forcefully. It will fail all the
-     * incomplete batches and return.
+     * This function is only called when sender is closed forcefully.
+     * It will fail all the incomplete batches and return.
      */
     public void abortIncompleteBatches() {
         // We need to keep aborting the incomplete batch until no thread is trying to append to
@@ -594,12 +600,13 @@ public final class RecordAccumulator {
         // 2. Free up memory in case appending threads are blocked on buffer full.
         // This is a tight loop but should be able to get through very quickly.
         do {
-            abortBatches();
-        } while (appendsInProgress());
+            // 丢弃所有未发送完成的 RecordBatch
+            this.abortBatches();
+        } while (this.appendsInProgress());
         // After this point, no thread will append any messages because they will see the close
         // flag set. We need to do the last abort after no thread was appending in case there was a new
         // batch appended by the last appending thread.
-        abortBatches();
+        this.abortBatches();
         this.batches.clear();
     }
 
@@ -608,14 +615,14 @@ public final class RecordAccumulator {
      */
     private void abortBatches() {
         for (RecordBatch batch : incomplete.all()) {
-            Deque<RecordBatch> dq = getDeque(batch.topicPartition);
+            Deque<RecordBatch> dq = this.getDeque(batch.topicPartition);
             // Close the batch before aborting
             synchronized (dq) {
                 batch.close();
                 dq.remove(batch);
             }
             batch.done(-1L, Record.NO_TIMESTAMP, new IllegalStateException("Producer is closed forcefully."));
-            deallocate(batch);
+            this.deallocate(batch);
         }
     }
 

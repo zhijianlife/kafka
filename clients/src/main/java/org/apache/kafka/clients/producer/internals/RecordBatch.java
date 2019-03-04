@@ -200,8 +200,7 @@ public final class RecordBatch {
 
     /**
      * Completes the produce future with timeout exception and invokes callbacks.
-     * This method should be invoked only if {@link #maybeExpire(int, long, long, long, boolean)}
-     * returned true.
+     * This method should be invoked only if {@link #maybeExpire(int, long, long, long, boolean)} returned true.
      */
     void expirationDone() {
         if (expiryErrorMessage == null) {
