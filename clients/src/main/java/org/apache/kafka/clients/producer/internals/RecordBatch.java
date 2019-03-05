@@ -182,7 +182,6 @@ public final class RecordBatch {
      * {@link #expirationDone()} must be invoked to complete the produce future and invoke callbacks.
      */
     public boolean maybeExpire(int requestTimeoutMs, long retryBackoffMs, long now, long lingerMs, boolean isFull) {
-
         if (!this.inRetry() && isFull && requestTimeoutMs < (now - this.lastAppendTime)) {
             expiryErrorMessage = (now - this.lastAppendTime) + " ms has passed since last append";
         } else if (!this.inRetry() && requestTimeoutMs < (now - (this.createdMs + lingerMs))) {
@@ -193,7 +192,7 @@ public final class RecordBatch {
 
         boolean expired = expiryErrorMessage != null;
         if (expired) {
-            close();
+            this.close();
         }
         return expired;
     }

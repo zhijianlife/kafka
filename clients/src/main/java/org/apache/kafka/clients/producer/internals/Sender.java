@@ -288,8 +288,7 @@ public class Sender implements Runnable {
             for (RecordBatch batch : batches.values())
                 this.completeBatch(batch, new ProduceResponse.PartitionResponse(Errors.NETWORK_EXCEPTION), correlationId, now);
         } else if (response.versionMismatch() != null) {
-            log.warn("Cancelled request {} due to a version mismatch with node {}",
-                    response, response.destination(), response.versionMismatch());
+            log.warn("Cancelled request {} due to a version mismatch with node {}", response, response.destination(), response.versionMismatch());
             for (RecordBatch batch : batches.values())
                 this.completeBatch(batch, new ProduceResponse.PartitionResponse(Errors.INVALID_REQUEST), correlationId, now);
         } else {
@@ -322,8 +321,7 @@ public class Sender implements Runnable {
      * @param correlationId The correlation id for the request
      * @param now The current POSIX timestamp in milliseconds
      */
-    private void completeBatch(RecordBatch batch, ProduceResponse.PartitionResponse response, long correlationId,
-                               long now) {
+    private void completeBatch(RecordBatch batch, ProduceResponse.PartitionResponse response, long correlationId, long now) {
         Errors error = response.error;
         if (error != Errors.NONE && this.canRetry(batch, error)) {
             // retry
@@ -388,9 +386,9 @@ public class Sender implements Runnable {
      * @param batches 发送的 RecordBatch 集合
      */
     private void sendProduceRequest(long now, int destination, short acks, int timeout, List<RecordBatch> batches) {
+        // 遍历 RecordBatch 集合，整理成 produceRecordsByPartition 和 recordsByPartition
         Map<TopicPartition, MemoryRecords> produceRecordsByPartition = new HashMap<>(batches.size());
         final Map<TopicPartition, RecordBatch> recordsByPartition = new HashMap<>(batches.size());
-        // 遍历 RecordBatch 集合，整理成 produceRecordsByPartition 和 recordsByPartition
         for (RecordBatch batch : batches) {
             TopicPartition tp = batch.topicPartition;
             produceRecordsByPartition.put(tp, batch.records());
@@ -412,7 +410,7 @@ public class Sender implements Runnable {
 
         // 创建 ClientRequest 对象，如果 acks 不等于 0 则表示期望获取服务端响应
         ClientRequest clientRequest = client.newClientRequest(nodeId, requestBuilder, now, acks != 0, callback);
-        // 发送请求，并处理响应
+        // 缓存 ClientRequest 到 InFlightRequests 中
         client.send(clientRequest, now);
         log.trace("Sent produce request to {}: {}", nodeId, requestBuilder);
     }

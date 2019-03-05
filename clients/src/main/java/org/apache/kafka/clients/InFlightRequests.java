@@ -99,8 +99,9 @@ final class InFlightRequests {
      */
     public boolean canSendMore(String node) {
         Deque<NetworkClient.InFlightRequest> queue = requests.get(node);
-        return queue == null || queue.isEmpty() ||
-                (queue.peekFirst().send.completed() && queue.size() < this.maxInFlightRequestsPerConnection);
+        return queue == null || queue.isEmpty() || // 本地没有缓存的 ClientRequest 对象
+                (queue.peekFirst().send.completed() // 对头请求已经发送完成，否则可能存在网络问题，导致请求发送不出去
+                        && queue.size() < this.maxInFlightRequestsPerConnection); // 如果队列大小大于等于该阈值则说明网络可能存在问题
     }
 
     /**

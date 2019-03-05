@@ -293,15 +293,16 @@ public class NetworkClient implements KafkaClient {
     }
 
     private void doSend(ClientRequest clientRequest, boolean isInternalRequest, long now) {
-        String nodeId = clientRequest.destination();
+        String nodeId = clientRequest.destination(); // 目标节点 ID
         if (!isInternalRequest) {
             /*
+             * 检测是否可以向目标节点发送请求
+             *
              * If this request came from outside the NetworkClient, validate that we can send data.
              * If the request is internal, we trust that internal code has done this validation.
              * Validation will be slightly different for some internal requests
              * (for example, ApiVersionsRequests can be sent prior to being in READY state.)
              */
-            // 检测是否可以向目标节点发送请求
             if (!this.canSendRequest(nodeId)) {
                 throw new IllegalStateException("Attempt to send a request to node " + nodeId + " which is not ready.");
             }
@@ -358,7 +359,7 @@ public class NetworkClient implements KafkaClient {
                 isInternalRequest,
                 send,
                 now);
-        this.inFlightRequests.add(inFlightRequest);
+        inFlightRequests.add(inFlightRequest);
         selector.send(inFlightRequest.send);
     }
 

@@ -10,6 +10,7 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.clients;
 
 import org.apache.kafka.common.errors.UnsupportedVersionException;
@@ -53,7 +54,7 @@ public class NodeApiVersions {
      * Create a NodeApiVersions object.
      *
      * @param overrides API versions to override. Any ApiVersion not specified here will be set to the current client
-     *                  value.
+     * value.
      * @return A new NodeApiVersions object.
      */
     public static NodeApiVersions create(Collection<ApiVersion> overrides) {
@@ -68,7 +69,7 @@ public class NodeApiVersions {
             }
             if (!exists) {
                 apiVersions.add(new ApiVersion(apiKey.id, ProtoUtils.oldestVersion(apiKey.id),
-                    ProtoUtils.latestVersion(apiKey.id)));
+                        ProtoUtils.latestVersion(apiKey.id)));
             }
         }
         return new NodeApiVersions(apiVersions);
@@ -97,16 +98,17 @@ public class NodeApiVersions {
      */
     public short usableVersion(ApiKeys apiKey) {
         Short usableVersion = usableVersions.get(apiKey);
-        if (usableVersion == null)
+        if (usableVersion == null) {
             throw new UnsupportedVersionException("The broker does not support " + apiKey);
-        else if (usableVersion == NODE_TOO_OLD)
+        } else if (usableVersion == NODE_TOO_OLD) {
             throw new UnsupportedVersionException("The broker is too old to support " + apiKey +
-                " version " + ProtoUtils.oldestVersion(apiKey.id));
-        else if (usableVersion == NODE_TOO_NEW)
+                    " version " + ProtoUtils.oldestVersion(apiKey.id));
+        } else if (usableVersion == NODE_TOO_NEW) {
             throw new UnsupportedVersionException("The broker is too new to support " + apiKey +
-                " version " + ProtoUtils.latestVersion(apiKey.id));
-        else
+                    " version " + ProtoUtils.latestVersion(apiKey.id));
+        } else {
             return usableVersion;
+        }
     }
 
     /**
@@ -145,11 +147,13 @@ public class NodeApiVersions {
         String separator = lineBreaks ? ",\n\t" : ", ";
         StringBuilder bld = new StringBuilder();
         bld.append("(");
-        if (lineBreaks)
+        if (lineBreaks) {
             bld.append("\n\t");
+        }
         bld.append(Utils.join(apiKeysText.values(), separator));
-        if (lineBreaks)
+        if (lineBreaks) {
             bld.append("\n");
+        }
         bld.append(")");
         return bld.toString();
     }
@@ -172,12 +176,13 @@ public class NodeApiVersions {
 
         if (apiKey != null) {
             Short usableVersion = usableVersions.get(apiKey);
-            if (usableVersion == NODE_TOO_OLD)
+            if (usableVersion == NODE_TOO_OLD) {
                 bld.append(" [unusable: node too old]");
-            else if (usableVersion == NODE_TOO_NEW)
+            } else if (usableVersion == NODE_TOO_NEW) {
                 bld.append(" [unusable: node too new]");
-            else
+            } else {
                 bld.append(" [usable: ").append(usableVersion).append("]");
+            }
         }
         return bld.toString();
     }
