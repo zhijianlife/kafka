@@ -283,15 +283,20 @@ public class Sender implements Runnable {
      */
     private void handleProduceResponse(ClientResponse response, Map<TopicPartition, RecordBatch> batches, long now) {
         int correlationId = response.requestHeader().correlationId();
+        // 如果是 disconnected 类型的响应
         if (response.wasDisconnected()) {
             log.trace("Cancelled request {} due to node {} being disconnected", response, response.destination());
             for (RecordBatch batch : batches.values())
                 this.completeBatch(batch, new ProduceResponse.PartitionResponse(Errors.NETWORK_EXCEPTION), correlationId, now);
-        } else if (response.versionMismatch() != null) {
+        }
+        // 如果是 API 版本不匹配的响应
+        else if (response.versionMismatch() != null) {
             log.warn("Cancelled request {} due to a version mismatch with node {}", response, response.destination(), response.versionMismatch());
             for (RecordBatch batch : batches.values())
                 this.completeBatch(batch, new ProduceResponse.PartitionResponse(Errors.INVALID_REQUEST), correlationId, now);
-        } else {
+        }
+        // 其它类型的响应
+        else {
             log.trace("Received produce response from node {} with correlation id {}", response.destination(), correlationId);
             // if we have a response, parse it
             if (response.hasResponse()) {
@@ -323,23 +328,26 @@ public class Sender implements Runnable {
      */
     private void completeBatch(RecordBatch batch, ProduceResponse.PartitionResponse response, long correlationId, long now) {
         Errors error = response.error;
+        // 可以重试
         if (error != Errors.NONE && this.canRetry(batch, error)) {
             // retry
             log.warn("Got error produce response with correlation id {} on topic-partition {}, retrying ({} attempts left). Error: {}",
-                    correlationId,
-                    batch.topicPartition,
-                    this.retries - batch.attempts - 1,
-                    error);
+                    correlationId, batch.topicPartition, retries - batch.attempts - 1, error);
+            // 重新添加到收集器中，等待再次发送
             this.accumulator.reenqueue(batch, now);
             this.sensors.recordRetries(batch.topicPartition.topic(), batch.recordCount);
-        } else {
+        }
+        // 不能重试
+        else {
             RuntimeException exception;
             if (error == Errors.TOPIC_AUTHORIZATION_FAILED) {
+                // 权限认证失败
                 exception = new TopicAuthorizationException(batch.topicPartition.topic());
             } else {
+                // 其他异常
                 exception = error.exception();
             }
-            // tell the user the result of their request
+            // 将异常信息传递给用户，并释放 RecordBatch 占用的空间
             batch.done(response.baseOffset, response.logAppendTime, exception);
             this.accumulator.deallocate(batch);
             if (error != Errors.NONE) {
@@ -348,13 +356,13 @@ public class Sender implements Runnable {
         }
         if (error.exception() instanceof InvalidMetadataException) {
             if (error.exception() instanceof UnknownTopicOrPartitionException) {
-                log.warn("Received unknown topic or partition error in produce request on partition {}. The " +
-                        "topic/partition may not exist or the user may not have Describe access to it", batch.topicPartition);
+                log.warn("Received unknown topic or partition error in produce request on partition {}. The topic/partition may not exist or the user may not have Describe access to it", batch.topicPartition);
             }
+            // 标记需要更新集群元数据信息
             metadata.requestUpdate();
         }
 
-        // Unmute the completed partition.
+        // 释放已经处理完成的 TopicPartition
         if (guaranteeMessageOrder) {
             this.accumulator.unmutePartition(batch.topicPartition);
         }

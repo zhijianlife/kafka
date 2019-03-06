@@ -131,7 +131,6 @@ public final class RecordBatch {
         // Set the future before invoking the callbacks as we rely on its state for the `onCompletion` call
         produceFuture.set(baseOffset, logAppendTime, exception);
 
-        // execute callbacks
         // 循环执行每个消息的 Callback
         for (Thunk thunk : thunks) {
             try {
@@ -150,7 +149,7 @@ public final class RecordBatch {
             }
         }
 
-        // 整个 RecordBatch 都处理完成
+        // 标记本次请求已经完成（正常响应、超时，以及关闭生产者）
         produceFuture.done();
     }
 

@@ -3,13 +3,14 @@
  * file distributed with this work for additional information regarding copyright ownership. The ASF licenses this file
  * to You under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
  * License. You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.common.requests;
 
 import org.apache.kafka.common.TopicPartition;
@@ -31,7 +32,7 @@ import java.util.Map;
  * This wrapper supports both v0 and v1 of ProduceResponse.
  */
 public class ProduceResponse extends AbstractResponse {
-    
+
     private static final Schema CURRENT_SCHEMA = ProtoUtils.currentResponseSchema(ApiKeys.PRODUCE.id);
     private static final String RESPONSES_KEY_NAME = "responses";
 
@@ -70,6 +71,7 @@ public class ProduceResponse extends AbstractResponse {
 
     /**
      * Constructor for Version 0
+     *
      * @param responses Produced data grouped by topic-partition
      */
     public ProduceResponse(Map<TopicPartition, PartitionResponse> responses) {
@@ -81,6 +83,7 @@ public class ProduceResponse extends AbstractResponse {
 
     /**
      * Constructor for the latest version
+     *
      * @param responses Produced data grouped by topic-partition
      * @param throttleTime Time in milliseconds the response was throttled
      */
@@ -90,6 +93,7 @@ public class ProduceResponse extends AbstractResponse {
 
     /**
      * Constructor for a specific version
+     *
      * @param responses Produced data grouped by topic-partition
      * @param throttleTime Time in milliseconds the response was throttled
      * @param version the version of schema to use.
@@ -97,14 +101,16 @@ public class ProduceResponse extends AbstractResponse {
     public ProduceResponse(Map<TopicPartition, PartitionResponse> responses, int throttleTime, int version) {
         super(new Struct(ProtoUtils.responseSchema(ApiKeys.PRODUCE.id, version)));
         initCommonFields(responses);
-        if (struct.hasField(THROTTLE_TIME_KEY_NAME))
+        if (struct.hasField(THROTTLE_TIME_KEY_NAME)) {
             struct.set(THROTTLE_TIME_KEY_NAME, throttleTime);
+        }
         this.responses = responses;
         this.throttleTime = throttleTime;
     }
 
     /**
      * Constructor from a {@link Struct}. It is the caller's responsibility to pass in a struct with the latest schema.
+     *
      * @param struct
      */
     public ProduceResponse(Struct struct) {
@@ -139,8 +145,9 @@ public class ProduceResponse extends AbstractResponse {
                         .set(PARTITION_KEY_NAME, partitionEntry.getKey())
                         .set(ERROR_CODE_KEY_NAME, part.error.code())
                         .set(BASE_OFFSET_KEY_NAME, part.baseOffset);
-                if (partStruct.hasField(LOG_APPEND_TIME_KEY_NAME))
-                        partStruct.set(LOG_APPEND_TIME_KEY_NAME, part.logAppendTime);
+                if (partStruct.hasField(LOG_APPEND_TIME_KEY_NAME)) {
+                    partStruct.set(LOG_APPEND_TIME_KEY_NAME, part.logAppendTime);
+                }
                 partitionArray.add(partStruct);
             }
             topicData.set(PARTITION_RESPONSES_KEY_NAME, partitionArray.toArray());

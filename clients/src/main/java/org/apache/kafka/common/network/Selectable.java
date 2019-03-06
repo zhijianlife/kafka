@@ -81,14 +81,12 @@ public interface Selectable {
     List<NetworkReceive> completedReceives();
 
     /**
-     * The list of connections that finished disconnecting on the last {@link #poll(long) poll()}
-     * call.
+     * The list of connections that finished disconnecting on the last {@link #poll(long) poll()} call.
      */
     List<String> disconnected();
 
     /**
-     * The list of connections that completed their connection on the last {@link #poll(long) poll()}
-     * call.
+     * The list of connections that completed their connection on the last {@link #poll(long) poll()} call.
      */
     List<String> connected();
 
