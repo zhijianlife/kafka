@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,57 +17,57 @@
 
 package kafka.utils
 
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicBoolean
 
 abstract class ShutdownableThread(val name: String, val isInterruptible: Boolean = true)
         extends Thread(name) with Logging {
-  this.setDaemon(false)
-  this.logIdent = "[" + name + "], "
-  val isRunning: AtomicBoolean = new AtomicBoolean(true)
-  private val shutdownLatch = new CountDownLatch(1)
+    this.setDaemon(false)
+    this.logIdent = "[" + name + "], "
+    val isRunning: AtomicBoolean = new AtomicBoolean(true)
+    private val shutdownLatch = new CountDownLatch(1)
 
-  def shutdown() = {
-    initiateShutdown()
-    awaitShutdown()
-  }
+    def shutdown(): Unit = {
+        initiateShutdown()
+        awaitShutdown()
+    }
 
-  def initiateShutdown(): Boolean = {
-    if(isRunning.compareAndSet(true, false)) {
-      info("Shutting down")
-      isRunning.set(false)
-      if (isInterruptible)
-        interrupt()
-      true
-    } else
-      false
-  }
+    def initiateShutdown(): Boolean = {
+        if (isRunning.compareAndSet(true, false)) {
+            info("Shutting down")
+            isRunning.set(false)
+            if (isInterruptible)
+                interrupt()
+            true
+        } else
+              false
+    }
 
     /**
-   * After calling initiateShutdown(), use this API to wait until the shutdown is complete
-   */
-  def awaitShutdown(): Unit = {
-    shutdownLatch.await()
-    info("Shutdown completed")
-  }
-
-  /**
-   * This method is repeatedly invoked until the thread shuts down or this method throws an exception
-   */
-  def doWork(): Unit
-
-  override def run(): Unit = {
-    info("Starting ")
-    try{
-      while(isRunning.get()){
-        doWork()
-      }
-    } catch{
-      case e: Throwable =>
-        if(isRunning.get())
-          error("Error due to ", e)
+     * After calling initiateShutdown(), use this API to wait until the shutdown is complete
+     */
+    def awaitShutdown(): Unit = {
+        shutdownLatch.await()
+        info("Shutdown completed")
     }
-    shutdownLatch.countDown()
-    info("Stopped ")
-  }
+
+    /**
+     * This method is repeatedly invoked until the thread shuts down or this method throws an exception
+     */
+    def doWork(): Unit
+
+    override def run(): Unit = {
+        info("Starting ")
+        try {
+            while (isRunning.get()) {
+                doWork()
+            }
+        } catch {
+            case e: Throwable =>
+                if (isRunning.get())
+                    error("Error due to ", e)
+        }
+        shutdownLatch.countDown()
+        info("Stopped ")
+    }
 }

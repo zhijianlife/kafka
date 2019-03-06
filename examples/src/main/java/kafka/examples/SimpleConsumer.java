@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,12 +14,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package kafka.examples;
 
 import kafka.api.FetchRequest;
 import kafka.api.FetchRequestBuilder;
 import kafka.javaapi.FetchResponse;
-import kafka.javaapi.consumer.SimpleConsumer;
 import kafka.javaapi.message.ByteBufferMessageSet;
 import kafka.message.MessageAndOffset;
 
@@ -30,7 +30,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-public class SimpleConsumerDemo {
+public class SimpleConsumer {
 
     private static void printMessages(ByteBufferMessageSet messageSet) throws UnsupportedEncodingException {
         for (MessageAndOffset messageAndOffset : messageSet) {
@@ -56,17 +56,17 @@ public class SimpleConsumerDemo {
     public static void main(String[] args) throws Exception {
         generateData();
 
-        SimpleConsumer simpleConsumer = new SimpleConsumer(KafkaProperties.KAFKA_SERVER_URL,
-            KafkaProperties.KAFKA_SERVER_PORT,
-            KafkaProperties.CONNECTION_TIMEOUT,
-            KafkaProperties.KAFKA_PRODUCER_BUFFER_SIZE,
-            KafkaProperties.CLIENT_ID);
+        kafka.javaapi.consumer.SimpleConsumer simpleConsumer = new kafka.javaapi.consumer.SimpleConsumer(KafkaProperties.KAFKA_SERVER_URL,
+                KafkaProperties.KAFKA_SERVER_PORT,
+                KafkaProperties.CONNECTION_TIMEOUT,
+                KafkaProperties.KAFKA_PRODUCER_BUFFER_SIZE,
+                KafkaProperties.CLIENT_ID);
 
         System.out.println("Testing single fetch");
         FetchRequest req = new FetchRequestBuilder()
-            .clientId(KafkaProperties.CLIENT_ID)
-            .addFetch(KafkaProperties.TOPIC2, 0, 0L, 100)
-            .build();
+                .clientId(KafkaProperties.CLIENT_ID)
+                .addFetch(KafkaProperties.TOPIC2, 0, 0L, 100)
+                .build();
         FetchResponse fetchResponse = simpleConsumer.fetch(req);
         printMessages(fetchResponse.messageSet(KafkaProperties.TOPIC2, 0));
 
@@ -75,10 +75,10 @@ public class SimpleConsumerDemo {
         topicMap.put(KafkaProperties.TOPIC2, Collections.singletonList(0));
         topicMap.put(KafkaProperties.TOPIC3, Collections.singletonList(0));
         req = new FetchRequestBuilder()
-            .clientId(KafkaProperties.CLIENT_ID)
-            .addFetch(KafkaProperties.TOPIC2, 0, 0L, 100)
-            .addFetch(KafkaProperties.TOPIC3, 0, 0L, 100)
-            .build();
+                .clientId(KafkaProperties.CLIENT_ID)
+                .addFetch(KafkaProperties.TOPIC2, 0, 0L, 100)
+                .addFetch(KafkaProperties.TOPIC3, 0, 0L, 100)
+                .build();
         fetchResponse = simpleConsumer.fetch(req);
         int fetchReq = 0;
         for (Map.Entry<String, List<Integer>> entry : topicMap.entrySet()) {
