@@ -115,8 +115,7 @@ public class ConsumerNetworkClient implements Closeable {
     public RequestFuture<ClientResponse> send(Node node, AbstractRequest.Builder<?> requestBuilder) {
         long now = time.milliseconds();
         RequestFutureCompletionHandler completionHandler = new RequestFutureCompletionHandler();
-        ClientRequest clientRequest = client.newClientRequest(node.idString(), requestBuilder, now, true,
-                completionHandler);
+        ClientRequest clientRequest = client.newClientRequest(node.idString(), requestBuilder, now, true, completionHandler);
         put(node, clientRequest);
 
         // wakeup the client in case it is blocking in poll so that we can send the queued request
@@ -244,9 +243,11 @@ public class ConsumerNetworkClient implements Closeable {
             // 尝试发送 unsent 中缓存的请求
             this.trySend(now);
 
-            // check whether the poll is still needed by the caller. Note that if the expected completion
-            // condition becomes satisfied after the call to shouldBlock() (because of a fired completion
-            // handler), the client will be woken up.
+            /*
+             * check whether the poll is still needed by the caller.
+             * Note that if the expected completion condition becomes satisfied after the call to shouldBlock()
+             * (because of a fired completion handler), the client will be woken up.
+             */
             if (pollCondition == null || pollCondition.shouldBlock()) {
                 // if there are no requests in flight, do not block longer than the retry backoff
                 if (client.inFlightRequestCount() == 0) {
@@ -258,40 +259,59 @@ public class ConsumerNetworkClient implements Closeable {
                 client.poll(0, now);
             }
 
-            // handle any disconnects by failing the active requests. note that disconnects must
-            // be checked immediately following poll since any subsequent call to client.ready()
-            // will reset the disconnect status
-            checkDisconnects(now);
+            /*
+             * handle any disconnects by failing the active requests.
+             * note that disconnects must be checked immediately following poll
+             * since any subsequent call to client.ready() will reset the disconnect status
+             *
+             * 检测 unsent 集合中对应节点的连通性，对于连接失败的节点丢弃对应的请求，并提前响应失败
+             */
+            this.checkDisconnects(now);
 
-            // trigger wakeups after checking for disconnects so that the callbacks will be ready
-            // to be fired on the next call to poll()
-            maybeTriggerWakeup();
+            /*
+             * trigger wakeups after checking for disconnects
+             * so that the callbacks will be ready to be fired on the next call to poll()
+             *
+             * 检测当前是否有中断请求，且是否允许中断，如果是的话则抛出 WakeupException 异常，中断当前线程
+             */
+            this.maybeTriggerWakeup();
 
             // throw InterruptException if this thread is interrupted
-            maybeThrowInterruptException();
+            this.maybeThrowInterruptException();
 
-            // try again to send requests since buffer space may have been
-            // cleared or a connect finished in the poll
-            trySend(now);
+            /*
+             * try again to send requests since buffer space may have been cleared or a connect finished in the poll
+             *
+             * 再次尝试发送网络请求
+             */
+            this.trySend(now);
 
-            // fail requests that couldn't be sent if they have expired
-            failExpiredRequests(now);
+            /*
+             * fail requests that couldn't be sent if they have expired
+             *
+             * 处理 unsent 中超时的请求
+             */
+            this.failExpiredRequests(now);
         }
 
-        // called without the lock to avoid deadlock potential if handlers need to acquire locks
-        firePendingCompletedRequests();
+        /*
+         * called without the lock to avoid deadlock potential if handlers need to acquire locks
+         */
+        this.firePendingCompletedRequests();
     }
 
     /**
-     * Poll for network IO and return immediately. This will not trigger wakeups,
-     * nor will it execute any delayed tasks.
+     * 不可中断的 poll 方法
+     *
+     * Poll for network IO and return immediately.
+     * This will not trigger wakeups, nor will it execute any delayed tasks.
      */
     public void pollNoWakeup() {
-        disableWakeups();
+        this.disableWakeups(); // 标记不可中断
         try {
-            poll(0, time.milliseconds(), null);
+            this.poll(0, time.milliseconds(), null);
         } finally {
-            enableWakeups();
+            this.enableWakeups();
         }
     }
 
@@ -362,23 +382,31 @@ public class ConsumerNetworkClient implements Closeable {
         }
     }
 
+    /**
+     * any disconnects affecting requests that have already been transmitted will be handled by NetworkClient,
+     * so we just need to check whether connections for any of the unsent requests have been disconnected;
+     * if they have, then we complete the corresponding future and set the disconnect flag in the ClientResponse
+     *
+     * @param now
+     */
     private void checkDisconnects(long now) {
-        // any disconnects affecting requests that have already been transmitted will be handled
-        // by NetworkClient, so we just need to check whether connections for any of the unsent
-        // requests have been disconnected; if they have, then we complete the corresponding future
-        // and set the disconnect flag in the ClientResponse
+        // 遍历 unsent 集合
         Iterator<Map.Entry<Node, List<ClientRequest>>> iterator = unsent.entrySet().iterator();
         while (iterator.hasNext()) {
             Map.Entry<Node, List<ClientRequest>> requestEntry = iterator.next();
             Node node = requestEntry.getKey();
-            if (client.connectionFailed(node)) {
-                // Remove entry before invoking request callback to avoid callbacks handling
-                // coordinator failures traversing the unsent list again.
-                iterator.remove();
+            // 检测与每个节点之间的连接状态
+            if (client.connectionFailed(node)) { // 连接失败
+                /*
+                 * Remove entry before invoking request callback to avoid
+                 * callbacks handling coordinator failures traversing the unsent list again.
+                 */
+                iterator.remove(); // 移除发往该节点的所有 ClientRequest 对象
                 for (ClientRequest request : requestEntry.getValue()) {
+                    // 回调
                     RequestFutureCompletionHandler handler = (RequestFutureCompletionHandler) request.callback();
-                    handler.onComplete(new ClientResponse(request.makeHeader(), request.callback(), request.destination(),
-                            request.createdTimeMs(), now, true, null, null));
+                    handler.onComplete(new ClientResponse(request.makeHeader(), request.callback(),
+                            request.destination(), request.createdTimeMs(), now, true, null, null));
                 }
             }
         }
@@ -443,9 +471,12 @@ public class ConsumerNetworkClient implements Closeable {
     }
 
     private void maybeTriggerWakeup() {
+        // 当前 consumer 线程没有在执行不可中断的方法，且有其它线程的中断请求
         if (wakeupDisabledCount == 0 && wakeup.get()) {
             log.trace("Raising wakeup exception in response to user wakeup");
+            // 重置中断请求标记位
             wakeup.set(false);
+            // 抛出 WakeupException 方法，中断当前线程
             throw new WakeupException();
         }
     }
