@@ -10,6 +10,7 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.clients.consumer.internals;
 
 import org.apache.kafka.clients.ClientRequest;
@@ -19,6 +20,7 @@ import org.apache.kafka.clients.Metadata;
 import org.apache.kafka.clients.RequestCompletionHandler;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.errors.DisconnectException;
+import org.apache.kafka.common.errors.InterruptException;
 import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.errors.WakeupException;
 import org.apache.kafka.common.protocol.ApiKeys;
@@ -37,33 +39,53 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
-import org.apache.kafka.common.errors.InterruptException;
 
 /**
- * Higher level consumer access to the network layer with basic support for request futures. This class
- * is thread-safe, but provides no synchronization for response callbacks. This guarantees that no locks
- * are held when they are invoked.
+ * Higher level consumer access to the network layer with basic support for request futures.
+ * This class is thread-safe, but provides no synchronization for response callbacks.
+ * This guarantees that no locks are held when they are invoked.
  */
 public class ConsumerNetworkClient implements Closeable {
+
     private static final Logger log = LoggerFactory.getLogger(ConsumerNetworkClient.class);
+
     private static final long MAX_POLL_TIMEOUT_MS = 5000L;
 
-    // the mutable state of this class is protected by the object's monitor (excluding the wakeup
-    // flag and the request completion queue below).
+    // the mutable state of this class is protected by the object's monitor (excluding the wakeup flag and the request completion queue below).
+
     private final KafkaClient client;
+
+    /** 缓冲队列，key 是节点，value 是发往该节点的 ClientRequest 集合 */
     private final Map<Node, List<ClientRequest>> unsent = new HashMap<>();
+
+    /** 集群元数据 */
     private final Metadata metadata;
+
+    /** 时间戳工具 */
     private final Time time;
+
     private final long retryBackoffMs;
+
+    /** ClientRequest 在 unsent 集合中的超时时长 */
     private final long unsentExpiryMs;
+
+    /**
+     * 记录当前消费线程进入不可中断的方法的数目，每进入一个计数加 1，退出则减 1`
+     */
     private int wakeupDisabledCount = 0;
 
-    // when requests complete, they are transferred to this queue prior to invocation. The purpose
-    // is to avoid invoking them while holding this object's monitor which can open the door for deadlocks.
+    /**
+     * when requests complete, they are transferred to this queue prior to invocation.
+     * The purpose is to avoid invoking them while holding this object's monitor which can open the door for deadlocks.
+     */
     private final ConcurrentLinkedQueue<RequestFutureCompletionHandler> pendingCompletion = new ConcurrentLinkedQueue<>();
 
-    // this flag allows the client to be safely woken up without waiting on the lock above. It is
-    // atomic to avoid the need to acquire the lock above in order to enable it concurrently.
+    /**
+     * 标记是否需要中断当前消费线程
+     *
+     * this flag allows the client to be safely woken up without waiting on the lock above.
+     * It is atomic to avoid the need to acquire the lock above in order to enable it concurrently.
+     */
     private final AtomicBoolean wakeup = new AtomicBoolean(false);
 
     public ConsumerNetworkClient(KafkaClient client,
@@ -145,8 +167,9 @@ public class ConsumerNetworkClient implements Closeable {
      * until it has completed).
      */
     public void ensureFreshMetadata() {
-        if (this.metadata.updateRequested() || this.metadata.timeToNextUpdate(time.milliseconds()) == 0)
+        if (this.metadata.updateRequested() || this.metadata.timeToNextUpdate(time.milliseconds()) == 0) {
             awaitMetadataUpdate();
+        }
     }
 
     /**
@@ -163,8 +186,9 @@ public class ConsumerNetworkClient implements Closeable {
 
     /**
      * Block indefinitely until the given request future has finished.
+     *
      * @param future The request future to await.
-     * @throws WakeupException if {@link #wakeup()} is called from another thread
+     * @throws WakeupException    if {@link #wakeup()} is called from another thread
      * @throws InterruptException if the calling thread is interrupted
      */
     public void poll(RequestFuture<?> future) {
@@ -174,10 +198,11 @@ public class ConsumerNetworkClient implements Closeable {
 
     /**
      * Block until the provided request future request has finished or the timeout has expired.
+     *
      * @param future The request future to wait for
      * @param timeout The maximum duration (in ms) to wait for the request
      * @return true if the future is done, false otherwise
-     * @throws WakeupException if {@link #wakeup()} is called from another thread
+     * @throws WakeupException    if {@link #wakeup()} is called from another thread
      * @throws InterruptException if the calling thread is interrupted
      */
     public boolean poll(RequestFuture<?> future, long timeout) {
@@ -195,8 +220,9 @@ public class ConsumerNetworkClient implements Closeable {
 
     /**
      * Poll for any network IO.
+     *
      * @param timeout The maximum time to wait for an IO event.
-     * @throws WakeupException if {@link #wakeup()} is called from another thread
+     * @throws WakeupException    if {@link #wakeup()} is called from another thread
      * @throws InterruptException if the calling thread is interrupted
      */
     public void poll(long timeout) {
@@ -205,24 +231,27 @@ public class ConsumerNetworkClient implements Closeable {
 
     /**
      * Poll for any network IO.
-     * @param timeout timeout in milliseconds
-     * @param now current time in milliseconds
+     *
+     * @param timeout 执行 poll 方法的最长阻塞时间，为 0 表示不阻塞
+     * @param now 当前时间戳
+     * @param pollCondition
      */
     public void poll(long timeout, long now, PollCondition pollCondition) {
         // there may be handlers which need to be invoked if we woke up the previous call to poll
-        firePendingCompletedRequests();
+        this.firePendingCompletedRequests();
 
         synchronized (this) {
-            // send all the requests we can send now
-            trySend(now);
+            // 尝试发送 unsent 中缓存的请求
+            this.trySend(now);
 
             // check whether the poll is still needed by the caller. Note that if the expected completion
             // condition becomes satisfied after the call to shouldBlock() (because of a fired completion
             // handler), the client will be woken up.
             if (pollCondition == null || pollCondition.shouldBlock()) {
                 // if there are no requests in flight, do not block longer than the retry backoff
-                if (client.inFlightRequestCount() == 0)
+                if (client.inFlightRequestCount() == 0) {
                     timeout = Math.min(timeout, retryBackoffMs);
+                }
                 client.poll(Math.min(MAX_POLL_TIMEOUT_MS, timeout), now);
                 now = time.milliseconds();
             } else {
@@ -237,7 +266,7 @@ public class ConsumerNetworkClient implements Closeable {
             // trigger wakeups after checking for disconnects so that the callbacks will be ready
             // to be fired on the next call to poll()
             maybeTriggerWakeup();
-            
+
             // throw InterruptException if this thread is interrupted
             maybeThrowInterruptException();
 
@@ -268,6 +297,7 @@ public class ConsumerNetworkClient implements Closeable {
 
     /**
      * Block until all pending requests from the given node have finished.
+     *
      * @param node The node to await requests from
      * @param timeoutMs The maximum time in milliseconds to block
      * @return true If all requests finished, false if the timeout expired first
@@ -287,6 +317,7 @@ public class ConsumerNetworkClient implements Closeable {
     /**
      * Get the count of pending requests to the given node. This includes both request that
      * have been transmitted (i.e. in-flight requests) and those which are awaiting transmission.
+     *
      * @param node The node in question
      * @return The number of pending requests
      */
@@ -301,12 +332,13 @@ public class ConsumerNetworkClient implements Closeable {
     /**
      * Get the total count of pending requests from all nodes. This includes both requests that
      * have been transmitted (i.e. in-flight requests) and those which are awaiting transmission.
+     *
      * @return The total count of pending requests
      */
     public int pendingRequestCount() {
         synchronized (this) {
             int total = 0;
-            for (List<ClientRequest> requests: unsent.values())
+            for (List<ClientRequest> requests : unsent.values())
                 total += requests.size();
             return total + client.inFlightRequestCount();
         }
@@ -314,18 +346,20 @@ public class ConsumerNetworkClient implements Closeable {
 
     private void firePendingCompletedRequests() {
         boolean completedRequestsFired = false;
-        for (;;) {
+        for (; ; ) {
             RequestFutureCompletionHandler completionHandler = pendingCompletion.poll();
-            if (completionHandler == null)
+            if (completionHandler == null) {
                 break;
+            }
 
             completionHandler.fireCompletion();
             completedRequestsFired = true;
         }
 
         // wakeup the client in case it is blocking in poll for this future's completion
-        if (completedRequestsFired)
+        if (completedRequestsFired) {
             client.wakeup();
+        }
     }
 
     private void checkDisconnects(long now) {
@@ -362,11 +396,13 @@ public class ConsumerNetworkClient implements Closeable {
                     RequestFutureCompletionHandler handler = (RequestFutureCompletionHandler) request.callback();
                     handler.onFailure(new TimeoutException("Failed to send request after " + unsentExpiryMs + " ms."));
                     requestIterator.remove();
-                } else
+                } else {
                     break;
+                }
             }
-            if (requestEntry.getValue().isEmpty())
+            if (requestEntry.getValue().isEmpty()) {
                 iterator.remove();
+            }
         }
     }
 
@@ -389,12 +425,14 @@ public class ConsumerNetworkClient implements Closeable {
     private boolean trySend(long now) {
         // send any requests that can be sent now
         boolean requestsSent = false;
-        for (Map.Entry<Node, List<ClientRequest>> requestEntry: unsent.entrySet()) {
+        // 遍历处理 unsent 集合，key 是节点，value 是发往该节点的 ClientRequest 集合
+        for (Map.Entry<Node, List<ClientRequest>> requestEntry : unsent.entrySet()) {
             Node node = requestEntry.getKey();
             Iterator<ClientRequest> iterator = requestEntry.getValue().iterator();
             while (iterator.hasNext()) {
                 ClientRequest request = iterator.next();
                 if (client.ready(node, now)) {
+                    // 发送请求
                     client.send(request, now);
                     iterator.remove();
                     requestsSent = true;
@@ -411,7 +449,7 @@ public class ConsumerNetworkClient implements Closeable {
             throw new WakeupException();
         }
     }
-    
+
     private void maybeThrowInterruptException() {
         if (Thread.interrupted()) {
             throw new InterruptException(new InterruptedException());
@@ -426,15 +464,17 @@ public class ConsumerNetworkClient implements Closeable {
 
     public void enableWakeups() {
         synchronized (this) {
-            if (wakeupDisabledCount <= 0)
+            if (wakeupDisabledCount <= 0) {
                 throw new IllegalStateException("Cannot enable wakeups since they were never disabled");
+            }
 
             wakeupDisabledCount--;
 
             // re-wakeup the client if the flag was set since previous wake-up call
             // could be cleared by poll(0) while wakeups were disabled
-            if (wakeupDisabledCount == 0 && wakeup.get())
+            if (wakeupDisabledCount == 0 && wakeup.get()) {
                 this.client.wakeup();
+            }
         }
     }
 
@@ -448,6 +488,7 @@ public class ConsumerNetworkClient implements Closeable {
     /**
      * Find whether a previous connection has failed. Note that the failure state will persist until either
      * {@link #tryConnect(Node)} or {@link #send(Node, AbstractRequest.Builder)} has been called.
+     *
      * @param node Node to connect to if possible
      */
     public boolean connectionFailed(Node node) {
@@ -460,6 +501,7 @@ public class ConsumerNetworkClient implements Closeable {
      * Initiate a connection if currently possible. This is only really useful for resetting the failed
      * status of a socket. If there is an actual request to send, then {@link #send(Node, AbstractRequest.Builder)}
      * should be used.
+     *
      * @param node The node to connect to
      */
     public void tryConnect(Node node) {
@@ -517,6 +559,7 @@ public class ConsumerNetworkClient implements Closeable {
     public interface PollCondition {
         /**
          * Return whether the caller is still awaiting an IO event.
+         *
          * @return true if so, false otherwise.
          */
         boolean shouldBlock();
