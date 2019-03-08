@@ -115,14 +115,23 @@ public class ConsumerNetworkClient implements Closeable {
     public RequestFuture<ClientResponse> send(Node node, AbstractRequest.Builder<?> requestBuilder) {
         long now = time.milliseconds();
         RequestFutureCompletionHandler completionHandler = new RequestFutureCompletionHandler();
+        // 创建 ClientRequest 对象
         ClientRequest clientRequest = client.newClientRequest(node.idString(), requestBuilder, now, true, completionHandler);
-        put(node, clientRequest);
+        // 将 ClientRequest 放置到目标节点的 unsent 队列中，等待发送
+        this.put(node, clientRequest);
 
         // wakeup the client in case it is blocking in poll so that we can send the queued request
+        // 唤醒 client
         client.wakeup();
         return completionHandler.future;
     }
 
+    /**
+     * 向 unsent 集合中添加请求
+     *
+     * @param node
+     * @param request
+     */
     private void put(Node node, ClientRequest request) {
         synchronized (this) {
             List<ClientRequest> nodeUnsent = unsent.get(node);
@@ -134,6 +143,11 @@ public class ConsumerNetworkClient implements Closeable {
         }
     }
 
+    /**
+     * 查找集群中负载最小的节点
+     *
+     * @return
+     */
     public Node leastLoadedNode() {
         synchronized (this) {
             return client.leastLoadedNode(time.milliseconds());
@@ -144,11 +158,13 @@ public class ConsumerNetworkClient implements Closeable {
      * Block until the metadata has been refreshed.
      */
     public void awaitMetadataUpdate() {
-        awaitMetadataUpdate(Long.MAX_VALUE);
+        this.awaitMetadataUpdate(Long.MAX_VALUE);
     }
 
     /**
      * Block waiting on the metadata refresh with a timeout.
+     *
+     * 阻塞等待 metadata 更新
      *
      * @return true if update succeeded, false otherwise.
      */
@@ -156,7 +172,7 @@ public class ConsumerNetworkClient implements Closeable {
         long startMs = time.milliseconds();
         int version = this.metadata.requestUpdate();
         do {
-            poll(timeout);
+            this.poll(timeout);
         } while (this.metadata.version() == version && time.milliseconds() - startMs < timeout);
         return this.metadata.version() > version;
     }
@@ -318,6 +334,8 @@ public class ConsumerNetworkClient implements Closeable {
     /**
      * Block until all pending requests from the given node have finished.
      *
+     * 阻塞等待 unsent 和 InFlightRequests 中的请求全部完成
+     *
      * @param node The node to await requests from
      * @param timeoutMs The maximum time in milliseconds to block
      * @return true If all requests finished, false if the timeout expired first
@@ -327,7 +345,7 @@ public class ConsumerNetworkClient implements Closeable {
         long remainingMs = timeoutMs;
 
         while (pendingRequestCount(node) > 0 && remainingMs > 0) {
-            poll(remainingMs);
+            this.poll(remainingMs);
             remainingMs = timeoutMs - (time.milliseconds() - startMs);
         }
 
@@ -529,9 +547,9 @@ public class ConsumerNetworkClient implements Closeable {
     }
 
     /**
-     * Initiate a connection if currently possible. This is only really useful for resetting the failed
-     * status of a socket. If there is an actual request to send, then {@link #send(Node, AbstractRequest.Builder)}
-     * should be used.
+     * Initiate a connection if currently possible.
+     * This is only really useful for resetting the failed status of a socket.
+     * If there is an actual request to send, then {@link #send(Node, AbstractRequest.Builder)} should be used.
      *
      * @param node The node to connect to
      */
@@ -542,6 +560,7 @@ public class ConsumerNetworkClient implements Closeable {
     }
 
     public class RequestFutureCompletionHandler implements RequestCompletionHandler {
+
         private final RequestFuture<ClientResponse> future;
         private ClientResponse response;
         private RuntimeException e;

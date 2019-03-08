@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -42,12 +42,14 @@ public class PartitionStates<S> {
 
     private final LinkedHashMap<TopicPartition, S> map = new LinkedHashMap<>();
 
-    public PartitionStates() {}
+    public PartitionStates() {
+    }
 
     public void moveToEnd(TopicPartition topicPartition) {
         S state = map.remove(topicPartition);
-        if (state != null)
+        if (state != null) {
             map.put(topicPartition, state);
+        }
     }
 
     public void updateAndMoveToEnd(TopicPartition topicPartition, S state) {
@@ -144,10 +146,12 @@ public class PartitionStates<S> {
 
         @Override
         public boolean equals(Object o) {
-            if (this == o)
+            if (this == o) {
                 return true;
-            if (o == null || getClass() != o.getClass())
+            }
+            if (o == null || getClass() != o.getClass()) {
                 return false;
+            }
 
             PartitionState<?> that = (PartitionState<?>) o;
 

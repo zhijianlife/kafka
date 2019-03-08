@@ -10,11 +10,12 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.clients.consumer;
 
-import java.util.Collection;
-
 import org.apache.kafka.common.TopicPartition;
+
+import java.util.Collection;
 
 /**
  * A callback interface that the user can implement to trigger custom actions when the set of partitions assigned to the
@@ -98,7 +99,7 @@ public interface ConsumerRebalanceListener {
      * {@link #onPartitionsAssigned(Collection)} callback.
      *
      * @param partitions The list of partitions that are now assigned to the consumer (may include partitions previously
-     *            assigned to the consumer)
+     * assigned to the consumer)
      */
     void onPartitionsAssigned(Collection<TopicPartition> partitions);
 }

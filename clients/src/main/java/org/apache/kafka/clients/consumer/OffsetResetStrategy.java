@@ -10,8 +10,14 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.clients.consumer;
 
+/**
+ * 重置 offset 的策略
+ */
 public enum OffsetResetStrategy {
-    LATEST, EARLIEST, NONE
+    LATEST,
+    EARLIEST,
+    NONE
 }

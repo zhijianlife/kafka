@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Diagram>
+  <ID>JAVA</ID>
+  <OriginalElement>org.apache.kafka.clients.consumer.internals.PartitionAssignor</OriginalElement>
+  <nodes>
+    <node x="0.0" y="170.0">org.apache.kafka.clients.consumer.RangeAssignor</node>
+    <node x="181.0" y="170.0">org.apache.kafka.clients.consumer.RoundRobinAssignor</node>
+    <node x="62.0" y="85.0">org.apache.kafka.clients.consumer.internals.AbstractPartitionAssignor</node>
+    <node x="93.5" y="0.0">org.apache.kafka.clients.consumer.internals.PartitionAssignor</node>
+  </nodes>
+  <notes />
+  <edges>
+    <edge source="org.apache.kafka.clients.consumer.RoundRobinAssignor" target="org.apache.kafka.clients.consumer.internals.AbstractPartitionAssignor">
+      <point x="0.0" y="-17.5" />
+      <point x="284.5" y="145.0" />
+      <point x="242.75" y="145.0" />
+      <point x="60.25" y="17.5" />
+    </edge>
+    <edge source="org.apache.kafka.clients.consumer.RangeAssignor" target="org.apache.kafka.clients.consumer.internals.AbstractPartitionAssignor">
+      <point x="0.0" y="-17.5" />
+      <point x="80.5" y="145.0" />
+      <point x="122.25" y="145.0" />
+      <point x="-60.25" y="17.5" />
+    </edge>
+    <edge source="org.apache.kafka.clients.consumer.internals.AbstractPartitionAssignor" target="org.apache.kafka.clients.consumer.internals.PartitionAssignor">
+      <point x="0.0" y="-17.5" />
+      <point x="0.0" y="17.5" />
+    </edge>
+  </edges>
+  <settings layout="Hierarchic Group" zoom="1.0" x="89.0" y="17.5" />
+  <SelectedNodes />
+  <Categories />
+  <SCOPE>All</SCOPE>
+  <VISIBILITY>private</VISIBILITY>
+</Diagram>
+

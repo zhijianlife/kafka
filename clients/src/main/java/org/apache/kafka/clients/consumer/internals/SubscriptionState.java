@@ -10,6 +10,7 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.clients.consumer.internals;
 
 import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
@@ -49,35 +50,67 @@ import java.util.regex.Pattern;
  * to set the initial fetch position (e.g. {@link Fetcher#resetOffset(TopicPartition)}.
  */
 public class SubscriptionState {
+
+    /* KafkaConsumer 使用该类追踪 TopicPartition 和 offset 的对应关系 */
+
     private static final String SUBSCRIPTION_EXCEPTION_MESSAGE =
             "Subscription to topics, partitions and pattern are mutually exclusive";
 
+    /**
+     * 订阅 topic 的模式
+     */
     private enum SubscriptionType {
-        NONE, AUTO_TOPICS, AUTO_PATTERN, USER_ASSIGNED
+        NONE,
+        /** 按照指定的 topic 的名字进行订阅，自动分配分区 */
+        AUTO_TOPICS,
+        /** 按照正则匹配 topic 名称进行订阅，自动分配分区 */
+        AUTO_PATTERN,
+        /** 用户手动指定消费的 topic 以及分区 */
+        USER_ASSIGNED
     }
 
-    /* the type of subscription */
+    /** 订阅 topic 的模式 */
     private SubscriptionType subscriptionType;
 
-    /* the pattern user has requested */
+    /** 如果 AUTO_PATTERN 订阅模式，则此字段指定匹配的正则 */
     private Pattern subscribedPattern;
 
-    /* the list of topics the user has requested */
+    /** 记录所有订阅的 topic */
     private Set<String> subscription;
 
-    /* the list of topics the group has subscribed to (set only for the leader on join group completion) */
+    /**
+     * Consumer Group 选举出来的 leader 使用该集合记录 Consumer Group 中所有消费者订阅的 topic,
+     * 如果是 follower 则仅保存其自身订阅的 topic
+     *
+     * the list of topics the group has subscribed to (set only for the leader on join group completion)
+     */
     private final Set<String> groupSubscription;
 
-    /* the partitions that are currently assigned, note that the order of partition matters (see FetchBuilder for more details) */
+    /**
+     * 记录每个 TopicPartition 的消费状态
+     *
+     * the partitions that are currently assigned, note that the order of partition matters (see FetchBuilder for more details)
+     */
     private final PartitionStates<TopicPartitionState> assignment;
 
-    /* do we need to request the latest committed offsets from the coordinator? */
+    /**
+     * 标记是否从 {@link GroupCoordinator} 获取最近提交的 offset，
+     * 当出现异步提交 offset 操作，或是 reblance 操作刚完成的时候会将其设置为 true，成功获取之后会设置为 false
+     *
+     * do we need to request the latest committed offsets from the coordinator?
+     */
     private boolean needsFetchCommittedOffsets;
 
-    /* Default offset reset strategy */
+    /**
+     * 默认的 offset 重置策略
+     */
     private final OffsetResetStrategy defaultResetStrategy;
 
-    /* User-provided listener to be invoked when assignment changes */
+    /**
+     * 用于监听分区 rebalance 操作
+     *
+     * User-provided listener to be invoked when assignment changes
+     */
     private ConsumerRebalanceListener listener;
 
     /* Listeners provide a hook for internal state cleanup (e.g. metrics) on assignment changes */
@@ -95,37 +128,51 @@ public class SubscriptionState {
 
     /**
      * This method sets the subscription type if it is not already set (i.e. when it is NONE),
-     * or verifies that the subscription type is equal to the give type when it is set (i.e.
-     * when it is not NONE)
+     * or verifies that the subscription type is equal to the give type when it is set (i.e. when it is not NONE)
+     *
      * @param type The given subscription type
      */
     private void setSubscriptionType(SubscriptionType type) {
-        if (this.subscriptionType == SubscriptionType.NONE)
+        if (this.subscriptionType == SubscriptionType.NONE) {
+            // NONE 表示没有设置过，设置为目标模式
             this.subscriptionType = type;
-        else if (this.subscriptionType != type)
+        } else if (this.subscriptionType != type) {
+            // 如果之前设置过，且当前模式不是之前的模式，则抛出异常
             throw new IllegalStateException(SUBSCRIPTION_EXCEPTION_MESSAGE);
+        }
     }
 
+    /**
+     * 订阅主题
+     *
+     * @param topics
+     * @param listener
+     */
     public void subscribe(Set<String> topics, ConsumerRebalanceListener listener) {
-        if (listener == null)
+        if (listener == null) {
             throw new IllegalArgumentException("RebalanceListener cannot be null");
+        }
 
-        setSubscriptionType(SubscriptionType.AUTO_TOPICS);
+        // 设置 topic 订阅模式为 AUTO_TOPICS
+        this.setSubscriptionType(SubscriptionType.AUTO_TOPICS);
 
         this.listener = listener;
 
-        changeSubscription(topics);
+        // 更新 subscription 和 groupSubscription
+        this.changeSubscription(topics);
     }
 
     public void subscribeFromPattern(Set<String> topics) {
-        if (subscriptionType != SubscriptionType.AUTO_PATTERN)
-            throw new IllegalArgumentException("Attempt to subscribe from pattern while subscription type set to " +
-                    subscriptionType);
+        if (subscriptionType != SubscriptionType.AUTO_PATTERN) {
+            throw new IllegalArgumentException("Attempt to subscribe from pattern while subscription type set to " + subscriptionType);
+        }
 
-        changeSubscription(topics);
+        // 使用 AUTO_PATTERN 模式进行订阅
+        this.changeSubscription(topics);
     }
 
     private void changeSubscription(Set<String> topicsToSubscribe) {
+        // 订阅的主题发生变化
         if (!this.subscription.equals(topicsToSubscribe)) {
             this.subscription = topicsToSubscribe;
             this.groupSubscription.addAll(topicsToSubscribe);
@@ -135,11 +182,13 @@ public class SubscriptionState {
     /**
      * Add topics to the current group subscription. This is used by the group leader to ensure
      * that it receives metadata updates for all topics that the group is interested in.
+     *
      * @param topics The topics to add to the group subscription
      */
     public void groupSubscribe(Collection<String> topics) {
-        if (this.subscriptionType == SubscriptionType.USER_ASSIGNED)
+        if (this.subscriptionType == SubscriptionType.USER_ASSIGNED) {
             throw new IllegalStateException(SUBSCRIPTION_EXCEPTION_MESSAGE);
+        }
         this.groupSubscription.addAll(topics);
     }
 
@@ -164,8 +213,9 @@ public class SubscriptionState {
             Map<TopicPartition, TopicPartitionState> partitionToState = new HashMap<>();
             for (TopicPartition partition : partitions) {
                 TopicPartitionState state = assignment.stateValue(partition);
-                if (state == null)
+                if (state == null) {
                     state = new TopicPartitionState();
+                }
                 partitionToState.put(partition, state);
             }
             this.assignment.set(partitionToState);
@@ -178,21 +228,24 @@ public class SubscriptionState {
      * note this is different from {@link #assignFromUser(Set)} which directly set the assignment from user inputs
      */
     public void assignFromSubscribed(Collection<TopicPartition> assignments) {
-        if (!this.partitionsAutoAssigned())
+        if (!this.partitionsAutoAssigned()) {
             throw new IllegalArgumentException("Attempt to dynamically assign partitions while manual assignment in use");
+        }
 
         Map<TopicPartition, TopicPartitionState> assignedPartitionStates = partitionToStateMap(assignments);
         fireOnAssignment(assignedPartitionStates.keySet());
 
         if (this.subscribedPattern != null) {
             for (TopicPartition tp : assignments) {
-                if (!this.subscribedPattern.matcher(tp.topic()).matches())
+                if (!this.subscribedPattern.matcher(tp.topic()).matches()) {
                     throw new IllegalArgumentException("Assigned partition " + tp + " for non-subscribed topic regex pattern; subscription pattern is " + this.subscribedPattern);
+                }
             }
         } else {
             for (TopicPartition tp : assignments)
-                if (!this.subscription.contains(tp.topic()))
+                if (!this.subscription.contains(tp.topic())) {
                     throw new IllegalArgumentException("Assigned partition " + tp + " for non-subscribed topic; subscription is " + this.subscription);
+                }
         }
 
         // after rebalancing, we always reinitialize the assignment value
@@ -201,8 +254,9 @@ public class SubscriptionState {
     }
 
     public void subscribe(Pattern pattern, ConsumerRebalanceListener listener) {
-        if (listener == null)
+        if (listener == null) {
             throw new IllegalArgumentException("RebalanceListener cannot be null");
+        }
 
         setSubscriptionType(SubscriptionType.AUTO_PATTERN);
 
@@ -251,8 +305,9 @@ public class SubscriptionState {
      * require rebalancing. The leader fetches metadata for all topics in the group so that it
      * can do the partition assignment (which requires at least partition counts for all topics
      * to be assigned).
+     *
      * @return The union of all subscribed topics in the group if this member is the leader
-     *   of the current generation; otherwise it returns the same set as {@link #subscription()}
+     * of the current generation; otherwise it returns the same set as {@link #subscription()}
      */
     public Set<String> groupSubscription() {
         return this.groupSubscription;
@@ -260,8 +315,9 @@ public class SubscriptionState {
 
     private TopicPartitionState assignedState(TopicPartition tp) {
         TopicPartitionState state = this.assignment.stateValue(tp);
-        if (state == null)
+        if (state == null) {
             throw new IllegalStateException("No current assignment for partition " + tp);
+        }
         return state;
     }
 
@@ -296,8 +352,9 @@ public class SubscriptionState {
     public List<TopicPartition> fetchablePartitions() {
         List<TopicPartition> fetchable = new ArrayList<>(assignment.size());
         for (PartitionStates.PartitionState<TopicPartitionState> state : assignment.partitionStates()) {
-            if (state.value().isFetchable())
+            if (state.value().isFetchable()) {
                 fetchable.add(state.topicPartition());
+            }
         }
         return fetchable;
     }
@@ -326,8 +383,9 @@ public class SubscriptionState {
     public Map<TopicPartition, OffsetAndMetadata> allConsumed() {
         Map<TopicPartition, OffsetAndMetadata> allConsumed = new HashMap<>();
         for (PartitionStates.PartitionState<TopicPartitionState> state : assignment.partitionStates()) {
-            if (state.value().hasValidPosition())
+            if (state.value().hasValidPosition()) {
                 allConsumed.put(state.topicPartition(), new OffsetAndMetadata(state.value().position));
+            }
         }
         return allConsumed;
     }
@@ -354,8 +412,9 @@ public class SubscriptionState {
 
     public boolean hasAllFetchPositions(Collection<TopicPartition> partitions) {
         for (TopicPartition partition : partitions)
-            if (!hasValidPosition(partition))
+            if (!hasValidPosition(partition)) {
                 return false;
+            }
         return true;
     }
 
@@ -366,8 +425,9 @@ public class SubscriptionState {
     public Set<TopicPartition> missingFetchPositions() {
         Set<TopicPartition> missing = new HashSet<>();
         for (PartitionStates.PartitionState<TopicPartitionState> state : assignment.partitionStates()) {
-            if (!state.value().hasValidPosition())
+            if (!state.value().hasValidPosition()) {
                 missing.add(state.topicPartition());
+            }
         }
         return missing;
     }
@@ -420,11 +480,19 @@ public class SubscriptionState {
         return map;
     }
 
+    /**
+     * 对应 TopicPartition 的消费状态
+     */
     private static class TopicPartitionState {
+
+        /** 下次获取消息的 offset */
         private Long position; // last consumed position
         private Long highWatermark; // the high watermark from last fetch
+        /** 最近一次提交的 offset */
         private OffsetAndMetadata committed;  // last committed position
+        /** 当前消费是否处于暂停状态 */
         private boolean paused;  // whether this partition has been paused by the user
+        /** 重置 offset 的策略，如果为空则表示不需要重置 */
         private OffsetResetStrategy resetStrategy;  // the strategy to use if the offset needs resetting
 
         public TopicPartitionState() {
@@ -454,8 +522,9 @@ public class SubscriptionState {
         }
 
         private void position(long offset) {
-            if (!hasValidPosition())
+            if (!hasValidPosition()) {
                 throw new IllegalStateException("Cannot set a new position without a valid current position");
+            }
             this.position = offset;
         }
 

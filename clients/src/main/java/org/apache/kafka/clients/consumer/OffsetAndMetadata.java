@@ -10,6 +10,7 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.clients.consumer;
 
 import java.io.Serializable;
@@ -20,11 +21,13 @@ import java.io.Serializable;
  * node made the commit, what time the commit was made, etc.
  */
 public class OffsetAndMetadata implements Serializable {
+
     private final long offset;
     private final String metadata;
 
     /**
      * Construct a new OffsetAndMetadata object for committing through {@link KafkaConsumer}.
+     *
      * @param offset The offset to be committed
      * @param metadata Non-null metadata
      */
@@ -36,6 +39,7 @@ public class OffsetAndMetadata implements Serializable {
     /**
      * Construct a new OffsetAndMetadata object for committing through {@link KafkaConsumer}. The metadata
      * associated with the commit will be empty.
+     *
      * @param offset The offset to be committed
      */
     public OffsetAndMetadata(long offset) {

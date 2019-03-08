@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,10 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.common.protocol;
 
-import java.util.HashMap;
-import java.util.Map;
+package org.apache.kafka.common.protocol;
 
 import org.apache.kafka.common.errors.ApiException;
 import org.apache.kafka.common.errors.BrokerNotAvailableException;
@@ -43,7 +41,6 @@ import org.apache.kafka.common.errors.InvalidSessionTimeoutException;
 import org.apache.kafka.common.errors.InvalidTimestampException;
 import org.apache.kafka.common.errors.InvalidTopicException;
 import org.apache.kafka.common.errors.LeaderNotAvailableException;
-import org.apache.kafka.common.errors.UnsupportedForMessageFormatException;
 import org.apache.kafka.common.errors.NetworkException;
 import org.apache.kafka.common.errors.NotControllerException;
 import org.apache.kafka.common.errors.NotCoordinatorForGroupException;
@@ -58,16 +55,20 @@ import org.apache.kafka.common.errors.RecordBatchTooLargeException;
 import org.apache.kafka.common.errors.RecordTooLargeException;
 import org.apache.kafka.common.errors.ReplicaNotAvailableException;
 import org.apache.kafka.common.errors.RetriableException;
-import org.apache.kafka.common.errors.TopicExistsException;
-import org.apache.kafka.common.errors.UnsupportedSaslMechanismException;
 import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.errors.TopicAuthorizationException;
-import org.apache.kafka.common.errors.UnsupportedVersionException;
+import org.apache.kafka.common.errors.TopicExistsException;
 import org.apache.kafka.common.errors.UnknownMemberIdException;
 import org.apache.kafka.common.errors.UnknownServerException;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
+import org.apache.kafka.common.errors.UnsupportedForMessageFormatException;
+import org.apache.kafka.common.errors.UnsupportedSaslMechanismException;
+import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * This class contains all the client-server errors--those errors that must be sent from the server to the client. These
@@ -160,12 +161,12 @@ public enum Errors {
     INVALID_CONFIG(40,
             new InvalidConfigurationException("Configuration is invalid.")),
     NOT_CONTROLLER(41,
-        new NotControllerException("This is not the correct controller for this cluster.")),
+            new NotControllerException("This is not the correct controller for this cluster.")),
     INVALID_REQUEST(42,
-        new InvalidRequestException("This most likely occurs because of a request being malformed by the client library or" +
-            " the message was sent to an incompatible broker. See the broker logs for more details.")),
+            new InvalidRequestException("This most likely occurs because of a request being malformed by the client library or" +
+                    " the message was sent to an incompatible broker. See the broker logs for more details.")),
     UNSUPPORTED_FOR_MESSAGE_FORMAT(43,
-        new UnsupportedForMessageFormatException("The message format version on the broker does not support the request.")),
+            new UnsupportedForMessageFormatException("The message format version on the broker does not support the request.")),
     POLICY_VIOLATION(44, new PolicyViolationException("Request parameters do not satisfy the configured policy."));
 
     private static final Logger log = LoggerFactory.getLogger(Errors.class);
@@ -176,8 +177,9 @@ public enum Errors {
     static {
         for (Errors error : Errors.values()) {
             codeToError.put(error.code(), error);
-            if (error.exception != null)
+            if (error.exception != null) {
                 classToError.put(error.exception.getClass(), error);
+            }
         }
     }
 
@@ -221,11 +223,13 @@ public enum Errors {
 
     /**
      * Get a friendly description of the error (if one is available).
+     *
      * @return the error message
      */
     public String message() {
-        if (exception != null)
+        if (exception != null) {
             return exception.getMessage();
+        }
         return toString();
     }
 
@@ -250,8 +254,9 @@ public enum Errors {
         Class<?> clazz = t.getClass();
         while (clazz != null) {
             Errors error = classToError.get(clazz);
-            if (error != null)
+            if (error != null) {
                 return error;
+            }
             clazz = clazz.getSuperclass();
         }
         return UNKNOWN;

@@ -61,19 +61,32 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * This class manages the coordination process with the consumer coordinator.
+ *
+ * KafkaConsumer 通过 ConsumerCoordinator 与服务端 GroupCoordinator 进行交互
  */
 public final class ConsumerCoordinator extends AbstractCoordinator {
 
     private static final Logger log = LoggerFactory.getLogger(ConsumerCoordinator.class);
 
+    /**
+     * 消费者在发送 {@link org.apache.kafka.common.requests.JoinGroupRequest}
+     * 请求时会传递自身的 {@link PartitionAssignor} 信息，服务端会从所有消费者都支持的分配策略中选择一种，
+     * 并通知 leader 使用此分配策略进行分配
+     */
     private final List<PartitionAssignor> assignors;
+    /** 集群元数据信息 */
     private final Metadata metadata;
     private final ConsumerCoordinatorMetrics sensors;
+    /** 追踪 TopicPartition 和 offset 的对应关系 */
     private final SubscriptionState subscriptions;
     private final OffsetCommitCallback defaultOffsetCommitCallback;
+    /** 是否启用自动提交 */
     private final boolean autoCommitEnabled;
+    /** 自动提交间隔 */
     private final int autoCommitIntervalMs;
+    /** 注册的拦截器集合 */
     private final ConsumerInterceptors<?, ?> interceptors;
+    /** 是否排除内部 topic */
     private final boolean excludeInternalTopics;
     private final AtomicInteger pendingAsyncCommits;
 
@@ -83,7 +96,9 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
 
     private boolean isLeader = false;
     private Set<String> joinedSubscription;
+    /** 元数据快照，用于检测 topic 分区数量是否发生变化 */
     private MetadataSnapshot metadataSnapshot;
+    /** 元数据快照，用于检测分区分配过程中分区数量是否发生变化 */
     private MetadataSnapshot assignmentSnapshot;
     private long nextAutoCommitDeadline;
 
@@ -171,27 +186,36 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         metadata.setTopics(subscriptions.groupSubscription());
     }
 
+    /**
+     * 添加元数据更新监听器
+     */
     private void addMetadataListener() {
         this.metadata.addListener(new Metadata.Listener() {
             @Override
             public void onMetadataUpdate(Cluster cluster, Set<String> unavailableTopics) {
-                // if we encounter any unauthorized topics, raise an exception to the user
+                // 如果存在未授权的 topic，则抛出异常
                 if (!cluster.unauthorizedTopics().isEmpty()) {
                     throw new TopicAuthorizationException(new HashSet<>(cluster.unauthorizedTopics()));
                 }
 
+                // 如果使用 AUTO_PATTERN 订阅主题
                 if (subscriptions.hasPatternSubscription()) {
+                    // 依据正则检索匹配的 topic
                     updatePatternSubscription(cluster);
                 }
 
                 // check if there are any changes to the metadata which should trigger a rebalance
+                // 如果当前的订阅方式是 AUTO_TOPICS 或 AUTO_PATTERN
                 if (subscriptions.partitionsAutoAssigned()) {
+                    // 创建元数据快照
                     MetadataSnapshot snapshot = new MetadataSnapshot(subscriptions, cluster);
+                    // 比对快照版本，如果发生变更则更新本地缓存的快照信息
                     if (!snapshot.equals(metadataSnapshot)) {
                         metadataSnapshot = snapshot;
                     }
                 }
 
+                // 如果当前缓存的 topic 存在不可用的 topic，则标记更新集群元数据
                 if (!Collections.disjoint(metadata.topics(), unavailableTopics)) {
                     metadata.requestUpdate();
                 }
@@ -289,7 +313,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         invokeCompletedOffsetCommitCallbacks();
 
         if (subscriptions.partitionsAutoAssigned() && coordinatorUnknown()) {
-            ensureCoordinatorReady();
+            this.ensureCoordinatorReady();
             now = time.milliseconds();
         }
 
@@ -937,6 +961,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     }
 
     private static class MetadataSnapshot {
+
         private final Map<String, Integer> partitionsPerTopic;
 
         private MetadataSnapshot(SubscriptionState subscription, Cluster cluster) {

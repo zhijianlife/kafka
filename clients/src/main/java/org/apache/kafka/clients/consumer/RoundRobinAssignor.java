@@ -10,6 +10,7 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.clients.consumer;
 
 import org.apache.kafka.clients.consumer.internals.AbstractPartitionAssignor;
@@ -68,7 +69,6 @@ public class RoundRobinAssignor extends AbstractPartitionAssignor {
         return assignment;
     }
 
-
     public List<TopicPartition> allPartitionsSorted(Map<String, Integer> partitionsPerTopic,
                                                     Map<String, List<String>> subscriptions) {
         SortedSet<String> topics = new TreeSet<>();
@@ -78,8 +78,9 @@ public class RoundRobinAssignor extends AbstractPartitionAssignor {
         List<TopicPartition> allPartitions = new ArrayList<>();
         for (String topic : topics) {
             Integer numPartitionsForTopic = partitionsPerTopic.get(topic);
-            if (numPartitionsForTopic != null)
+            if (numPartitionsForTopic != null) {
                 allPartitions.addAll(AbstractPartitionAssignor.partitions(topic, numPartitionsForTopic));
+            }
         }
         return allPartitions;
     }

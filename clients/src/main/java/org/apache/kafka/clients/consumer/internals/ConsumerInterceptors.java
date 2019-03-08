@@ -10,8 +10,8 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
-package org.apache.kafka.clients.consumer.internals;
 
+package org.apache.kafka.clients.consumer.internals;
 
 import org.apache.kafka.clients.consumer.ConsumerInterceptor;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -29,7 +29,9 @@ import java.util.Map;
  * and wraps calls to the chain of custom interceptors.
  */
 public class ConsumerInterceptors<K, V> implements Closeable {
+
     private static final Logger log = LoggerFactory.getLogger(ConsumerInterceptors.class);
+
     private final List<ConsumerInterceptor<K, V>> interceptors;
 
     public ConsumerInterceptors(List<ConsumerInterceptor<K, V>> interceptors) {

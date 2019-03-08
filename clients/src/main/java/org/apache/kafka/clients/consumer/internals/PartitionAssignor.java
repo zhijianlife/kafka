@@ -10,6 +10,7 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.clients.consumer.internals;
 
 import org.apache.kafka.common.Cluster;
@@ -32,6 +33,9 @@ import java.util.Set;
  * assignment decisions. For this, you can override {@link #subscription(Set)} and provide custom
  * userData in the returned Subscription. For example, to have a rack-aware assignor, an implementation
  * can use this user data to forward the rackId belonging to each member.
+ *
+ * Leader 在收到 {@link org.apache.kafka.common.requests.JoinGroupResponse } 后，
+ * 会按照其中指定的分区分配策略进行分配，每种分区策略就是一个 {@link PartitionAssignor} 实现
  */
 public interface PartitionAssignor {
 
@@ -39,37 +43,44 @@ public interface PartitionAssignor {
      * Return a serializable object representing the local member's subscription. This can include
      * additional information as well (e.g. local host/rack information) which can be leveraged in
      * {@link #assign(Cluster, Map)}.
+     *
      * @param topics Topics subscribed to through {@link org.apache.kafka.clients.consumer.KafkaConsumer#subscribe(java.util.Collection)}
-     *               and variants
+     * and variants
      * @return Non-null subscription with optional user data
      */
     Subscription subscription(Set<String> topics);
 
     /**
      * Perform the group assignment given the member subscriptions and current cluster metadata.
+     *
      * @param metadata Current topic/broker metadata known by consumer
      * @param subscriptions Subscriptions from all members provided through {@link #subscription(Set)}
      * @return A map from the members to their respective assignment. This should have one entry
-     *         for all members who in the input subscription map.
+     * for all members who in the input subscription map.
      */
     Map<String, Assignment> assign(Cluster metadata, Map<String, Subscription> subscriptions);
 
-
     /**
      * Callback which is invoked when a group member receives its assignment from the leader.
+     *
      * @param assignment The local member's assignment as provided by the leader in {@link #assign(Cluster, Map)}
      */
     void onAssignment(Assignment assignment);
 
-
     /**
      * Unique name for this assignor (e.g. "range" or "roundrobin")
+     *
      * @return non-null unique name
      */
     String name();
 
+    /**
+     * 封装用户订阅的信息和一些影响分配的用户自定义信息
+     */
     class Subscription {
+        /** 每个 member 订阅的 topic 信息 */
         private final List<String> topics;
+        /** 用户自定义数据 */
         private final ByteBuffer userData;
 
         public Subscription(List<String> topics, ByteBuffer userData) {
@@ -91,14 +102,18 @@ public interface PartitionAssignor {
 
         @Override
         public String toString() {
-            return "Subscription(" +
-                    "topics=" + topics +
-                    ')';
+            return "Subscription(topics=" + topics + ')';
         }
     }
 
+    /**
+     * 保存分区的分配结果
+     */
     class Assignment {
+
+        /** 分配给某消费者的 TopicPartition 集合 */
         private final List<TopicPartition> partitions;
+        /** 用户自定义数据 */
         private final ByteBuffer userData;
 
         public Assignment(List<TopicPartition> partitions, ByteBuffer userData) {
@@ -120,9 +135,7 @@ public interface PartitionAssignor {
 
         @Override
         public String toString() {
-            return "Assignment(" +
-                    "partitions=" + partitions +
-                    ')';
+            return "Assignment(partitions=" + partitions + ')';
         }
     }
 

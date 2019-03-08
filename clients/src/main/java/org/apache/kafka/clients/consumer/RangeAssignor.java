@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.kafka.clients.consumer;
 
 import org.apache.kafka.clients.consumer.internals.AbstractPartitionAssignor;
@@ -68,8 +69,9 @@ public class RangeAssignor extends AbstractPartitionAssignor {
             List<String> consumersForTopic = topicEntry.getValue();
 
             Integer numPartitionsForTopic = partitionsPerTopic.get(topic);
-            if (numPartitionsForTopic == null)
+            if (numPartitionsForTopic == null) {
                 continue;
+            }
 
             Collections.sort(consumersForTopic);
 
