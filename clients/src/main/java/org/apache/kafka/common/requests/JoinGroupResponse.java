@@ -10,6 +10,7 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.common.requests;
 
 import org.apache.kafka.common.protocol.ApiKeys;
@@ -53,11 +54,17 @@ public class JoinGroupResponse extends AbstractResponse {
     public static final int UNKNOWN_GENERATION_ID = -1;
     public static final String UNKNOWN_MEMBER_ID = "";
 
+    /** 响应错误码 */
     private final short errorCode;
+    /** GroupCoordinator 分配的年代信息 */
     private final int generationId;
+    /** GroupCoordinator 选择的分配策略 */
     private final String groupProtocol;
+    /** GroupCoordinator 分配给当前消费者的 ID */
     private final String memberId;
+    /** leader 的 memberId */
     private final String leaderId;
+    /** group 中全部消费者的订阅信息 */
     private final Map<String, ByteBuffer> members;
 
     public JoinGroupResponse(short errorCode,
@@ -85,7 +92,7 @@ public class JoinGroupResponse extends AbstractResponse {
         struct.set(LEADER_ID_KEY_NAME, leaderId);
 
         List<Struct> memberArray = new ArrayList<>();
-        for (Map.Entry<String, ByteBuffer> entries: groupMembers.entrySet()) {
+        for (Map.Entry<String, ByteBuffer> entries : groupMembers.entrySet()) {
             Struct memberData = struct.instance(MEMBERS_KEY_NAME);
             memberData.set(MEMBER_ID_KEY_NAME, entries.getKey());
             memberData.set(MEMBER_METADATA_KEY_NAME, entries.getValue());

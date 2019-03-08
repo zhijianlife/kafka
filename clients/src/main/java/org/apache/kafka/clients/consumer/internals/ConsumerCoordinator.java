@@ -303,29 +303,35 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     }
 
     /**
-     * Poll for coordinator events. This ensures that the coordinator is known and that the consumer
-     * has joined the group (if it is using group management). This also handles periodic offset commits
-     * if they are enabled.
+     * Poll for coordinator events. This ensures that the coordinator
+     * is known and that the consumer has joined the group (if it is using group management).
+     * This also handles periodic offset commits if they are enabled.
      *
      * @param now current time in milliseconds
      */
     public void poll(long now) {
         invokeCompletedOffsetCommitCallbacks();
 
+        // 当前是 AUTO_TOPICS 或 AUTO_PATTERN（USER_ASSIGNED 不需要 rebalance），且 coordinator 不可达，则需要触发 rebalance
         if (subscriptions.partitionsAutoAssigned() && coordinatorUnknown()) {
             this.ensureCoordinatorReady();
             now = time.milliseconds();
         }
 
-        if (needRejoin()) {
-            // due to a race condition between the initial metadata fetch and the initial rebalance,
-            // we need to ensure that the metadata is fresh before joining initially. This ensures
-            // that we have matched the pattern against the cluster's topics at least once before joining.
+        // 需要执行 rejoin
+        if (this.needRejoin()) {
+            /*
+             * due to a race condition between the initial metadata fetch and the initial rebalance,
+             * we need to ensure that the metadata is fresh before joining initially.
+             * This ensures that we have matched the pattern against the cluster's topics at least once before joining.
+             *
+             * 如果是 AUTO_PATTERN 订阅模式，则需要检查是否需要更新集群元数据
+             */
             if (subscriptions.hasPatternSubscription()) {
                 client.ensureFreshMetadata();
             }
 
-            ensureActiveGroup();
+            this.ensureActiveGroup();
             now = time.milliseconds();
         }
 
@@ -431,10 +437,10 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
 
     @Override
     protected void onJoinPrepare(int generation, String memberId) {
-        // commit offsets prior to rebalance if auto-commit enabled
-        maybeAutoCommitOffsetsSync(rebalanceTimeoutMs);
+        // 如果设置 offset 自动提交，则同步提交 offset
+        this.maybeAutoCommitOffsetsSync(rebalanceTimeoutMs);
 
-        // execute the user's callback before rebalance
+        // 调用注册的 ConsumerRebalanceListener 监听器的 onPartitionsRevoked 方法
         ConsumerRebalanceListener listener = subscriptions.listener();
         log.info("Revoking previously assigned partitions {} for group {}", subscriptions.assignedPartitions(), groupId);
         try {
@@ -443,26 +449,29 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         } catch (WakeupException | InterruptException e) {
             throw e;
         } catch (Exception e) {
-            log.error("User provided listener {} for group {} failed on partition revocation",
-                    listener.getClass().getName(), groupId, e);
+            log.error("User provided listener {} for group {} failed on partition revocation", listener.getClass().getName(), groupId, e);
         }
 
         isLeader = false;
+        // 收缩 groupSubscription
         subscriptions.resetGroupSubscription();
     }
 
     @Override
     public boolean needRejoin() {
+        // USER_ASSIGNED 不需要 rebalance
         if (!subscriptions.partitionsAutoAssigned()) {
             return false;
         }
 
         // we need to rejoin if we performed the assignment and metadata has changed
+        // 分区分配过程中分区数量是否发生变化
         if (assignmentSnapshot != null && !assignmentSnapshot.equals(metadataSnapshot)) {
             return true;
         }
 
         // we need to join if our subscription has changed since the last join
+        // 消费者订阅信息发生变化
         if (joinedSubscription != null && !joinedSubscription.equals(subscriptions.subscription())) {
             return true;
         }

@@ -337,13 +337,17 @@ public abstract class AbstractCoordinator implements Closeable {
 
     /**
      * Ensure that the group is active (i.e. joined and synced)
+     *
+     * always ensure that the coordinator is ready because we may have been disconnected
+     * when sending heartbeats and does not necessarily require us to rejoin the group.
      */
     public void ensureActiveGroup() {
-        // always ensure that the coordinator is ready because we may have been disconnected
-        // when sending heartbeats and does not necessarily require us to rejoin the group.
-        ensureCoordinatorReady();
-        startHeartbeatThreadIfNeeded();
-        joinGroupIfNeeded();
+        // 检查目标 coordinator 节点是否准备好接收请求
+        this.ensureCoordinatorReady();
+        // 启动心跳线程
+        this.startHeartbeatThreadIfNeeded();
+        // join group
+        this.joinGroupIfNeeded();
     }
 
     private synchronized void startHeartbeatThreadIfNeeded() {
@@ -372,22 +376,34 @@ public abstract class AbstractCoordinator implements Closeable {
         }
     }
 
-    // visible for testing. Joins the group without starting the heartbeat thread.
+    /**
+     * visible for testing. Joins the group without starting the heartbeat thread.
+     */
     void joinGroupIfNeeded() {
         while (needRejoin() || rejoinIncomplete()) {
-            ensureCoordinatorReady();
+            // 检查目标 coordinator 节点是否准备好接收请求
+            this.ensureCoordinatorReady();
 
-            // call onJoinPrepare if needed. We set a flag to make sure that we do not call it a second
-            // time if the client is woken up before a pending rebalance completes. This must be called
-            // on each iteration of the loop because an event requiring a rebalance (such as a metadata
-            // refresh which changes the matched subscription set) can occur while another rebalance is
-            // still in progress.
+            /*
+             * call onJoinPrepare if needed.
+             * We set a flag to make sure that we do not call it a second time
+             * if the client is woken up before a pending rebalance completes.
+             * This must be called on each iteration of the loop because an event requiring a rebalance
+             * (such as a metadata refresh which changes the matched subscription set) can occur
+             * while another rebalance is still in progress.
+             */
             if (needsJoinPrepare) {
-                onJoinPrepare(generation.generationId, generation.memberId);
+                /*
+                 * 1. 如果开启了 offset 自动提交，则同步提交 offset
+                 * 2. 调用注册的 ConsumerRebalanceListener 监听器的 onPartitionsRevoked 方法
+                 * 3. 收缩 groupSubscription
+                 */
+                this.onJoinPrepare(generation.generationId, generation.memberId);
                 needsJoinPrepare = false;
             }
 
-            RequestFuture<ByteBuffer> future = initiateJoinGroup();
+            // TODO, by zhenchao 2019-03-08 19:03:04
+            RequestFuture<ByteBuffer> future = this.initiateJoinGroup();
             client.poll(future);
             resetJoinGroupFuture();
 
@@ -494,7 +510,7 @@ public abstract class AbstractCoordinator implements Closeable {
                     } else {
                         AbstractCoordinator.this.generation = new Generation(joinResponse.generationId(),
                                 joinResponse.memberId(), joinResponse.groupProtocol());
-                        AbstractCoordinator.this.rejoinNeeded = false;
+                        rejoinNeeded = false;
                         if (joinResponse.isLeader()) {
                             onJoinLeader(joinResponse).chain(future);
                         } else {
@@ -948,7 +964,7 @@ public abstract class AbstractCoordinator implements Closeable {
                 log.trace("Enabling heartbeat thread for group {}", groupId);
                 this.enabled = true;
                 heartbeat.resetTimeouts(time.milliseconds());
-                AbstractCoordinator.this.notify();
+                this.notify();
             }
         }
 
@@ -962,7 +978,7 @@ public abstract class AbstractCoordinator implements Closeable {
         public void close() {
             synchronized (AbstractCoordinator.this) {
                 this.closed = true;
-                AbstractCoordinator.this.notify();
+                this.notify();
             }
         }
 

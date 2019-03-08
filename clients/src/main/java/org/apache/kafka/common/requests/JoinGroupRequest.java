@@ -10,6 +10,7 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.common.requests;
 
 import org.apache.kafka.common.protocol.ApiKeys;
@@ -24,6 +25,7 @@ import java.util.Collections;
 import java.util.List;
 
 public class JoinGroupRequest extends AbstractRequest {
+
     private static final String GROUP_ID_KEY_NAME = "group_id";
     private static final String SESSION_TIMEOUT_KEY_NAME = "session_timeout";
     private static final String REBALANCE_TIMEOUT_KEY_NAME = "rebalance_timeout";
@@ -35,11 +37,16 @@ public class JoinGroupRequest extends AbstractRequest {
 
     public static final String UNKNOWN_MEMBER_ID = "";
 
+    /** group id */
     private final String groupId;
+    /** 消费者心跳超时时间，GroupCoordinator 超过该时间未收到消费者的心跳则认为该消费者下线 */
     private final int sessionTimeout;
     private final int rebalanceTimeout;
+    /** GroupCoordinator 分配给当前消费者的 ID */
     private final String memberId;
+    /** Consumer Group 实现的协议 */
     private final String protocolType;
+    /** 当前消费者支持的全部分配策略 */
     private final List<ProtocolMetadata> groupProtocols;
 
     public static class ProtocolMetadata {
@@ -98,20 +105,20 @@ public class JoinGroupRequest extends AbstractRequest {
         public String toString() {
             StringBuilder bld = new StringBuilder();
             bld.append("(type: JoinGroupRequest").
-                append(", groupId=").append(groupId).
-                append(", sessionTimeout=").append(sessionTimeout).
-                append(", rebalanceTimeout=").append(rebalanceTimeout).
-                append(", memberId=").append(memberId).
-                append(", protocolType=").append(protocolType).
-                append(", groupProtocols=").append(Utils.join(groupProtocols, ", ")).
-                append(")");
+                    append(", groupId=").append(groupId).
+                    append(", sessionTimeout=").append(sessionTimeout).
+                    append(", rebalanceTimeout=").append(rebalanceTimeout).
+                    append(", memberId=").append(memberId).
+                    append(", protocolType=").append(protocolType).
+                    append(", groupProtocols=").append(Utils.join(groupProtocols, ", ")).
+                    append(")");
             return bld.toString();
         }
     }
 
     private JoinGroupRequest(short version, String groupId, int sessionTimeout,
-            int rebalanceTimeout, String memberId, String protocolType,
-            List<ProtocolMetadata> groupProtocols) {
+                             int rebalanceTimeout, String memberId, String protocolType,
+                             List<ProtocolMetadata> groupProtocols) {
         super(new Struct(ProtoUtils.
                 requestSchema(ApiKeys.JOIN_GROUP.id, version)), version);
         struct.set(GROUP_ID_KEY_NAME, groupId);
@@ -144,11 +151,14 @@ public class JoinGroupRequest extends AbstractRequest {
         sessionTimeout = struct.getInt(SESSION_TIMEOUT_KEY_NAME);
 
         if (struct.hasField(REBALANCE_TIMEOUT_KEY_NAME))
-            // rebalance timeout is added in v1
+        // rebalance timeout is added in v1
+        {
             rebalanceTimeout = struct.getInt(REBALANCE_TIMEOUT_KEY_NAME);
-        else
-            // v0 had no rebalance timeout but used session timeout implicitly
+        } else
+        // v0 had no rebalance timeout but used session timeout implicitly
+        {
             rebalanceTimeout = sessionTimeout;
+        }
 
         memberId = struct.getString(MEMBER_ID_KEY_NAME);
         protocolType = struct.getString(PROTOCOL_TYPE_KEY_NAME);
