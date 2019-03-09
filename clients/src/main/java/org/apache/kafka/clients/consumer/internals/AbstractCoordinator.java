@@ -121,6 +121,7 @@ public abstract class AbstractCoordinator implements Closeable {
     private boolean rejoinNeeded = true;
     /** 标记是否需要执行发送 {@link JoinGroupRequest} 请求前的准备工作 */
     private boolean needsJoinPrepare = true;
+    /** 记录当前 member 的状态 */
     private MemberState state = MemberState.UNJOINED;
     private RequestFuture<ByteBuffer> joinFuture = null;
     /** 服务端 GroupCoordinator 所在节点 */
@@ -346,7 +347,7 @@ public abstract class AbstractCoordinator implements Closeable {
         this.ensureCoordinatorReady();
         // 启动心跳线程
         this.startHeartbeatThreadIfNeeded();
-        // join group
+        // 执行 join group 操作
         this.joinGroupIfNeeded();
     }
 
@@ -402,15 +403,18 @@ public abstract class AbstractCoordinator implements Closeable {
                 needsJoinPrepare = false;
             }
 
-            // TODO, by zhenchao 2019-03-08 19:03:04
+            // 发起 join group 操作
             RequestFuture<ByteBuffer> future = this.initiateJoinGroup();
             client.poll(future);
-            resetJoinGroupFuture();
+            this.resetJoinGroupFuture();
 
+            // 执行分区分配成功
             if (future.succeeded()) {
                 needsJoinPrepare = true;
-                onJoinComplete(generation.generationId, generation.memberId, generation.protocol, future.value());
-            } else {
+                this.onJoinComplete(generation.generationId, generation.memberId, generation.protocol, future.value());
+            }
+            // 执行分区分配失败，依据失败类型考虑是否重试
+            else {
                 RuntimeException exception = future.exception();
                 if (exception instanceof UnknownMemberIdException ||
                         exception instanceof RebalanceInProgressException ||
@@ -428,27 +432,43 @@ public abstract class AbstractCoordinator implements Closeable {
         this.joinFuture = null;
     }
 
+    /**
+     * 发起 join group
+     *
+     * @return
+     */
     private synchronized RequestFuture<ByteBuffer> initiateJoinGroup() {
-        // we store the join future in case we are woken up by the user after beginning the
-        // rebalance in the call to poll below. This ensures that we do not mistakenly attempt
-        // to rejoin before the pending rebalance has completed.
+        /*
+         * we store the join future in case we are woken up by the user after beginning the rebalance in the call to poll below.
+         * This ensures that we do not mistakenly attempt to rejoin before the pending rebalance has completed.
+         */
         if (joinFuture == null) {
-            // fence off the heartbeat thread explicitly so that it cannot interfere with the join group.
-            // Note that this must come after the call to onJoinPrepare since we must be able to continue
-            // sending heartbeats if that callback takes some time.
-            disableHeartbeatThread();
+            /*
+             * 临时关闭心跳机制，防止与干扰 join 过程
+             *
+             * fence off the heartbeat thread explicitly so that it cannot interfere with the join group.
+             * Note that this must come after the call to onJoinPrepare since we must be able to continue
+             * sending heartbeats if that callback takes some time.
+             */
+            this.disableHeartbeatThread();
 
+            // 设置消费者状态为 REBALANCING
             state = MemberState.REBALANCING;
-            joinFuture = sendJoinGroupRequest();
+            // 创建并发送 JoinGroupRequest 请求
+            joinFuture = this.sendJoinGroupRequest();
+            // 添加监听器
             joinFuture.addListener(new RequestFutureListener<ByteBuffer>() {
                 @Override
                 public void onSuccess(ByteBuffer value) {
-                    // handle join completion in the callback so that the callback will be invoked
-                    // even if the consumer is woken up before finishing the rebalance
+                    /*
+                     * join 成功
+                     *
+                     * handle join completion in the callback so that the callback will be invoked
+                     * even if the consumer is woken up before finishing the rebalance
+                     */
                     synchronized (AbstractCoordinator.this) {
                         log.info("Successfully joined group {} with generation {}", groupId, generation.generationId);
-                        state = MemberState.STABLE;
-
+                        state = MemberState.STABLE; // the client has joined and is sending heartbeats
                         if (heartbeatThread != null) {
                             heartbeatThread.enable();
                         }
@@ -457,10 +477,14 @@ public abstract class AbstractCoordinator implements Closeable {
 
                 @Override
                 public void onFailure(RuntimeException e) {
-                    // we handle failures below after the request finishes. if the join completes
-                    // after having been woken up, the exception is ignored and we will rejoin
+                    /*
+                     * join 失败
+                     *
+                     * we handle failures below after the request finishes. if the join completes
+                     * after having been woken up, the exception is ignored and we will rejoin
+                     */
                     synchronized (AbstractCoordinator.this) {
-                        state = MemberState.UNJOINED;
+                        state = MemberState.UNJOINED; // the client is not part of a group
                     }
                 }
             });
@@ -477,50 +501,70 @@ public abstract class AbstractCoordinator implements Closeable {
      */
     private RequestFuture<ByteBuffer> sendJoinGroupRequest() {
         if (coordinatorUnknown()) {
+            // 如果目标 coordinator 节点不可达，则返回异常
             return RequestFuture.coordinatorNotAvailable();
         }
 
         // send a join group request to the coordinator
         log.info("(Re-)joining group {}", groupId);
+        // 构建 JoinGroupRequest 请求
         JoinGroupRequest.Builder requestBuilder = new JoinGroupRequest.Builder(
                 groupId,
-                this.sessionTimeoutMs,
-                this.generation.memberId,
+                sessionTimeoutMs,
+                generation.memberId,
                 protocolType(),
-                metadata()).setRebalanceTimeout(this.rebalanceTimeoutMs);
+                metadata()).setRebalanceTimeout(rebalanceTimeoutMs);
 
         log.debug("Sending JoinGroup ({}) to coordinator {}", requestBuilder, this.coordinator);
-        return client.send(coordinator, requestBuilder)
-                .compose(new JoinGroupResponseHandler());
+        // 发送请求，并注册结果处理器 JoinGroupResponseHandler
+        return client.send(coordinator, requestBuilder).compose(new JoinGroupResponseHandler());
     }
 
     private class JoinGroupResponseHandler extends CoordinatorResponseHandler<JoinGroupResponse, ByteBuffer> {
+
+        /**
+         * 处理 JoinGroupResponse 响应
+         *
+         * @param joinResponse join group 响应
+         * @param future 对应上面方法 sendJoinGroupRequest 返回的 RequestFuture 对象
+         */
         @Override
         public void handle(JoinGroupResponse joinResponse, RequestFuture<ByteBuffer> future) {
+            // 获取响应错误码
             Errors error = Errors.forCode(joinResponse.errorCode());
+            // 正常响应
             if (error == Errors.NONE) {
                 log.debug("Received successful JoinGroup response for group {}: {}", groupId, joinResponse);
                 sensors.joinLatency.record(response.requestLatencyMs());
 
                 synchronized (AbstractCoordinator.this) {
                     if (state != MemberState.REBALANCING) {
-                        // if the consumer was woken up before a rebalance completes, we may have already left
-                        // the group. In this case, we do not want to continue with the sync group.
+                        /*
+                         * 在接收到响应之前，消费者的状态已经改变
+                         *
+                         * if the consumer was woken up before a rebalance completes, we may have already left the group.
+                         * In this case, we do not want to continue with the sync group.
+                         */
                         future.raise(new UnjoinedGroupException());
                     } else {
-                        AbstractCoordinator.this.generation = new Generation(joinResponse.generationId(),
-                                joinResponse.memberId(), joinResponse.groupProtocol());
+                        // 基于 join 响应，更新本地数据
+                        generation = new Generation(
+                                joinResponse.generationId(), joinResponse.memberId(), joinResponse.groupProtocol());
                         rejoinNeeded = false;
+                        // 如果当前 consumer 是 group 中的 leader
                         if (joinResponse.isLeader()) {
-                            onJoinLeader(joinResponse).chain(future);
+                            // 执行分区分配，leader 需要关注当前 group 中消费者订阅的所有 topic，并发送 SyncGroupRequest 请求
+                            onJoinLeader(joinResponse)
+                                    // 这里调用 chain 方法，是希望当 SyncGroupResponse 处理完成之后，能够将结果传递给 future
+                                    .chain(future);
                         } else {
+                            // follower 只关注自己订阅的 topic，这一步仅发送 SyncGroupRequest 请求
                             onJoinFollower().chain(future);
                         }
                     }
                 }
             } else if (error == Errors.GROUP_LOAD_IN_PROGRESS) {
-                log.debug("Attempt to join group {} rejected since coordinator {} is loading the group.", groupId,
-                        coordinator());
+                log.debug("Attempt to join group {} rejected since coordinator {} is loading the group.", groupId, coordinator());
                 // backoff and retry
                 future.raise(error);
             } else if (error == Errors.UNKNOWN_MEMBER_ID) {
@@ -528,8 +572,7 @@ public abstract class AbstractCoordinator implements Closeable {
                 resetGeneration();
                 log.debug("Attempt to join group {} failed due to unknown member id.", groupId);
                 future.raise(Errors.UNKNOWN_MEMBER_ID);
-            } else if (error == Errors.GROUP_COORDINATOR_NOT_AVAILABLE
-                    || error == Errors.NOT_COORDINATOR_FOR_GROUP) {
+            } else if (error == Errors.GROUP_COORDINATOR_NOT_AVAILABLE || error == Errors.NOT_COORDINATOR_FOR_GROUP) {
                 // re-discover the coordinator and retry with backoff
                 coordinatorDead();
                 log.debug("Attempt to join group {} failed due to obsolete coordinator information: {}", groupId, error.message());
@@ -552,24 +595,24 @@ public abstract class AbstractCoordinator implements Closeable {
     private RequestFuture<ByteBuffer> onJoinFollower() {
         // send follower's sync group with an empty assignment
         SyncGroupRequest.Builder requestBuilder =
-                new SyncGroupRequest.Builder(groupId, generation.generationId, generation.memberId,
-                        Collections.<String, ByteBuffer>emptyMap());
-        log.debug("Sending follower SyncGroup for group {} to coordinator {}: {}", groupId, this.coordinator,
-                requestBuilder);
-        return sendSyncGroupRequest(requestBuilder);
+                new SyncGroupRequest.Builder(groupId, generation.generationId, generation.memberId, Collections.<String, ByteBuffer>emptyMap());
+        log.debug("Sending follower SyncGroup for group {} to coordinator {}: {}", groupId, this.coordinator, requestBuilder);
+        return this.sendSyncGroupRequest(requestBuilder);
     }
 
     private RequestFuture<ByteBuffer> onJoinLeader(JoinGroupResponse joinResponse) {
         try {
             // perform the leader synchronization and send back the assignment for the group
-            Map<String, ByteBuffer> groupAssignment = performAssignment(joinResponse.leaderId(), joinResponse.groupProtocol(),
-                    joinResponse.members());
+            // 基于分配策略执行分区分配
+            Map<String, ByteBuffer> groupAssignment = this.performAssignment(
+                    joinResponse.leaderId(), joinResponse.groupProtocol(), joinResponse.members());
 
+            // 创建 SyncGroupRequest 请求
             SyncGroupRequest.Builder requestBuilder =
                     new SyncGroupRequest.Builder(groupId, generation.generationId, generation.memberId, groupAssignment);
-            log.debug("Sending leader SyncGroup for group {} to coordinator {}: {}",
-                    groupId, this.coordinator, requestBuilder);
-            return sendSyncGroupRequest(requestBuilder);
+            log.debug("Sending leader SyncGroup for group {} to coordinator {}: {}", groupId, this.coordinator, requestBuilder);
+            // 发送 SyncGroupRequest 请求
+            return this.sendSyncGroupRequest(requestBuilder);
         } catch (RuntimeException e) {
             return RequestFuture.failure(e);
         }
@@ -579,19 +622,23 @@ public abstract class AbstractCoordinator implements Closeable {
         if (coordinatorUnknown()) {
             return RequestFuture.coordinatorNotAvailable();
         }
-        return client.send(coordinator, requestBuilder)
-                .compose(new SyncGroupResponseHandler());
+        return client.send(coordinator, requestBuilder).compose(new SyncGroupResponseHandler());
     }
 
     private class SyncGroupResponseHandler extends CoordinatorResponseHandler<SyncGroupResponse, ByteBuffer> {
         @Override
-        public void handle(SyncGroupResponse syncResponse,
-                           RequestFuture<ByteBuffer> future) {
+        public void handle(SyncGroupResponse syncResponse, RequestFuture<ByteBuffer> future) {
+            // 解析响应错误码
             Errors error = Errors.forCode(syncResponse.errorCode());
+            // 正常响应
             if (error == Errors.NONE) {
                 sensors.syncLatency.record(response.requestLatencyMs());
+                // 将分区分配结果传递给调用方
                 future.complete(syncResponse.memberAssignment());
-            } else {
+            }
+            // 异常响应
+            else {
+                // 标记需要重新发送 JoinGroupRequest 请求
                 requestRejoin();
 
                 if (error == Errors.GROUP_AUTHORIZATION_FAILED) {
@@ -599,13 +646,11 @@ public abstract class AbstractCoordinator implements Closeable {
                 } else if (error == Errors.REBALANCE_IN_PROGRESS) {
                     log.debug("SyncGroup for group {} failed due to coordinator rebalance", groupId);
                     future.raise(error);
-                } else if (error == Errors.UNKNOWN_MEMBER_ID
-                        || error == Errors.ILLEGAL_GENERATION) {
+                } else if (error == Errors.UNKNOWN_MEMBER_ID || error == Errors.ILLEGAL_GENERATION) {
                     log.debug("SyncGroup for group {} failed due to {}", groupId, error);
                     resetGeneration();
                     future.raise(error);
-                } else if (error == Errors.GROUP_COORDINATOR_NOT_AVAILABLE
-                        || error == Errors.NOT_COORDINATOR_FOR_GROUP) {
+                } else if (error == Errors.GROUP_COORDINATOR_NOT_AVAILABLE || error == Errors.NOT_COORDINATOR_FOR_GROUP) {
                     log.debug("SyncGroup for group {} failed due to {}", groupId, error);
                     coordinatorDead();
                     future.raise(error);
@@ -1080,6 +1125,7 @@ public abstract class AbstractCoordinator implements Closeable {
     }
 
     protected static class Generation {
+
         public static final Generation NO_GENERATION = new Generation(
                 OffsetCommitRequest.DEFAULT_GENERATION_ID,
                 JoinGroupRequest.UNKNOWN_MEMBER_ID,
@@ -1098,6 +1144,7 @@ public abstract class AbstractCoordinator implements Closeable {
 
     private static class UnjoinedGroupException extends RetriableException {
 
+        private static final long serialVersionUID = -2291999808391175603L;
     }
 
 }

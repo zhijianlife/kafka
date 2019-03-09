@@ -10,6 +10,7 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.common.requests;
 
 import org.apache.kafka.common.TopicPartition;
@@ -26,7 +27,7 @@ import java.util.List;
 import java.util.Map;
 
 public class OffsetCommitResponse extends AbstractResponse {
-    
+
     private static final Schema CURRENT_SCHEMA = ProtoUtils.currentResponseSchema(ApiKeys.OFFSET_COMMIT.id);
     private static final String RESPONSES_KEY_NAME = "responses";
 
@@ -38,8 +39,8 @@ public class OffsetCommitResponse extends AbstractResponse {
     private static final String PARTITION_KEY_NAME = "partition";
     private static final String ERROR_CODE_KEY_NAME = "error_code";
 
-    /**
-     * Possible error codes:
+    /*
+     * 可能的响应错误码:
      *
      * UNKNOWN_TOPIC_OR_PARTITION (3)
      * OFFSET_METADATA_TOO_LARGE (12)
@@ -54,6 +55,7 @@ public class OffsetCommitResponse extends AbstractResponse {
      * GROUP_AUTHORIZATION_FAILED (30)
      */
 
+    /** 分区，机器对应的响应错误码 */
     private final Map<TopicPartition, Short> responseData;
 
     public OffsetCommitResponse(Map<TopicPartition, Short> responseData) {
@@ -61,11 +63,11 @@ public class OffsetCommitResponse extends AbstractResponse {
 
         Map<String, Map<Integer, Short>> topicsData = CollectionUtils.groupDataByTopic(responseData);
 
-        List<Struct> topicArray = new ArrayList<Struct>();
-        for (Map.Entry<String, Map<Integer, Short>> entries: topicsData.entrySet()) {
+        List<Struct> topicArray = new ArrayList<>();
+        for (Map.Entry<String, Map<Integer, Short>> entries : topicsData.entrySet()) {
             Struct topicData = struct.instance(RESPONSES_KEY_NAME);
             topicData.set(TOPIC_KEY_NAME, entries.getKey());
-            List<Struct> partitionArray = new ArrayList<Struct>();
+            List<Struct> partitionArray = new ArrayList<>();
             for (Map.Entry<Integer, Short> partitionEntry : entries.getValue().entrySet()) {
                 Struct partitionData = topicData.instance(PARTITIONS_KEY_NAME);
                 partitionData.set(PARTITION_KEY_NAME, partitionEntry.getKey());
@@ -81,7 +83,7 @@ public class OffsetCommitResponse extends AbstractResponse {
 
     public OffsetCommitResponse(Struct struct) {
         super(struct);
-        responseData = new HashMap<TopicPartition, Short>();
+        responseData = new HashMap<>();
         for (Object topicResponseObj : struct.getArray(RESPONSES_KEY_NAME)) {
             Struct topicResponse = (Struct) topicResponseObj;
             String topic = topicResponse.getString(TOPIC_KEY_NAME);

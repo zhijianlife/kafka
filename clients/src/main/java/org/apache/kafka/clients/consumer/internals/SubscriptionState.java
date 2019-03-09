@@ -79,7 +79,7 @@ public class SubscriptionState {
     private Set<String> subscription;
 
     /**
-     * Consumer Group 选举出来的 leader 使用该集合记录 Consumer Group 中所有消费者订阅的 topic,
+     * group 中的 leader 消费者使用该集合记录 group 中所有消费者订阅的 topic,
      * 如果是 follower 则仅保存其自身订阅的 topic
      *
      * the list of topics the group has subscribed to (set only for the leader on join group completion)
@@ -113,7 +113,7 @@ public class SubscriptionState {
      */
     private ConsumerRebalanceListener listener;
 
-    /* Listeners provide a hook for internal state cleanup (e.g. metrics) on assignment changes */
+    /** Listeners provide a hook for internal state cleanup (e.g. metrics) on assignment changes */
     private List<Listener> listeners = new ArrayList<>();
 
     public SubscriptionState(OffsetResetStrategy defaultResetStrategy) {
@@ -229,28 +229,36 @@ public class SubscriptionState {
      */
     public void assignFromSubscribed(Collection<TopicPartition> assignments) {
         if (!this.partitionsAutoAssigned()) {
+            // 如果不是 AUTO_TOPICS 或 AUTO_PATTERN 订阅类型
             throw new IllegalArgumentException("Attempt to dynamically assign partitions while manual assignment in use");
         }
 
         Map<TopicPartition, TopicPartitionState> assignedPartitionStates = partitionToStateMap(assignments);
-        fireOnAssignment(assignedPartitionStates.keySet());
+        // 遍历调用注册的监听器
+        this.fireOnAssignment(assignedPartitionStates.keySet());
 
-        if (this.subscribedPattern != null) {
+        // 如果是 AUTO_PATTERN 订阅类型
+        if (subscribedPattern != null) {
+            // 遍历检查当前分配的 topic 是否满足正则
             for (TopicPartition tp : assignments) {
-                if (!this.subscribedPattern.matcher(tp.topic()).matches()) {
-                    throw new IllegalArgumentException("Assigned partition " + tp + " for non-subscribed topic regex pattern; subscription pattern is " + this.subscribedPattern);
+                if (!subscribedPattern.matcher(tp.topic()).matches()) {
+                    throw new IllegalArgumentException(
+                            "Assigned partition " + tp + " for non-subscribed topic regex pattern; subscription pattern is " + subscribedPattern);
                 }
             }
-        } else {
+        }
+        // 如果是 AUTO_TOPICS 模式
+        else {
+            // 遍历检查当前分配的 topic 是否在订阅的结合中
             for (TopicPartition tp : assignments)
-                if (!this.subscription.contains(tp.topic())) {
-                    throw new IllegalArgumentException("Assigned partition " + tp + " for non-subscribed topic; subscription is " + this.subscription);
+                if (!subscription.contains(tp.topic())) {
+                    throw new IllegalArgumentException("Assigned partition " + tp + " for non-subscribed topic; subscription is " + subscription);
                 }
         }
 
-        // after rebalancing, we always reinitialize the assignment value
-        this.assignment.set(assignedPartitionStates);
-        this.needsFetchCommittedOffsets = true;
+        // 初始化每个分区对应的分区状态
+        assignment.set(assignedPartitionStates);
+        needsFetchCommittedOffsets = true;
     }
 
     public void subscribe(Pattern pattern, ConsumerRebalanceListener listener) {
@@ -346,7 +354,7 @@ public class SubscriptionState {
     }
 
     public Set<TopicPartition> assignedPartitions() {
-        return this.assignment.partitionSet();
+        return assignment.partitionSet();
     }
 
     public List<TopicPartition> fetchablePartitions() {

@@ -3,13 +3,14 @@
  * file distributed with this work for additional information regarding copyright ownership. The ASF licenses this file
  * to You under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
  * License. You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.common.requests;
 
 import org.apache.kafka.common.TopicPartition;
@@ -32,6 +33,7 @@ import java.util.Map;
  * This wrapper supports both v0 and v1 of OffsetCommitRequest.
  */
 public class OffsetCommitRequest extends AbstractRequest {
+
     private static final String GROUP_ID_KEY_NAME = "group_id";
     private static final String GENERATION_ID_KEY_NAME = "group_generation_id";
     private static final String MEMBER_ID_KEY_NAME = "member_id";
@@ -60,10 +62,15 @@ public class OffsetCommitRequest extends AbstractRequest {
     @Deprecated
     public static final long DEFAULT_TIMESTAMP = -1L;            // for V0, V1
 
+    /** group id */
     private final String groupId;
+    /** 当前消费者 ID */
     private final String memberId;
+    /** 消费者保存的年代信息 */
     private final int generationId;
+    /** offset 最长保存时间 */
     private final long retentionTime;
+    /** 分区，及其对应的 offset 和自定义数据 */
     private final Map<TopicPartition, PartitionData> offsetData;
 
     public static final class PartitionData {
@@ -88,9 +95,9 @@ public class OffsetCommitRequest extends AbstractRequest {
         public String toString() {
             StringBuilder bld = new StringBuilder();
             bld.append("(timestamp=").append(timestamp).
-                append(", offset=").append(offset).
-                append(", metadata=").append(metadata).
-                append(")");
+                    append(", offset=").append(offset).
+                    append(", metadata=").append(metadata).
+                    append(")");
             return bld.toString();
         }
     }
@@ -144,18 +151,19 @@ public class OffsetCommitRequest extends AbstractRequest {
         public String toString() {
             StringBuilder bld = new StringBuilder();
             bld.append("(type=OffsetCommitRequest").
-                append(", groupId=").append(groupId).
-                append(", memberId=").append(memberId).
-                append(", generationId=").append(generationId).
-                append(", retentionTime=").append(retentionTime).
-                append(", offsetData=").append(Utils.mkString(offsetData)).
-                append(")");
+                    append(", groupId=").append(groupId).
+                    append(", memberId=").append(memberId).
+                    append(", generationId=").append(generationId).
+                    append(", retentionTime=").append(retentionTime).
+                    append(", offsetData=").append(Utils.mkString(offsetData)).
+                    append(")");
             return bld.toString();
         }
     }
 
     /**
      * Constructor for version 0.
+     *
      * @param groupId
      * @param offsetData
      */
@@ -172,6 +180,7 @@ public class OffsetCommitRequest extends AbstractRequest {
 
     /**
      * Constructor for version 1.
+     *
      * @param groupId
      * @param generationId
      * @param memberId
@@ -192,6 +201,7 @@ public class OffsetCommitRequest extends AbstractRequest {
 
     /**
      * Constructor for version 2 and above.
+     *
      * @param groupId
      * @param generationId
      * @param memberId
@@ -218,7 +228,7 @@ public class OffsetCommitRequest extends AbstractRequest {
         struct.set(GROUP_ID_KEY_NAME, groupId);
         List<Struct> topicArray = new ArrayList<Struct>();
 
-        for (Map.Entry<String, Map<Integer, PartitionData>> topicEntry: topicsData.entrySet()) {
+        for (Map.Entry<String, Map<Integer, PartitionData>> topicEntry : topicsData.entrySet()) {
             Struct topicData = struct.instance(TOPICS_KEY_NAME);
             topicData.set(TOPIC_KEY_NAME, topicEntry.getKey());
             List<Struct> partitionArray = new ArrayList<>();
@@ -228,8 +238,9 @@ public class OffsetCommitRequest extends AbstractRequest {
                 partitionData.set(PARTITION_KEY_NAME, partitionEntry.getKey());
                 partitionData.set(COMMIT_OFFSET_KEY_NAME, fetchPartitionData.offset);
                 // Only for v1
-                if (partitionData.hasField(TIMESTAMP_KEY_NAME))
+                if (partitionData.hasField(TIMESTAMP_KEY_NAME)) {
                     partitionData.set(TIMESTAMP_KEY_NAME, fetchPartitionData.timestamp);
+                }
                 partitionData.set(METADATA_KEY_NAME, fetchPartitionData.metadata);
                 partitionArray.add(partitionData);
             }
@@ -244,22 +255,25 @@ public class OffsetCommitRequest extends AbstractRequest {
 
         groupId = struct.getString(GROUP_ID_KEY_NAME);
         // This field only exists in v1.
-        if (struct.hasField(GENERATION_ID_KEY_NAME))
+        if (struct.hasField(GENERATION_ID_KEY_NAME)) {
             generationId = struct.getInt(GENERATION_ID_KEY_NAME);
-        else
+        } else {
             generationId = DEFAULT_GENERATION_ID;
+        }
 
         // This field only exists in v1.
-        if (struct.hasField(MEMBER_ID_KEY_NAME))
+        if (struct.hasField(MEMBER_ID_KEY_NAME)) {
             memberId = struct.getString(MEMBER_ID_KEY_NAME);
-        else
+        } else {
             memberId = DEFAULT_MEMBER_ID;
+        }
 
         // This field only exists in v2
-        if (struct.hasField(RETENTION_TIME_KEY_NAME))
+        if (struct.hasField(RETENTION_TIME_KEY_NAME)) {
             retentionTime = struct.getLong(RETENTION_TIME_KEY_NAME);
-        else
+        } else {
             retentionTime = DEFAULT_RETENTION_TIME;
+        }
 
         offsetData = new HashMap<>();
         for (Object topicDataObj : struct.getArray(TOPICS_KEY_NAME)) {
@@ -286,7 +300,7 @@ public class OffsetCommitRequest extends AbstractRequest {
     @Override
     public AbstractResponse getErrorResponse(Throwable e) {
         Map<TopicPartition, Short> responseData = new HashMap<>();
-        for (Map.Entry<TopicPartition, PartitionData> entry: offsetData.entrySet()) {
+        for (Map.Entry<TopicPartition, PartitionData> entry : offsetData.entrySet()) {
             responseData.put(entry.getKey(), Errors.forException(e).code());
         }
 

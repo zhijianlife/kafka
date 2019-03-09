@@ -111,7 +111,7 @@ public interface PartitionAssignor {
      */
     class Assignment {
 
-        /** 分配给某消费者的 TopicPartition 集合 */
+        /** 分配给当前消费者的 TopicPartition 集合 */
         private final List<TopicPartition> partitions;
         /** 用户自定义数据 */
         private final ByteBuffer userData;

@@ -110,12 +110,14 @@ public class PartitionStates<S> {
      */
     public void set(Map<TopicPartition, S> partitionToState) {
         map.clear();
-        update(partitionToState);
+        this.update(partitionToState);
     }
 
     private void update(Map<TopicPartition, S> partitionToState) {
+        // 记录 topic 及其对应的分区列表
         LinkedHashMap<String, List<TopicPartition>> topicToPartitions = new LinkedHashMap<>();
         for (TopicPartition tp : partitionToState.keySet()) {
+            // 获取 topic 对应的分区列表
             List<TopicPartition> partitions = topicToPartitions.get(tp.topic());
             if (partitions == null) {
                 partitions = new ArrayList<>();
@@ -123,6 +125,7 @@ public class PartitionStates<S> {
             }
             partitions.add(tp);
         }
+        // 初始化每个 topic 对应的分区状态
         for (Map.Entry<String, List<TopicPartition>> entry : topicToPartitions.entrySet()) {
             for (TopicPartition tp : entry.getValue()) {
                 S state = partitionToState.get(tp);

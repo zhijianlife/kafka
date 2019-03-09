@@ -22,6 +22,8 @@ import java.io.Serializable;
  */
 public class OffsetAndMetadata implements Serializable {
 
+    private static final long serialVersionUID = 3175775294240573331L;
+
     private final long offset;
     private final String metadata;
 

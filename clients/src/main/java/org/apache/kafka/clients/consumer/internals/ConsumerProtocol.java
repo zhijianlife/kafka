@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.kafka.clients.consumer.internals;
 
 import org.apache.kafka.common.TopicPartition;
@@ -140,12 +141,12 @@ public class ConsumerProtocol {
 
     private static void checkVersionCompatibility(short version) {
         // check for invalid versions
-        if (version < CONSUMER_PROTOCOL_V0)
+        if (version < CONSUMER_PROTOCOL_V0) {
             throw new SchemaException("Unsupported subscription version: " + version);
+        }
 
         // otherwise, assume versions can be parsed as V0
     }
-
 
     private static Map<String, List<Integer>> asMap(Collection<TopicPartition> partitions) {
         Map<String, List<Integer>> partitionMap = new HashMap<>();
