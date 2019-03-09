@@ -547,6 +547,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
     private final Metadata metadata;
     private final long retryBackoffMs;
     private final long requestTimeoutMs;
+    /** 标识当前 consumer 是否关闭 */
     private volatile boolean closed = false;
 
     /** 记录当前正在使用 KafkaConsumer 的线程 ID，防止多个线程同时使用同一个 KafkaConsumer 对象 */
@@ -1009,13 +1010,15 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      */
     @Override
     public ConsumerRecords<K, V> poll(long timeout) {
-        acquire();
+        // 确保当前 consumer 对象未被多个线程使用，否则抛出异常
+        this.acquire();
         try {
             if (timeout < 0) {
                 throw new IllegalArgumentException("Timeout must not be negative");
             }
 
-            if (this.subscriptions.hasNoSubscriptionOrUserAssignment()) {
+            // 当前 consumer 未订阅任何 topic
+            if (subscriptions.hasNoSubscriptionOrUserAssignment()) {
                 throw new IllegalStateException("Consumer is not subscribed to any topics or assigned any partitions");
             }
 
@@ -1023,21 +1026,29 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             long start = time.milliseconds();
             long remaining = timeout;
             do {
-                Map<TopicPartition, List<ConsumerRecord<K, V>>> records = pollOnce(remaining);
+                // 拉取消息
+                Map<TopicPartition, List<ConsumerRecord<K, V>>> records = this.pollOnce(remaining);
                 if (!records.isEmpty()) {
-                    // before returning the fetched records, we can send off the next round of fetches
-                    // and avoid block waiting for their responses to enable pipelining while the user
-                    // is handling the fetched records.
-                    //
-                    // NOTE: since the consumed position has already been updated, we must not allow
-                    // wakeups or any other errors to be triggered prior to returning the fetched records.
+                    /*
+                     * 为了提升效率，在对响应的 records 处理之前，先发送下一次 fetch 请求，
+                     * 从而让处理消息的过程，与拉取消息的过程并行，以减少等待网络 IO 的时间
+                     *
+                     * before returning the fetched records, we can send off the next round of fetches
+                     * and avoid block waiting for their responses to enable pipelining while the user
+                     * s handling the fetched records.
+                     *
+                     * NOTE: since the consumed position has already been updated,
+                     * we must not allow wakeups or any other errors to be triggered prior to returning the fetched records.
+                     */
                     if (fetcher.sendFetches() > 0 || client.pendingRequestCount() > 0) {
+                        // 执行一次不可中断的 poll
                         client.pollNoWakeup();
                     }
 
                     if (this.interceptors == null) {
                         return new ConsumerRecords<>(records);
                     } else {
+                        // 如果注册了拦截器，则在返回之前先应用拦截器
                         return this.interceptors.onConsume(new ConsumerRecords<>(records));
                     }
                 }
@@ -1045,41 +1056,44 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                 long elapsed = time.milliseconds() - start;
                 remaining = timeout - elapsed;
             } while (remaining > 0);
-
             return ConsumerRecords.empty();
         } finally {
-            release();
+            this.release();
         }
     }
 
     /**
-     * Do one round of polling. In addition to checking for new data, this does any needed offset commits
-     * (if auto-commit is enabled), and offset resets (if an offset reset policy is defined).
+     * Do one round of polling.
+     *
+     * In addition to checking for new data, this does any needed offset commits(if auto-commit is enabled),
+     * and offset resets (if an offset reset policy is defined).
      *
      * @param timeout The maximum time to block in the underlying call to {@link ConsumerNetworkClient#poll(long)}.
      * @return The fetched records (may be empty)
      */
     private Map<TopicPartition, List<ConsumerRecord<K, V>>> pollOnce(long timeout) {
+        // 执行 rebalance，以及定期提交 offset
         coordinator.poll(time.milliseconds());
 
-        // fetch positions if we have partitions we're subscribed to that we
-        // don't know the offset for
+        // fetch positions if we have partitions we're subscribed to that we don't know the offset for
         if (!subscriptions.hasAllFetchPositions()) {
-            updateFetchPositions(this.subscriptions.missingFetchPositions());
+            // 如果存在没有分配 position 值的 tp，则需要进行更新
+            this.updateFetchPositions(subscriptions.missingFetchPositions());
         }
 
-        // if data is available already, return it immediately
+        // 如果本地有缓存的消息，则直接返回
         Map<TopicPartition, List<ConsumerRecord<K, V>>> records = fetcher.fetchedRecords();
         if (!records.isEmpty()) {
             return records;
         }
 
-        // send any new fetches (won't resend pending fetches)
+        // 创建并缓存 fetch 请求
         fetcher.sendFetches();
 
         long now = time.milliseconds();
         long pollTimeout = Math.min(coordinator.timeToNextPoll(now), timeout);
 
+        // 发送 fetch 请求
         client.poll(pollTimeout, now, new PollCondition() {
             @Override
             public boolean shouldBlock() {
@@ -1095,6 +1109,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             return Collections.emptyMap();
         }
 
+        // 获取 fetch 请求返回的消息
         return fetcher.fetchedRecords();
     }
 
@@ -1658,19 +1673,22 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
     }
 
     /**
-     * Acquire the light lock protecting this consumer from multi-threaded access. Instead of blocking
-     * when the lock is not available, however, we just throw an exception (since multi-threaded usage is not
-     * supported).
+     * Acquire the light lock protecting this consumer from multi-threaded access.
+     * Instead of blocking when the lock is not available, however, we just throw an exception
+     * (since multi-threaded usage is not supported).
      *
      * @throws IllegalStateException           if the consumer has been closed
      * @throws ConcurrentModificationException if another thread already has the lock
      */
     private void acquire() {
-        ensureNotClosed();
+        // 检测当前 consumer 是否关闭，如果关闭则抛出异常
+        this.ensureNotClosed();
         long threadId = Thread.currentThread().getId();
+        // 如果存在多个线程使用同一个 consumer 对象，则抛出异常
         if (threadId != currentThread.get() && !currentThread.compareAndSet(NO_CURRENT_THREAD, threadId)) {
             throw new ConcurrentModificationException("KafkaConsumer is not safe for multi-threaded access");
         }
+        // 线程重入次数加 1
         refcount.incrementAndGet();
     }
 

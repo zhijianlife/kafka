@@ -10,15 +10,8 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
-package org.apache.kafka.common.requests;
 
-import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+package org.apache.kafka.common.requests;
 
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.protocol.ApiKeys;
@@ -27,6 +20,14 @@ import org.apache.kafka.common.protocol.ProtoUtils;
 import org.apache.kafka.common.protocol.types.Schema;
 import org.apache.kafka.common.protocol.types.Struct;
 import org.apache.kafka.common.utils.CollectionUtils;
+
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 public class OffsetFetchResponse extends AbstractResponse {
 
@@ -46,26 +47,24 @@ public class OffsetFetchResponse extends AbstractResponse {
 
     public static final long INVALID_OFFSET = -1L;
     public static final String NO_METADATA = "";
-    public static final PartitionData UNKNOWN_PARTITION = new PartitionData(INVALID_OFFSET, NO_METADATA,
-            Errors.UNKNOWN_TOPIC_OR_PARTITION);
+    public static final PartitionData UNKNOWN_PARTITION = new PartitionData(INVALID_OFFSET, NO_METADATA, Errors.UNKNOWN_TOPIC_OR_PARTITION);
+
+    private static final List<Errors> PARTITION_ERRORS = Arrays.asList(Errors.UNKNOWN_TOPIC_OR_PARTITION, Errors.TOPIC_AUTHORIZATION_FAILED);
+
+    /** 响应数据 */
+    private final Map<TopicPartition, PartitionData> responseData;
 
     /**
-     * Possible error codes:
+     * 响应错误码：
      *
      * - Partition errors:
-     *   - UNKNOWN_TOPIC_OR_PARTITION (3)
+     * - UNKNOWN_TOPIC_OR_PARTITION (3)
      *
      * - Group or coordinator errors:
-     *   - GROUP_LOAD_IN_PROGRESS (14)
-     *   - NOT_COORDINATOR_FOR_GROUP (16)
-     *   - GROUP_AUTHORIZATION_FAILED (30)
+     * - GROUP_LOAD_IN_PROGRESS (14)
+     * - NOT_COORDINATOR_FOR_GROUP (16)
+     * - GROUP_AUTHORIZATION_FAILED (30)
      */
-
-    private static final List<Errors> PARTITION_ERRORS = Arrays.asList(
-            Errors.UNKNOWN_TOPIC_OR_PARTITION,
-            Errors.TOPIC_AUTHORIZATION_FAILED);
-
-    private final Map<TopicPartition, PartitionData> responseData;
     private final Errors error;
 
     public static final class PartitionData {
@@ -86,6 +85,7 @@ public class OffsetFetchResponse extends AbstractResponse {
 
     /**
      * Constructor for the latest version.
+     *
      * @param error Potential coordinator or group level error code
      * @param responseData Fetched offset information grouped by topic-partition
      */
@@ -95,6 +95,7 @@ public class OffsetFetchResponse extends AbstractResponse {
 
     /**
      * Unified constructor for all versions.
+     *
      * @param error Potential coordinator or group level error code (for api version 2 and later)
      * @param responseData Fetched offset information grouped by topic-partition
      * @param version The request API version
@@ -124,8 +125,9 @@ public class OffsetFetchResponse extends AbstractResponse {
         this.struct.set(RESPONSES_KEY_NAME, topicArray.toArray());
         this.responseData = responseData;
         this.error = error;
-        if (version > 1)
+        if (version > 1) {
             this.struct.set(ERROR_CODE_KEY_NAME, this.error.code());
+        }
     }
 
     public OffsetFetchResponse(Struct struct) {
@@ -141,8 +143,9 @@ public class OffsetFetchResponse extends AbstractResponse {
                 long offset = partitionResponse.getLong(COMMIT_OFFSET_KEY_NAME);
                 String metadata = partitionResponse.getString(METADATA_KEY_NAME);
                 Errors error = Errors.forCode(partitionResponse.getShort(ERROR_CODE_KEY_NAME));
-                if (error != Errors.NONE && !PARTITION_ERRORS.contains(error))
+                if (error != Errors.NONE && !PARTITION_ERRORS.contains(error)) {
                     topLevelError = error;
+                }
                 PartitionData partitionData = new PartitionData(offset, metadata, error);
                 this.responseData.put(new TopicPartition(topic, partition), partitionData);
             }
@@ -158,8 +161,9 @@ public class OffsetFetchResponse extends AbstractResponse {
     public void maybeThrowFirstPartitionError() {
         Collection<PartitionData> partitionsData = this.responseData.values();
         for (PartitionData data : partitionsData) {
-            if (data.hasError())
+            if (data.hasError()) {
                 throw data.error.exception();
+            }
         }
     }
 

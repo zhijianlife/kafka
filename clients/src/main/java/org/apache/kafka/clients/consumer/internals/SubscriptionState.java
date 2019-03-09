@@ -322,7 +322,8 @@ public class SubscriptionState {
     }
 
     private TopicPartitionState assignedState(TopicPartition tp) {
-        TopicPartitionState state = this.assignment.stateValue(tp);
+        // 获取 tp 对应的 TopicPartitionState
+        TopicPartitionState state = assignment.stateValue(tp);
         if (state == null) {
             throw new IllegalStateException("No current assignment for partition " + tp);
         }
@@ -330,7 +331,8 @@ public class SubscriptionState {
     }
 
     public void committed(TopicPartition tp, OffsetAndMetadata offset) {
-        assignedState(tp).committed(offset);
+        // 获取 tp 对应的 TopicPartitionState 对象，并更新 committed 字段
+        this.assignedState(tp).committed(offset);
     }
 
     public OffsetAndMetadata committed(TopicPartition tp) {
@@ -357,9 +359,15 @@ public class SubscriptionState {
         return assignment.partitionSet();
     }
 
+    /**
+     * 获取可以 fetch 的 tp 集合
+     *
+     * @return
+     */
     public List<TopicPartition> fetchablePartitions() {
         List<TopicPartition> fetchable = new ArrayList<>(assignment.size());
         for (PartitionStates.PartitionState<TopicPartitionState> state : assignment.partitionStates()) {
+            // 当前消费者处于运行状态，且知道下次获取消息 offset
             if (state.value().isFetchable()) {
                 fetchable.add(state.topicPartition());
             }
@@ -376,11 +384,12 @@ public class SubscriptionState {
     }
 
     public Long position(TopicPartition tp) {
+        // 获取 tp 对应的下次获取消息的 offset
         return assignedState(tp).position;
     }
 
     public Long partitionLag(TopicPartition tp) {
-        TopicPartitionState topicPartitionState = assignedState(tp);
+        TopicPartitionState topicPartitionState = this.assignedState(tp);
         return topicPartitionState.highWatermark == null ? null : topicPartitionState.highWatermark - topicPartitionState.position;
     }
 
@@ -449,7 +458,7 @@ public class SubscriptionState {
     }
 
     public boolean isFetchable(TopicPartition tp) {
-        return isAssigned(tp) && assignedState(tp).isFetchable();
+        return this.isAssigned(tp) && assignedState(tp).isFetchable();
     }
 
     public boolean hasValidPosition(TopicPartition tp) {
@@ -549,6 +558,7 @@ public class SubscriptionState {
         }
 
         private boolean isFetchable() {
+            // 当前消费者处于运行状态，且知道下次获取消息 offset
             return !paused && hasValidPosition();
         }
 

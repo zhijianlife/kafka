@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.kafka.common.requests;
 
 import org.apache.kafka.common.TopicPartition;
@@ -37,7 +38,7 @@ import java.util.Map;
  * This wrapper supports all versions of the Fetch API
  */
 public class FetchResponse extends AbstractResponse {
-    
+
     private static final Schema CURRENT_SCHEMA = ProtoUtils.currentResponseSchema(ApiKeys.FETCH.id);
     private static final String RESPONSES_KEY_NAME = "responses";
 
@@ -54,27 +55,34 @@ public class FetchResponse extends AbstractResponse {
     // Default throttle time
     private static final int DEFAULT_THROTTLE_TIME = 0;
 
-    /**
-     * Possible error codes:
-     *
-     *  OFFSET_OUT_OF_RANGE (1)
-     *  UNKNOWN_TOPIC_OR_PARTITION (3)
-     *  NOT_LEADER_FOR_PARTITION (6)
-     *  REPLICA_NOT_AVAILABLE (9)
-     *  UNKNOWN (-1)
-     */
-
     private static final String HIGH_WATERMARK_KEY_NAME = "high_watermark";
     private static final String RECORD_SET_KEY_NAME = "record_set";
 
     public static final long INVALID_HIGHWATERMARK = -1L;
 
+    /** 每个 tp 对应 fetch 到的数据 */
     private final LinkedHashMap<TopicPartition, PartitionData> responseData;
+
+    /** 限流时间 */
     private final int throttleTime;
 
     public static final class PartitionData {
+
+        /**
+         * 响应错误码：
+         *
+         * OFFSET_OUT_OF_RANGE (1)
+         * UNKNOWN_TOPIC_OR_PARTITION (3)
+         * NOT_LEADER_FOR_PARTITION (6)
+         * REPLICA_NOT_AVAILABLE (9)
+         * UNKNOWN (-1)
+         */
         public final short errorCode;
+
+        /** leader 的 highWatermark */
         public final long highWatermark;
+
+        /** 消息 */
         public final Records records;
 
         public PartitionData(short errorCode, long highWatermark, Records records) {
@@ -85,8 +93,7 @@ public class FetchResponse extends AbstractResponse {
 
         @Override
         public String toString() {
-            return "(errorCode=" + errorCode + ", highWaterMark=" + highWatermark +
-                    ", records=" + records + ")";
+            return "(errorCode=" + errorCode + ", highWaterMark=" + highWatermark + ", records=" + records + ")";
         }
     }
 
@@ -228,7 +235,7 @@ public class FetchResponse extends AbstractResponse {
                                       int throttleTime) {
         List<FetchRequest.TopicAndPartitionData<PartitionData>> topicsData = FetchRequest.TopicAndPartitionData.batchByTopic(responseData);
         List<Struct> topicArray = new ArrayList<>();
-        for (FetchRequest.TopicAndPartitionData<PartitionData> topicEntry: topicsData) {
+        for (FetchRequest.TopicAndPartitionData<PartitionData> topicEntry : topicsData) {
             Struct topicData = struct.instance(RESPONSES_KEY_NAME);
             topicData.set(TOPIC_KEY_NAME, topicEntry.topic);
             List<Struct> partitionArray = new ArrayList<>();
@@ -248,8 +255,9 @@ public class FetchResponse extends AbstractResponse {
         }
         struct.set(RESPONSES_KEY_NAME, topicArray.toArray());
 
-        if (version >= 1)
+        if (version >= 1) {
             struct.set(THROTTLE_TIME_KEY_NAME, throttleTime);
+        }
 
         return struct;
     }

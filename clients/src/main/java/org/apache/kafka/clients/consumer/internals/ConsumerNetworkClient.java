@@ -352,8 +352,8 @@ public class ConsumerNetworkClient implements Closeable {
     }
 
     /**
-     * Get the count of pending requests to the given node. This includes both request that
-     * have been transmitted (i.e. in-flight requests) and those which are awaiting transmission.
+     * Get the count of pending requests to the given node.
+     * This includes both request that have been transmitted (i.e. in-flight requests) and those which are awaiting transmission.
      *
      * @param node The node in question
      * @return The number of pending requests

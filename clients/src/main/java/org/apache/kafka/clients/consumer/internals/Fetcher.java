@@ -74,28 +74,40 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * This class manage the fetching process with the brokers.
+ *
+ * 负责从服务端拉取消息
  */
 public class Fetcher<K, V> implements SubscriptionState.Listener {
 
     private static final Logger log = LoggerFactory.getLogger(Fetcher.class);
 
+    /** 网络客户端 */
     private final ConsumerNetworkClient client;
+    /** 时间戳工具 */
     private final Time time;
+    /** 服务端返回的消息并不是立即响应，而是累积到 minBytes 再响应 */
     private final int minBytes;
     private final int maxBytes;
+    /** 累积等待的最大时长，达到该时间时，即使消息数据量不够，也会进行响应 */
     private final int maxWaitMs;
+    /** 每次 fetch 操作的最大字节数 */
     private final int fetchSize;
     private final long retryBackoffMs;
+    /** 每次获取 record 的最大数量 */
     private final int maxPollRecords;
     private final boolean checkCrcs;
+    /** 集群元数据 */
     private final Metadata metadata;
     private final FetchManagerMetrics sensors;
+    /** 记录每个 tp 的消息消费情况 */
     private final SubscriptionState subscriptions;
+    /** 每个响应在解析之前都会先转换成 CompletedFetch 对象记录到该队列中 */
     private final ConcurrentLinkedQueue<CompletedFetch> completedFetches;
     private final Deserializer<K> keyDeserializer;
     private final Deserializer<V> valueDeserializer;
     private final BufferSupplier decompressionBufferSupplier = BufferSupplier.create();
 
+    /** 保存响应的分区、消息 起始位移等 */
     private PartitionRecords<K, V> nextInLineRecords = null;
     private ExceptionMetadata nextInLineExceptionMetadata = null;
 
@@ -157,6 +169,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
 
     /**
      * Return whether we have any completed fetches pending return to the user. This method is thread-safe.
+     *
      * @return true if there are completed fetches, false otherwise
      */
     public boolean hasCompletedFetches() {
@@ -170,40 +183,46 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
     }
 
     /**
-     * Set-up a fetch request for any node that we have assigned partitions for which doesn't already have
-     * an in-flight fetch or pending fetch data.
+     * Set-up a fetch request for any node that we have assigned partitions
+     * for which doesn't already have an in-flight fetch or pending fetch data.
+     *
      * @return number of fetches sent
      */
     public int sendFetches() {
-        Map<Node, FetchRequest.Builder> fetchRequestMap = createFetchRequests();
+        // 获取可以 fetch 的分区，并创建到分区 leader 节点的 FetchRequest 请求
+        Map<Node, FetchRequest.Builder> fetchRequestMap = this.createFetchRequests();
         for (Map.Entry<Node, FetchRequest.Builder> fetchEntry : fetchRequestMap.entrySet()) {
             final FetchRequest.Builder request = fetchEntry.getValue();
             final Node fetchTarget = fetchEntry.getKey();
 
+            // 往目标节点发送 FetchRequest 请求
             log.debug("Sending fetch for partitions {} to broker {}", request.fetchData().keySet(), fetchTarget);
             client.send(fetchTarget, request)
+                    // 添加监听器用于处理 FetchResponse
                     .addListener(new RequestFutureListener<ClientResponse>() {
                         @Override
                         public void onSuccess(ClientResponse resp) {
                             FetchResponse response = (FetchResponse) resp.responseBody();
+                            // 响应中的 tp 与请求的 tp 不匹配，忽略
                             if (!matchesRequestedPartitions(request, response)) {
                                 // obviously we expect the broker to always send us valid responses, so this check
                                 // is mainly for test cases where mock fetch responses must be manually crafted.
-                                log.warn("Ignoring fetch response containing partitions {} since it does not match " +
-                                        "the requested partitions {}", response.responseData().keySet(),
-                                        request.fetchData().keySet());
+                                log.warn("Ignoring fetch response containing partitions {} since it does not match the requested partitions {}",
+                                        response.responseData().keySet(), request.fetchData().keySet());
                                 return;
                             }
 
                             Set<TopicPartition> partitions = new HashSet<>(response.responseData().keySet());
                             FetchResponseMetricAggregator metricAggregator = new FetchResponseMetricAggregator(sensors, partitions);
 
+                            // 遍历处理响应中的数据
                             for (Map.Entry<TopicPartition, FetchResponse.PartitionData> entry : response.responseData().entrySet()) {
                                 TopicPartition partition = entry.getKey();
+                                // 当前 tp 对应的请求的 offset
                                 long fetchOffset = request.fetchData().get(partition).offset;
                                 FetchResponse.PartitionData fetchData = entry.getValue();
-                                completedFetches.add(new CompletedFetch(partition, fetchOffset, fetchData, metricAggregator,
-                                        request.version()));
+                                // 将结果包装成 CompletedFetch 缓存到 completedFetches 队列中
+                                completedFetches.add(new CompletedFetch(partition, fetchOffset, fetchData, metricAggregator, request.version()));
                             }
 
                             sensors.fetchLatency.record(resp.requestLatencyMs());
@@ -221,36 +240,48 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
 
     /**
      * Lookup and set offsets for any partitions which are awaiting an explicit reset.
+     *
      * @param partitions the partitions to reset
      */
     public void resetOffsetsIfNeeded(Set<TopicPartition> partitions) {
         for (TopicPartition tp : partitions) {
             // TODO: If there are several offsets to reset, we could submit offset requests in parallel
-            if (subscriptions.isAssigned(tp) && subscriptions.isOffsetResetNeeded(tp))
+            if (subscriptions.isAssigned(tp) && subscriptions.isOffsetResetNeeded(tp)) {
                 resetOffset(tp);
+            }
         }
     }
 
     /**
      * Update the fetch positions for the provided partitions.
+     *
      * @param partitions the partitions to update positions for
      * @throws NoOffsetForPartitionException If no offset is stored for a given partition and no reset policy is available
      */
     public void updateFetchPositions(Set<TopicPartition> partitions) {
         // reset the fetch position to the committed position
         for (TopicPartition tp : partitions) {
-            if (!subscriptions.isAssigned(tp) || subscriptions.hasValidPosition(tp))
+            // 如果未订阅当前 tp，或者已知对应 tp 的 position，则无需更新
+            if (!subscriptions.isAssigned(tp) || subscriptions.hasValidPosition(tp)) {
                 continue;
+            }
 
+            // 如果需要重置 offset
             if (subscriptions.isOffsetResetNeeded(tp)) {
-                resetOffset(tp);
-            } else if (subscriptions.committed(tp) == null) {
+                // 按照指定的策略对 offset 进行重置
+                this.resetOffset(tp);
+            }
+            // 如果对应 tp 最近一次提交的 offset 为空
+            else if (subscriptions.committed(tp) == null) {
                 // there's no committed position, so we need to reset with the default strategy
                 subscriptions.needOffsetReset(tp);
-                resetOffset(tp);
+                // 按照指定的策略对 offset 进行重置
+                this.resetOffset(tp);
             } else {
+                // 获取对应 tp 最近一次提交的 offset
                 long committed = subscriptions.committed(tp).offset();
                 log.debug("Resetting offset for partition {} to the committed offset {}", tp, committed);
+                // 更新下次获取消息的 offset
                 subscriptions.seek(tp, committed);
             }
         }
@@ -258,6 +289,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
 
     /**
      * Get topic metadata for all topics in the cluster
+     *
      * @param timeout time for which getting topic metadata is attempted
      * @return The map of topics with their partition information
      */
@@ -274,8 +306,9 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
      */
     public Map<String, List<PartitionInfo>> getTopicMetadata(MetadataRequest.Builder request, long timeout) {
         // Save the round trip if no topics are requested.
-        if (!request.isAllTopics() && request.topics().isEmpty())
+        if (!request.isAllTopics() && request.topics().isEmpty()) {
             return Collections.emptyMap();
+        }
 
         long start = time.milliseconds();
         long remaining = timeout;
@@ -284,16 +317,18 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
             RequestFuture<ClientResponse> future = sendMetadataRequest(request);
             client.poll(future, remaining);
 
-            if (future.failed() && !future.isRetriable())
+            if (future.failed() && !future.isRetriable()) {
                 throw future.exception();
+            }
 
             if (future.succeeded()) {
                 MetadataResponse response = (MetadataResponse) future.value().responseBody();
                 Cluster cluster = response.cluster();
 
                 Set<String> unauthorizedTopics = cluster.unauthorizedTopics();
-                if (!unauthorizedTopics.isEmpty())
+                if (!unauthorizedTopics.isEmpty()) {
                     throw new TopicAuthorizationException(unauthorizedTopics);
+                }
 
                 boolean shouldRetry = false;
                 Map<String, Errors> errors = response.errors();
@@ -307,17 +342,19 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
                         String topic = errorEntry.getKey();
                         Errors error = errorEntry.getValue();
 
-                        if (error == Errors.INVALID_TOPIC_EXCEPTION)
+                        if (error == Errors.INVALID_TOPIC_EXCEPTION) {
                             throw new InvalidTopicException("Topic '" + topic + "' is invalid");
-                        else if (error == Errors.UNKNOWN_TOPIC_OR_PARTITION)
-                            // if a requested topic is unknown, we just continue and let it be absent
-                            // in the returned map
+                        } else if (error == Errors.UNKNOWN_TOPIC_OR_PARTITION)
+                        // if a requested topic is unknown, we just continue and let it be absent
+                        // in the returned map
+                        {
                             continue;
-                        else if (error.exception() instanceof RetriableException)
+                        } else if (error.exception() instanceof RetriableException) {
                             shouldRetry = true;
-                        else
+                        } else {
                             throw new KafkaException("Unexpected error fetching metadata for topic " + topic,
                                     error.exception());
+                        }
                     }
                 }
 
@@ -344,14 +381,16 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
 
     /**
      * Send Metadata Request to least loaded node in Kafka cluster asynchronously
+     *
      * @return A future that indicates result of sent metadata request
      */
     private RequestFuture<ClientResponse> sendMetadataRequest(MetadataRequest.Builder request) {
         final Node node = client.leastLoadedNode();
-        if (node == null)
+        if (node == null) {
             return RequestFuture.noBrokersAvailable();
-        else
+        } else {
             return client.send(node, request);
+        }
     }
 
     /**
@@ -361,24 +400,29 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
      * @throws org.apache.kafka.clients.consumer.NoOffsetForPartitionException If no offset reset strategy is defined
      */
     private void resetOffset(TopicPartition partition) {
+        // 获取重置 offset 的策略，如果为空则表示不需要重置
         OffsetResetStrategy strategy = subscriptions.resetStrategy(partition);
         log.debug("Resetting offset for partition {} to {} offset.", partition, strategy.name().toLowerCase(Locale.ROOT));
         final long timestamp;
-        if (strategy == OffsetResetStrategy.EARLIEST)
+        if (strategy == OffsetResetStrategy.EARLIEST) {
             timestamp = ListOffsetRequest.EARLIEST_TIMESTAMP;
-        else if (strategy == OffsetResetStrategy.LATEST)
+        } else if (strategy == OffsetResetStrategy.LATEST) {
             timestamp = ListOffsetRequest.LATEST_TIMESTAMP;
-        else
+        } else {
             throw new NoOffsetForPartitionException(partition);
-        Map<TopicPartition, OffsetData> offsetsByTimes = retrieveOffsetsByTimes(
+        }
+        Map<TopicPartition, OffsetData> offsetsByTimes = this.retrieveOffsetsByTimes(
                 Collections.singletonMap(partition, timestamp), Long.MAX_VALUE, false);
         OffsetData offsetData = offsetsByTimes.get(partition);
-        if (offsetData == null)
+        if (offsetData == null) {
             throw new NoOffsetForPartitionException(partition);
+        }
         long offset = offsetData.offset;
         // we might lose the assignment while fetching the offset, so check it is still active
-        if (subscriptions.isAssigned(partition))
+        if (subscriptions.isAssigned(partition)) {
+            // 更新下次获取消息的 offset
             this.subscriptions.seek(partition, offset);
+        }
     }
 
     public Map<TopicPartition, OffsetAndTimestamp> getOffsetsByTimes(Map<TopicPartition, Long> timestampsToSearch,
@@ -387,18 +431,20 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
         HashMap<TopicPartition, OffsetAndTimestamp> offsetsByTimes = new HashMap<>(offsetData.size());
         for (Map.Entry<TopicPartition, OffsetData> entry : offsetData.entrySet()) {
             OffsetData data = entry.getValue();
-            if (data == null)
+            if (data == null) {
                 offsetsByTimes.put(entry.getKey(), null);
-            else
+            } else {
                 offsetsByTimes.put(entry.getKey(), new OffsetAndTimestamp(data.offset, data.timestamp));
+            }
         }
         return offsetsByTimes;
     }
 
     private Map<TopicPartition, OffsetData> retrieveOffsetsByTimes(
             Map<TopicPartition, Long> timestampsToSearch, long timeout, boolean requireTimestamps) {
-        if (timestampsToSearch.isEmpty())
+        if (timestampsToSearch.isEmpty()) {
             return Collections.emptyMap();
+        }
 
         long startMs = time.milliseconds();
         long remaining = timeout;
@@ -407,24 +453,29 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
                     sendListOffsetRequests(requireTimestamps, timestampsToSearch);
             client.poll(future, remaining);
 
-            if (!future.isDone())
+            if (!future.isDone()) {
                 break;
+            }
 
-            if (future.succeeded())
+            if (future.succeeded()) {
                 return future.value();
+            }
 
-            if (!future.isRetriable())
+            if (!future.isRetriable()) {
                 throw future.exception();
+            }
 
             long elapsed = time.milliseconds() - startMs;
             remaining = timeout - elapsed;
-            if (remaining <= 0)
+            if (remaining <= 0) {
                 break;
+            }
 
-            if (future.exception() instanceof InvalidMetadataException)
+            if (future.exception() instanceof InvalidMetadataException) {
                 client.awaitMetadataUpdate(remaining);
-            else
+            } else {
                 time.sleep(Math.min(remaining, retryBackoffMs));
+            }
 
             elapsed = time.milliseconds() - startMs;
             remaining = timeout - elapsed;
@@ -460,42 +511,51 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
      * NOTE: returning empty records guarantees the consumed position are NOT updated.
      *
      * @return The fetched records per partition
-     * @throws OffsetOutOfRangeException If there is OffsetOutOfRange error in fetchResponse and
-     *         the defaultResetPolicy is NONE
+     * @throws OffsetOutOfRangeException If there is OffsetOutOfRange error in fetchResponse and the defaultResetPolicy is NONE
      */
     public Map<TopicPartition, List<ConsumerRecord<K, V>>> fetchedRecords() {
+        // 存在异常
         if (nextInLineExceptionMetadata != null) {
             ExceptionMetadata exceptionMetadata = nextInLineExceptionMetadata;
             nextInLineExceptionMetadata = null;
             TopicPartition tp = exceptionMetadata.partition;
-            if (subscriptions.isFetchable(tp) && subscriptions.position(tp) == exceptionMetadata.fetchedOffset)
+            if (subscriptions.isFetchable(tp) && subscriptions.position(tp) == exceptionMetadata.fetchedOffset) {
                 throw exceptionMetadata.exception;
+            }
         }
 
         Map<TopicPartition, List<ConsumerRecord<K, V>>> drained = new HashMap<>();
-        int recordsRemaining = maxPollRecords;
+        int recordsRemaining = maxPollRecords; // 剩余获取 record 的数量
         while (recordsRemaining > 0) {
+            // 当前分区没有可以处理的记录
             if (nextInLineRecords == null || nextInLineRecords.isDrained()) {
                 CompletedFetch completedFetch = completedFetches.poll();
                 if (completedFetch == null) break;
                 try {
-                    nextInLineRecords = parseCompletedFetch(completedFetch);
+                    // CompletedFetch -> PartitionRecords
+                    nextInLineRecords = this.parseCompletedFetch(completedFetch);
                 } catch (KafkaException e) {
-                    if (drained.isEmpty())
+                    if (drained.isEmpty()) {
                         throw e;
+                    }
                     nextInLineExceptionMetadata = new ExceptionMetadata(completedFetch.partition, completedFetch.fetchedOffset, e);
                 }
             } else {
                 TopicPartition partition = nextInLineRecords.partition;
-                List<ConsumerRecord<K, V>> records = drainRecords(nextInLineRecords, recordsRemaining);
+                // 从当前分区记录中拉取指定数量的记录
+                List<ConsumerRecord<K, V>> records = this.drainRecords(nextInLineRecords, recordsRemaining);
                 if (!records.isEmpty()) {
                     List<ConsumerRecord<K, V>> currentRecords = drained.get(partition);
                     if (currentRecords == null) {
                         drained.put(partition, records);
                     } else {
-                        // this case shouldn't usually happen because we only send one fetch at a time per partition,
-                        // but it might conceivably happen in some rare cases (such as partition leader changes).
-                        // we have to copy to a new list because the old one may be immutable
+                        /*
+                         * 合并同一个分区的记录（发生的概率很小）
+                         *
+                         * this case shouldn't usually happen because we only send one fetch at a time per partition,
+                         * but it might conceivably happen in some rare cases (such as partition leader changes).
+                         * we have to copy to a new list because the old one may be immutable
+                         */
                         List<ConsumerRecord<K, V>> newRecords = new ArrayList<>(records.size() + currentRecords.size());
                         newRecords.addAll(currentRecords);
                         newRecords.addAll(records);
@@ -506,38 +566,49 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
             }
         }
 
-
         return drained;
     }
 
+    /**
+     * 从当前分区记录中拉取指定数量的记录
+     *
+     * @param partitionRecords
+     * @param maxRecords
+     * @return
+     */
     private List<ConsumerRecord<K, V>> drainRecords(PartitionRecords<K, V> partitionRecords, int maxRecords) {
         if (!subscriptions.isAssigned(partitionRecords.partition)) {
             // this can happen when a rebalance happened before fetched records are returned to the consumer's poll call
+            // 当前响应的分区记录并不是订阅的
             log.debug("Not returning fetched records for partition {} since it is no longer assigned", partitionRecords.partition);
         } else {
             // note that the consumed position should always be available as long as the partition is still assigned
+            // 获取 tp 对应的下次获取消息的 offset
             long position = subscriptions.position(partitionRecords.partition);
+            // 当前 tp 不允许 fetch
             if (!subscriptions.isFetchable(partitionRecords.partition)) {
                 // this can happen when a partition is paused before fetched records are returned to the consumer's poll call
                 log.debug("Not returning fetched records for assigned partition {} since it is no longer fetchable", partitionRecords.partition);
-            } else if (partitionRecords.fetchOffset == position) {
+            }
+            // 正常响应
+            else if (partitionRecords.fetchOffset == position) {
+                // 拉取指定数量的记录，并更新相应位移
                 List<ConsumerRecord<K, V>> partRecords = partitionRecords.drainRecords(maxRecords);
                 if (!partRecords.isEmpty()) {
                     long nextOffset = partRecords.get(partRecords.size() - 1).offset() + 1;
-                    log.trace("Returning fetched records at offset {} for assigned partition {} and update " +
-                            "position to {}", position, partitionRecords.partition, nextOffset);
-
+                    log.trace("Returning fetched records at offset {} for assigned partition {} and update position to {}", position, partitionRecords.partition, nextOffset);
+                    // 更新对应 tp 的消息消费状态
                     subscriptions.position(partitionRecords.partition, nextOffset);
                 }
 
                 Long partitionLag = subscriptions.partitionLag(partitionRecords.partition);
-                if (partitionLag != null)
+                if (partitionLag != null) {
                     this.sensors.recordPartitionLag(partitionRecords.partition, partitionLag);
+                }
 
                 return partRecords;
             } else {
-                // these records aren't next in line based on the last consumed position, ignore them
-                // they must be from an obsolete request
+                // these records aren't next in line based on the last consumed position, ignore them they must be from an obsolete request
                 log.debug("Ignoring fetched records for {} at offset {} since the current position is {}",
                         partitionRecords.partition, partitionRecords.fetchOffset, position);
             }
@@ -551,7 +622,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
      * Search the offsets by target times for the specified partitions.
      *
      * @param requireTimestamps true if we should fail with an UnsupportedVersionException if the broker does
-     *                         not support fetching precise timestamps for offsets
+     * not support fetching precise timestamps for offsets
      * @param timestampsToSearch the mapping between partitions and target time
      * @return A response which can be polled to obtain the corresponding timestamps and offsets.
      */
@@ -560,8 +631,8 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
             final Map<TopicPartition, Long> timestampsToSearch) {
         // Group the partitions by node.
         final Map<Node, Map<TopicPartition, Long>> timestampsToSearchByNode = new HashMap<>();
-        for (Map.Entry<TopicPartition, Long> entry: timestampsToSearch.entrySet()) {
-            TopicPartition tp  = entry.getKey();
+        for (Map.Entry<TopicPartition, Long> entry : timestampsToSearch.entrySet()) {
+            TopicPartition tp = entry.getKey();
             PartitionInfo info = metadata.fetch().partition(tp);
             if (info == null) {
                 metadata.add(tp.topic());
@@ -591,8 +662,9 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
                         public void onSuccess(Map<TopicPartition, OffsetData> value) {
                             synchronized (listOffsetRequestsFuture) {
                                 fetchedTimestampOffsets.putAll(value);
-                                if (remainingResponses.decrementAndGet() == 0 && !listOffsetRequestsFuture.isDone())
+                                if (remainingResponses.decrementAndGet() == 0 && !listOffsetRequestsFuture.isDone()) {
                                     listOffsetRequestsFuture.complete(fetchedTimestampOffsets);
+                                }
                             }
                         }
 
@@ -600,8 +672,9 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
                         public void onFailure(RuntimeException e) {
                             synchronized (listOffsetRequestsFuture) {
                                 // This may cause all the requests to be retried, but should be rare.
-                                if (!listOffsetRequestsFuture.isDone())
+                                if (!listOffsetRequestsFuture.isDone()) {
                                     listOffsetRequestsFuture.raise(e);
+                                }
                             }
                         }
                     });
@@ -614,12 +687,12 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
      *
      * @param node The node to send the ListOffsetRequest to.
      * @param timestampsToSearch The mapping from partitions to the target timestamps.
-     * @param requireTimestamp  True if we require a timestamp in the response.
+     * @param requireTimestamp True if we require a timestamp in the response.
      * @return A response which can be polled to obtain the corresponding timestamps and offsets.
      */
     private RequestFuture<Map<TopicPartition, OffsetData>> sendListOffsetRequest(final Node node,
-                                                                                         final Map<TopicPartition, Long> timestampsToSearch,
-                                                                                         boolean requireTimestamp) {
+                                                                                 final Map<TopicPartition, Long> timestampsToSearch,
+                                                                                 boolean requireTimestamp) {
         ListOffsetRequest.Builder builder = new ListOffsetRequest.Builder().setTargetTimes(timestampsToSearch);
 
         // If we need a timestamp in the response, the minimum RPC version we can send is v1.
@@ -640,6 +713,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
 
     /**
      * Callback for the response of the list offset call above.
+     *
      * @param timestampsToSearch The mapping from partitions to target timestamps
      * @param listOffsetResponse The response from the server.
      * @param future The future to be completed by the response.
@@ -699,16 +773,25 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
                 future.raise(new StaleMetadataException());
             }
         }
-        if (!future.isDone())
+        if (!future.isDone()) {
             future.complete(timestampOffsetMap);
+        }
     }
 
+    /**
+     * 获取可以 fetch 的分区集合
+     *
+     * @return
+     */
     private List<TopicPartition> fetchablePartitions() {
         Set<TopicPartition> exclude = new HashSet<>();
+        // 获取可以 fetch 的 tp 集合
         List<TopicPartition> fetchable = subscriptions.fetchablePartitions();
+        // 对应分区存在没有消费的消息
         if (nextInLineRecords != null && !nextInLineRecords.isDrained()) {
             exclude.add(nextInLineRecords.partition);
         }
+        // 对应分区存在没有消费的消息
         for (CompletedFetch completedFetch : completedFetches) {
             exclude.add(completedFetch.partition);
         }
@@ -721,14 +804,19 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
      * that have no existing requests in flight.
      */
     private Map<Node, FetchRequest.Builder> createFetchRequests() {
-        // create the fetch info
         Cluster cluster = metadata.fetch();
+        // 记录发往对应节点的 fetch 请求信息
         Map<Node, LinkedHashMap<TopicPartition, FetchRequest.PartitionData>> fetchable = new LinkedHashMap<>();
-        for (TopicPartition partition : fetchablePartitions()) {
+        // 遍历处理可以 fetch 的分区
+        for (TopicPartition partition : this.fetchablePartitions()) {
+            // 获取当前分区 leader 副本所在的节点
             Node node = cluster.leaderFor(partition);
             if (node == null) {
+                // leader 分区位置，标记需要更新本地集群元数据信息
                 metadata.requestUpdate();
-            } else if (this.client.pendingRequestCount(node) == 0) {
+            }
+            // 如果不存在等待发往目标节点的请求，则执行 fetch
+            else if (client.pendingRequestCount(node) == 0) {
                 // if there is a leader and no in-flight requests, issue a new fetch
                 LinkedHashMap<TopicPartition, FetchRequest.PartitionData> fetch = fetchable.get(node);
                 if (fetch == null) {
@@ -736,20 +824,20 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
                     fetchable.put(node, fetch);
                 }
 
-                long position = this.subscriptions.position(partition);
-                fetch.put(partition, new FetchRequest.PartitionData(position, this.fetchSize));
+                // 获取 tp 对应的下次获取消息的 offset
+                long position = subscriptions.position(partition);
+                fetch.put(partition, new FetchRequest.PartitionData(position, fetchSize));
                 log.trace("Added fetch request for partition {} at offset {} to node {}", partition, position, node);
             } else {
                 log.trace("Skipping fetch for partition {} because there is an in-flight request to {}", partition, node);
             }
         }
 
-        // create the fetches
+        // 创建每个节点对应的 FetchRequest 对象
         Map<Node, FetchRequest.Builder> requests = new HashMap<>();
         for (Map.Entry<Node, LinkedHashMap<TopicPartition, FetchRequest.PartitionData>> entry : fetchable.entrySet()) {
             Node node = entry.getKey();
-            FetchRequest.Builder fetch = new FetchRequest.Builder(this.maxWaitMs, this.minBytes, entry.getValue()).
-                    setMaxBytes(this.maxBytes);
+            FetchRequest.Builder fetch = new FetchRequest.Builder(this.maxWaitMs, this.minBytes, entry.getValue()).setMaxBytes(this.maxBytes);
             requests.put(node, fetch);
         }
         return requests;
@@ -765,38 +853,43 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
         int bytes = 0;
         int recordsCount = 0;
         PartitionRecords<K, V> parsedRecords = null;
+        // 解析获取响应错误码
         Errors error = Errors.forCode(partition.errorCode);
-
         try {
+            // 当前 tp 不允许 fetch
             if (!subscriptions.isFetchable(tp)) {
-                // this can happen when a rebalance happened or a partition consumption paused
-                // while fetch is still in-flight
+                // this can happen when a rebalance happened or a partition consumption paused while fetch is still in-flight
                 log.debug("Ignoring fetched records for partition {} since it is no longer fetchable", tp);
-            } else if (error == Errors.NONE) {
-                // we are interested in this fetch only if the beginning offset matches the
-                // current consumed position
-                Long position = subscriptions.position(tp);
+            }
+            // 正常响应
+            else if (error == Errors.NONE) {
+                // we are interested in this fetch only if the beginning offset matches the current consumed position
+                Long position = subscriptions.position(tp); // 获取 tp 对应的下次获取消息的 offset
                 if (position == null || position != fetchOffset) {
-                    log.debug("Discarding stale fetch response for partition {} since its offset {} does not match " +
-                            "the expected offset {}", tp, fetchOffset, position);
+                    // 请求的 offset 与响应的不匹配
+                    log.debug("Discarding stale fetch response for partition {} since its offset {} does not match the expected offset {}", tp, fetchOffset, position);
                     return null;
                 }
 
                 List<ConsumerRecord<K, V>> parsed = new ArrayList<>();
                 boolean skippedRecords = false;
                 for (LogEntry logEntry : partition.records.deepEntries(decompressionBufferSupplier)) {
-                    // Skip the messages earlier than current position.
+                    // 跳过 position 位置之前的消息
                     if (logEntry.offset() >= position) {
-                        parsed.add(parseRecord(tp, logEntry));
+                        // 封装成 ConsumerRecord 对象
+                        parsed.add(this.parseRecord(tp, logEntry));
                         bytes += logEntry.sizeInBytes();
-                    } else
+                    } else {
                         skippedRecords = true;
+                    }
                 }
 
                 recordsCount = parsed.size();
 
                 log.trace("Adding fetched record for partition {} with offset {} to buffered record list", tp, position);
                 parsedRecords = new PartitionRecords<>(fetchOffset, tp, parsed);
+
+                /* 一些异常的情况处理 */
 
                 if (parsed.isEmpty() && !skippedRecords && (partition.records.sizeInBytes() > 0)) {
                     if (completedFetch.responseVersion < 3) {
@@ -806,13 +899,11 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
                                 recordTooLargePartitions + " whose size is larger than the fetch size " + this.fetchSize +
                                 " and hence cannot be returned. Please considering upgrading your broker to 0.10.1.0 or " +
                                 "newer to avoid this issue. Alternately, increase the fetch size on the client (using " +
-                                ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG + ")",
-                                recordTooLargePartitions);
+                                ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG + ")", recordTooLargePartitions);
                     } else {
                         // This should not happen with brokers that support FetchRequest/Response V3 or higher (i.e. KIP-74)
                         throw new KafkaException("Failed to make progress reading messages at " + tp + "=" +
-                            fetchOffset + ". Received a non-empty fetch response from the server, but no " +
-                            "complete records were found.");
+                                fetchOffset + ". Received a non-empty fetch response from the server, but no complete records were found.");
                     }
                 }
 
@@ -824,13 +915,11 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
                 log.debug("Error in fetch for partition {}: {}", tp, error.exceptionName());
                 this.metadata.requestUpdate();
             } else if (error == Errors.UNKNOWN_TOPIC_OR_PARTITION) {
-                log.warn("Received unknown topic or partition error in fetch for partition {}. The topic/partition " +
-                        "may not exist or the user may not have Describe access to it", tp);
+                log.warn("Received unknown topic or partition error in fetch for partition {}. The topic/partition may not exist or the user may not have Describe access to it", tp);
                 this.metadata.requestUpdate();
             } else if (error == Errors.OFFSET_OUT_OF_RANGE) {
                 if (fetchOffset != subscriptions.position(tp)) {
-                    log.debug("Discarding stale fetch response for partition {} since the fetched offset {}" +
-                            "does not match the current offset {}", tp, fetchOffset, subscriptions.position(tp));
+                    log.debug("Discarding stale fetch response for partition {} since the fetched offset {} does not match the current offset {}", tp, fetchOffset, subscriptions.position(tp));
                 } else if (subscriptions.hasDefaultOffsetResetPolicy()) {
                     log.info("Fetch offset {} is out of range for partition {}, resetting offset", fetchOffset, tp);
                     subscriptions.needOffsetReset(tp);
@@ -851,8 +940,9 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
 
         // we move the partition to the end if we received some bytes or if there was an error. This way, it's more
         // likely that partitions for the same topic can remain together (allowing for more efficient serialization).
-        if (bytes > 0 || error != Errors.NONE)
+        if (bytes > 0 || error != Errors.NONE) {
             subscriptions.movePartitionToEnd(tp);
+        }
 
         return parsedRecords;
     }
@@ -884,10 +974,10 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
             V value = valueBytes == null ? null : this.valueDeserializer.deserialize(partition.topic(), valueByteArray);
 
             return new ConsumerRecord<>(partition.topic(), partition.partition(), offset,
-                                        timestamp, timestampType, record.checksum(),
-                                        keyByteArray == null ? ConsumerRecord.NULL_SIZE : keyByteArray.length,
-                                        valueByteArray == null ? ConsumerRecord.NULL_SIZE : valueByteArray.length,
-                                        key, value);
+                    timestamp, timestampType, record.checksum(),
+                    keyByteArray == null ? ConsumerRecord.NULL_SIZE : keyByteArray.length,
+                    valueByteArray == null ? ConsumerRecord.NULL_SIZE : valueByteArray.length,
+                    key, value);
         } catch (RuntimeException e) {
             throw new SerializationException("Error deserializing key/value for partition " + partition +
                     " at offset " + logEntry.offset(), e);
@@ -899,9 +989,18 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
         sensors.updatePartitionLagSensors(assignment);
     }
 
+    /**
+     * 保存 {@link CompletedFetch} 解析后的结果
+     *
+     * @param <K>
+     * @param <V>
+     */
     private static class PartitionRecords<K, V> {
+        /** records 中第一个消息的 offset */
         private long fetchOffset;
+        /** 消息对应的 tp */
         private TopicPartition partition;
+        /** 消息集合 */
         private List<ConsumerRecord<K, V>> records;
         private int position = 0;
 
@@ -920,19 +1019,27 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
         }
 
         private List<ConsumerRecord<K, V>> drainRecords(int n) {
-            if (isDrained() || position >= records.size()) {
+            // 没有可以消费的记录，或者期望的位置已经超过已有的最大值
+            if (this.isDrained() || position >= records.size()) {
                 drain();
                 return Collections.emptyList();
             }
 
-            // using a sublist avoids a potentially expensive list copy (depending on the size of the records
-            // and the maximum we can return from poll). The cost is that we cannot mutate the returned sublist.
+            /*
+             * using a sublist avoids a potentially expensive list copy
+             * (depending on the size of the records and the maximum we can return from poll).
+             * The cost is that we cannot mutate the returned sublist.
+             */
             int limit = Math.min(records.size(), position + n);
+            // 获取一定数量的记录
             List<ConsumerRecord<K, V>> res = Collections.unmodifiableList(records.subList(position, limit));
 
+            // 更新消费位置
             position = limit;
-            if (position < records.size())
+            if (position < records.size()) {
+                // 更新第一个消息的 offset
                 fetchOffset = records.get(position).offset();
+            }
 
             return res;
         }
@@ -999,7 +1106,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
                 this.sensors.recordsFetched.record(topicFetchMetric.fetchRecords);
 
                 // also record per-topic metrics
-                for (Map.Entry<String, FetchMetrics> entry: this.topicFetchMetrics.entrySet()) {
+                for (Map.Entry<String, FetchMetrics> entry : this.topicFetchMetrics.entrySet()) {
                     FetchMetrics metric = entry.getValue();
                     this.sensors.recordTopicFetchMetrics(entry.getKey(), metric.fetchBytes, metric.fetchRecords);
                 }
@@ -1034,47 +1141,47 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
 
             this.bytesFetched = metrics.sensor("bytes-fetched");
             this.bytesFetched.add(metrics.metricName("fetch-size-avg",
-                this.metricGrpName,
-                "The average number of bytes fetched per request"), new Avg());
+                    this.metricGrpName,
+                    "The average number of bytes fetched per request"), new Avg());
             this.bytesFetched.add(metrics.metricName("fetch-size-max",
-                this.metricGrpName,
-                "The maximum number of bytes fetched per request"), new Max());
+                    this.metricGrpName,
+                    "The maximum number of bytes fetched per request"), new Max());
             this.bytesFetched.add(metrics.metricName("bytes-consumed-rate",
-                this.metricGrpName,
-                "The average number of bytes consumed per second"), new Rate());
+                    this.metricGrpName,
+                    "The average number of bytes consumed per second"), new Rate());
 
             this.recordsFetched = metrics.sensor("records-fetched");
             this.recordsFetched.add(metrics.metricName("records-per-request-avg",
-                this.metricGrpName,
-                "The average number of records in each request"), new Avg());
+                    this.metricGrpName,
+                    "The average number of records in each request"), new Avg());
             this.recordsFetched.add(metrics.metricName("records-consumed-rate",
-                this.metricGrpName,
-                "The average number of records consumed per second"), new Rate());
+                    this.metricGrpName,
+                    "The average number of records consumed per second"), new Rate());
 
             this.fetchLatency = metrics.sensor("fetch-latency");
             this.fetchLatency.add(metrics.metricName("fetch-latency-avg",
-                this.metricGrpName,
-                "The average time taken for a fetch request."), new Avg());
+                    this.metricGrpName,
+                    "The average time taken for a fetch request."), new Avg());
             this.fetchLatency.add(metrics.metricName("fetch-latency-max",
-                this.metricGrpName,
-                "The max time taken for any fetch request."), new Max());
+                    this.metricGrpName,
+                    "The max time taken for any fetch request."), new Max());
             this.fetchLatency.add(metrics.metricName("fetch-rate",
-                this.metricGrpName,
-                "The number of fetch requests per second."), new Rate(new Count()));
+                    this.metricGrpName,
+                    "The number of fetch requests per second."), new Rate(new Count()));
 
             this.recordsFetchLag = metrics.sensor("records-lag");
             this.recordsFetchLag.add(metrics.metricName("records-lag-max",
-                this.metricGrpName,
-                "The maximum lag in terms of number of records for any partition in this window"), new Max());
+                    this.metricGrpName,
+                    "The maximum lag in terms of number of records for any partition in this window"), new Max());
 
             this.fetchThrottleTimeSensor = metrics.sensor("fetch-throttle-time");
             this.fetchThrottleTimeSensor.add(metrics.metricName("fetch-throttle-time-avg",
-                                                         this.metricGrpName,
-                                                         "The average throttle time in ms"), new Avg());
+                    this.metricGrpName,
+                    "The average throttle time in ms"), new Avg());
 
             this.fetchThrottleTimeSensor.add(metrics.metricName("fetch-throttle-time-max",
-                                                         this.metricGrpName,
-                                                         "The maximum throttle time in ms"), new Max());
+                    this.metricGrpName,
+                    "The maximum throttle time in ms"), new Max());
         }
 
         private void recordTopicFetchMetrics(String topic, int bytes, int records) {
@@ -1123,8 +1230,9 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
         private void updatePartitionLagSensors(Set<TopicPartition> assignedPartitions) {
             if (this.assignedPartitions != null) {
                 for (TopicPartition tp : this.assignedPartitions) {
-                    if (!assignedPartitions.contains(tp))
+                    if (!assignedPartitions.contains(tp)) {
                         metrics.removeSensor(partitionLagMetricName(tp));
+                    }
                 }
             }
             this.assignedPartitions = assignedPartitions;
@@ -1138,7 +1246,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
             if (recordsLag == null) {
                 recordsLag = this.metrics.sensor(name);
                 recordsLag.add(this.metrics.metricName(name, this.metricGrpName, "The latest lag of the partition"),
-                               new Value());
+                        new Value());
                 recordsLag.add(this.metrics.metricName(name + "-max",
                         this.metricGrpName,
                         "The max lag of the partition"), new Max());

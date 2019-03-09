@@ -10,6 +10,7 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.common.requests;
 
 import org.apache.kafka.common.TopicPartition;
@@ -28,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 
 public class OffsetFetchRequest extends AbstractRequest {
+
     private static final String GROUP_ID_KEY_NAME = "group_id";
     private static final String TOPICS_KEY_NAME = "topics";
 
@@ -59,9 +61,10 @@ public class OffsetFetchRequest extends AbstractRequest {
 
         @Override
         public OffsetFetchRequest build() {
-            if (isAllTopicPartitions() && version() < 2)
+            if (isAllTopicPartitions() && version() < 2) {
                 throw new UnsupportedVersionException("The broker only supports OffsetFetchRequest " +
                         "v" + version() + ", but we need v2 or newer to request all topic partitions.");
+            }
             return new OffsetFetchRequest(groupId, partitions, version());
         }
 
@@ -76,7 +79,10 @@ public class OffsetFetchRequest extends AbstractRequest {
         }
     }
 
+    /** group id */
     private final String groupId;
+
+    /** 需要拉取最近提交的 offset 的 tp 集合 */
     private final List<TopicPartition> partitions;
 
     public static OffsetFetchRequest forAllPartitions(String groupId) {
@@ -104,8 +110,9 @@ public class OffsetFetchRequest extends AbstractRequest {
                 topicArray.add(topicData);
             }
             struct.set(TOPICS_KEY_NAME, topicArray.toArray());
-        } else
+        } else {
             struct.set(TOPICS_KEY_NAME, null);
+        }
 
         this.groupId = groupId;
         this.partitions = partitions;
@@ -126,9 +133,9 @@ public class OffsetFetchRequest extends AbstractRequest {
                     partitions.add(new TopicPartition(topic, partition));
                 }
             }
-        } else
+        } else {
             partitions = null;
-
+        }
 
         groupId = struct.getString(GROUP_ID_KEY_NAME);
     }

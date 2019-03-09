@@ -10,13 +10,8 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
-package org.apache.kafka.common.requests;
 
-import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+package org.apache.kafka.common.requests;
 
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.protocol.ApiKeys;
@@ -26,7 +21,14 @@ import org.apache.kafka.common.protocol.types.Struct;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.utils.Utils;
 
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
 public class FetchRequest extends AbstractRequest {
+
     public static final int CONSUMER_REPLICA_ID = -1;
     private static final String REPLICA_ID_KEY_NAME = "replica_id";
     private static final String MAX_WAIT_KEY_NAME = "max_wait_time";
@@ -47,10 +49,15 @@ public class FetchRequest extends AbstractRequest {
     // default values for older versions where a request level limit did not exist
     public static final int DEFAULT_RESPONSE_MAX_BYTES = Integer.MAX_VALUE;
 
+    /** 用于标识 follower，消费者和分区 follower 都会从 leader 分区拉取消息，区别在于 consumer 的该字段是 -1 */
     private final int replicaId;
+    /** 请求最大等待时间 */
     private final int maxWait;
+    /** 每次 fetch 的最小字节数 */
     private final int minBytes;
+    /** 每次 fetch 的最大字节数 */
     private final int maxBytes;
+    /** 每个 tp 对应的 offset 和 maxBytes */
     private final LinkedHashMap<TopicPartition, PartitionData> fetchData;
 
     public static final class PartitionData {
@@ -83,8 +90,9 @@ public class FetchRequest extends AbstractRequest {
                 String topic = topicEntry.getKey().topic();
                 int partition = topicEntry.getKey().partition();
                 T partitionData = topicEntry.getValue();
-                if (topics.isEmpty() || !topics.get(topics.size() - 1).topic.equals(topic))
+                if (topics.isEmpty() || !topics.get(topics.size() - 1).topic.equals(topic)) {
                     topics.add(new TopicAndPartitionData<T>(topic));
+                }
                 topics.get(topics.size() - 1).partitions.put(partition, partitionData);
             }
             return topics;
@@ -157,8 +165,9 @@ public class FetchRequest extends AbstractRequest {
         struct.set(REPLICA_ID_KEY_NAME, replicaId);
         struct.set(MAX_WAIT_KEY_NAME, maxWait);
         struct.set(MIN_BYTES_KEY_NAME, minBytes);
-        if (version >= 3)
+        if (version >= 3) {
             struct.set(MAX_BYTES_KEY_NAME, maxBytes);
+        }
         List<Struct> topicArray = new ArrayList<>();
         for (TopicAndPartitionData<PartitionData> topicEntry : topicsData) {
             Struct topicData = struct.instance(TOPICS_KEY_NAME);
@@ -188,10 +197,11 @@ public class FetchRequest extends AbstractRequest {
         replicaId = struct.getInt(REPLICA_ID_KEY_NAME);
         maxWait = struct.getInt(MAX_WAIT_KEY_NAME);
         minBytes = struct.getInt(MIN_BYTES_KEY_NAME);
-        if (struct.hasField(MAX_BYTES_KEY_NAME))
+        if (struct.hasField(MAX_BYTES_KEY_NAME)) {
             maxBytes = struct.getInt(MAX_BYTES_KEY_NAME);
-        else
+        } else {
             maxBytes = DEFAULT_RESPONSE_MAX_BYTES;
+        }
         fetchData = new LinkedHashMap<>();
         for (Object topicResponseObj : struct.getArray(TOPICS_KEY_NAME)) {
             Struct topicResponse = (Struct) topicResponseObj;
@@ -211,7 +221,7 @@ public class FetchRequest extends AbstractRequest {
     public AbstractResponse getErrorResponse(Throwable e) {
         LinkedHashMap<TopicPartition, FetchResponse.PartitionData> responseData = new LinkedHashMap<>();
 
-        for (Map.Entry<TopicPartition, PartitionData> entry: fetchData.entrySet()) {
+        for (Map.Entry<TopicPartition, PartitionData> entry : fetchData.entrySet()) {
             FetchResponse.PartitionData partitionResponse = new FetchResponse.PartitionData(Errors.forException(e).code(),
                     FetchResponse.INVALID_HIGHWATERMARK, MemoryRecords.EMPTY);
 
