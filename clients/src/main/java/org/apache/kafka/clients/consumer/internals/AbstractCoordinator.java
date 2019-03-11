@@ -824,17 +824,16 @@ public abstract class AbstractCoordinator implements Closeable {
      */
     public synchronized void maybeLeaveGroup() {
         if (!coordinatorUnknown() && state != MemberState.UNJOINED && generation != Generation.NO_GENERATION) {
-            // this is a minimal effort attempt to leave the group. we do not
-            // attempt any resending if the request fails or times out.
+            // this is a minimal effort attempt to leave the group.
+            // we do not attempt any resending if the request fails or times out.
             log.debug("Sending LeaveGroup request to coordinator {} for group {}", coordinator, groupId);
-            LeaveGroupRequest.Builder request =
-                    new LeaveGroupRequest.Builder(groupId, generation.memberId);
-            client.send(coordinator, request)
-                    .compose(new LeaveGroupResponseHandler());
+            // 构建并发送 LeaveGroupRequest 请求
+            LeaveGroupRequest.Builder request = new LeaveGroupRequest.Builder(groupId, generation.memberId);
+            client.send(coordinator, request).compose(new LeaveGroupResponseHandler());
             client.pollNoWakeup();
         }
-
-        resetGeneration();
+        // 重置年代信息
+        this.resetGeneration();
     }
 
     private class LeaveGroupResponseHandler extends CoordinatorResponseHandler<LeaveGroupResponse, Void> {

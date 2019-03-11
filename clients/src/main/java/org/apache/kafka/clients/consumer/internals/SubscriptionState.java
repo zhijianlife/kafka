@@ -137,7 +137,7 @@ public class SubscriptionState {
             // NONE 表示没有设置过，设置为目标模式
             this.subscriptionType = type;
         } else if (this.subscriptionType != type) {
-            // 如果之前设置过，且当前模式不是之前的模式，则抛出异常
+            // 如果之前设置过，且目标模式不是之前的模式，则抛出异常
             throw new IllegalStateException(SUBSCRIPTION_EXCEPTION_MESSAGE);
         }
     }
@@ -281,9 +281,13 @@ public class SubscriptionState {
     }
 
     public void unsubscribe() {
+        // 情况当前订阅的 topic
         this.subscription = Collections.emptySet();
+        // 清空记录每个 TP 的消费状态
         this.assignment.clear();
+        // 重置订阅正则模式
         this.subscribedPattern = null;
+        // 重置订阅类型
         this.subscriptionType = SubscriptionType.NONE;
         fireOnAssignment(Collections.<TopicPartition>emptySet());
     }
