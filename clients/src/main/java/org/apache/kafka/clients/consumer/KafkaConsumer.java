@@ -1088,12 +1088,16 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      * @return The fetched records (may be empty)
      */
     private Map<TopicPartition, List<ConsumerRecord<K, V>>> pollOnce(long timeout) {
-        // 执行 rebalance，以及定期提交 offset
+        // 执行再平衡策略，以及异步提交 offset
         coordinator.poll(time.milliseconds());
 
-        // fetch positions if we have partitions we're subscribed to that we don't know the offset for
         if (!subscriptions.hasAllFetchPositions()) {
-            // 如果存在没有分配 position 值的 tp，则需要进行更新
+            /*
+             * 如果存在没有分配 offset 的 topic 分区，则进行更新：
+             * 1. 基于重置策略
+             * 2. 基于最近一次提交的 offset
+             * 3. 基于自动重置策略
+             */
             this.updateFetchPositions(subscriptions.missingFetchPositions());
         }
 
@@ -1103,13 +1107,11 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             return records;
         }
 
-        // 创建并缓存 fetch 请求
+        // 创建 FetchRequest 请求
         fetcher.sendFetches();
-
         long now = time.milliseconds();
         long pollTimeout = Math.min(coordinator.timeToNextPoll(now), timeout);
-
-        // 发送 fetch 请求
+        // 发送 FetchRequest 请求
         client.poll(pollTimeout, now, new PollCondition() {
             @Override
             public boolean shouldBlock() {
@@ -1119,13 +1121,12 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             }
         });
 
-        // after the long poll, we should check whether the group needs to rebalance
-        // prior to returning data so that the group can stabilize faster
+        // 检查是否需要执行再平衡，如果是则返回空的结果，以保证尽快执行再平衡
         if (coordinator.needRejoin()) {
             return Collections.emptyMap();
         }
 
-        // 获取 fetch 请求返回的消息
+        // 获取 FetchRequest 请求返回的消息
         return fetcher.fetchedRecords();
     }
 
@@ -1657,24 +1658,17 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      * or reset it using the offset reset policy the user has configured.
      *
      * @param partitions The partitions that needs updating fetch positions
-     * @throws NoOffsetForPartitionException If no offset is stored for a given partition and no offset reset policy is
-     *                                       defined
+     * @throws NoOffsetForPartitionException If no offset is stored for a given partition and no offset reset policy is  defined
      */
     private void updateFetchPositions(Set<TopicPartition> partitions) {
-        // lookup any positions for partitions which are awaiting reset (which may be the
-        // case if the user called seekToBeginning or seekToEnd. We do this check first to
-        // avoid an unnecessary lookup of committed offsets (which typically occurs when
-        // the user is manually assigning partitions and managing their own offsets).
+        // 对于需要重置 offset 的分区，请求分区 leader 节点获取对应的 offset 值
         fetcher.resetOffsetsIfNeeded(partitions);
 
+        // 如果仍然存在没有分配 offset 的分区
         if (!subscriptions.hasAllFetchPositions(partitions)) {
-            // if we still don't have offsets for the given partitions, then we should either
-            // seek to the last committed position or reset using the auto reset policy
-
-            // first refresh commits for all assigned partitions
+            // 如果需要从 GroupCoordinator 获取上次提交的 offset，则请求获取并更新
             coordinator.refreshCommittedOffsetsIfNeeded();
-
-            // then do any offset lookups in case some positions are not known
+            // 再次尝试对未分配 offset 的分区进行更新
             fetcher.updateFetchPositions(partitions);
         }
     }

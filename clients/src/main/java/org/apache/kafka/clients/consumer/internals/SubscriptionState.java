@@ -325,6 +325,12 @@ public class SubscriptionState {
         return this.groupSubscription;
     }
 
+    /**
+     * 获取 TP 对应的 {@link TopicPartitionState}
+     *
+     * @param tp
+     * @return
+     */
     private TopicPartitionState assignedState(TopicPartition tp) {
         // 获取 tp 对应的 TopicPartitionState
         TopicPartitionState state = assignment.stateValue(tp);
@@ -424,25 +430,36 @@ public class SubscriptionState {
     }
 
     public boolean isOffsetResetNeeded(TopicPartition partition) {
-        return assignedState(partition).awaitingReset();
+        return this.assignedState(partition).awaitingReset();
     }
 
     public OffsetResetStrategy resetStrategy(TopicPartition partition) {
         return assignedState(partition).resetStrategy;
     }
 
+    /**
+     * 遍历校验输入的 TP 是否都记录了对应的 offset
+     *
+     * @param partitions
+     * @return
+     */
     public boolean hasAllFetchPositions(Collection<TopicPartition> partitions) {
         for (TopicPartition partition : partitions)
-            if (!hasValidPosition(partition)) {
+            if (!this.hasValidPosition(partition)) {
                 return false;
             }
         return true;
     }
 
     public boolean hasAllFetchPositions() {
-        return hasAllFetchPositions(this.assignedPartitions());
+        return this.hasAllFetchPositions(this.assignedPartitions());
     }
 
+    /**
+     * 获取所有缺失 offset 记录的 TP
+     *
+     * @return
+     */
     public Set<TopicPartition> missingFetchPositions() {
         Set<TopicPartition> missing = new HashSet<>();
         for (PartitionStates.PartitionState<TopicPartitionState> state : assignment.partitionStates()) {

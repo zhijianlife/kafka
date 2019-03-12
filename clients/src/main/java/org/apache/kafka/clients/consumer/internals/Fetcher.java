@@ -241,13 +241,17 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
     /**
      * Lookup and set offsets for any partitions which are awaiting an explicit reset.
      *
+     * 遍历处理入参中的 TP，如果对应 TP 有设置重置策略 {@link OffsetResetStrategy}，则执行重置
+     *
      * @param partitions the partitions to reset
      */
     public void resetOffsetsIfNeeded(Set<TopicPartition> partitions) {
         for (TopicPartition tp : partitions) {
             // TODO: If there are several offsets to reset, we could submit offset requests in parallel
+            // 如果当前 TP 指定需要重置 offset
             if (subscriptions.isAssigned(tp) && subscriptions.isOffsetResetNeeded(tp)) {
-                resetOffset(tp);
+                // 基于设定的重置策略，重置当前分区的 offset
+                this.resetOffset(tp);
             }
         }
     }
@@ -271,7 +275,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
                 // 按照指定的策略对 offset 进行重置
                 this.resetOffset(tp);
             }
-            // 如果对应 tp 最近一次提交的 offset 为空
+            // 如果对应 TP 最近一次提交的 offset 为空
             else if (subscriptions.committed(tp) == null) {
                 // there's no committed position, so we need to reset with the default strategy
                 subscriptions.needOffsetReset(tp);
@@ -396,11 +400,13 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
     /**
      * Reset offsets for the given partition using the offset reset strategy.
      *
+     * 基于设定的重置策略，重置当前分区的 offset
+     *
      * @param partition The given partition that needs reset offset
      * @throws org.apache.kafka.clients.consumer.NoOffsetForPartitionException If no offset reset strategy is defined
      */
     private void resetOffset(TopicPartition partition) {
-        // 获取重置 offset 的策略，如果为空则表示不需要重置
+        // 获取 TP 对应的重置 offset 的策略，如果为空则表示不需要重置
         OffsetResetStrategy strategy = subscriptions.resetStrategy(partition);
         log.debug("Resetting offset for partition {} to {} offset.", partition, strategy.name().toLowerCase(Locale.ROOT));
         final long timestamp;
@@ -411,6 +417,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
         } else {
             throw new NoOffsetForPartitionException(partition);
         }
+        // 请求 TP 对应的 leader 节点，以获取对应的 offset
         Map<TopicPartition, OffsetData> offsetsByTimes = this.retrieveOffsetsByTimes(
                 Collections.singletonMap(partition, timestamp), Long.MAX_VALUE, false);
         OffsetData offsetData = offsetsByTimes.get(partition);
@@ -420,13 +427,12 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
         long offset = offsetData.offset;
         // we might lose the assignment while fetching the offset, so check it is still active
         if (subscriptions.isAssigned(partition)) {
-            // 更新下次获取消息的 offset
+            // 更新下次获取消息的 offset，并清空重置策略
             this.subscriptions.seek(partition, offset);
         }
     }
 
-    public Map<TopicPartition, OffsetAndTimestamp> getOffsetsByTimes(Map<TopicPartition, Long> timestampsToSearch,
-                                                                     long timeout) {
+    public Map<TopicPartition, OffsetAndTimestamp> getOffsetsByTimes(Map<TopicPartition, Long> timestampsToSearch, long timeout) {
         Map<TopicPartition, OffsetData> offsetData = retrieveOffsetsByTimes(timestampsToSearch, timeout, true);
         HashMap<TopicPartition, OffsetAndTimestamp> offsetsByTimes = new HashMap<>(offsetData.size());
         for (Map.Entry<TopicPartition, OffsetData> entry : offsetData.entrySet()) {
@@ -450,7 +456,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
         long remaining = timeout;
         do {
             RequestFuture<Map<TopicPartition, OffsetData>> future =
-                    sendListOffsetRequests(requireTimestamps, timestampsToSearch);
+                    this.sendListOffsetRequests(requireTimestamps, timestampsToSearch);
             client.poll(future, remaining);
 
             if (!future.isDone()) {
@@ -519,6 +525,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
             ExceptionMetadata exceptionMetadata = nextInLineExceptionMetadata;
             nextInLineExceptionMetadata = null;
             TopicPartition tp = exceptionMetadata.partition;
+            // 如果当前消费者处于运行状态，且知道下次获取消息 offset，但是获取对应 offset 发生异常，则直接抛出
             if (subscriptions.isFetchable(tp) && subscriptions.position(tp) == exceptionMetadata.fetchedOffset) {
                 throw exceptionMetadata.exception;
             }
@@ -627,21 +634,25 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
      * @return A response which can be polled to obtain the corresponding timestamps and offsets.
      */
     private RequestFuture<Map<TopicPartition, OffsetData>> sendListOffsetRequests(
-            final boolean requireTimestamps,
-            final Map<TopicPartition, Long> timestampsToSearch) {
-        // Group the partitions by node.
+            final boolean requireTimestamps, final Map<TopicPartition, Long> timestampsToSearch) {
+        // 按照节点重新组织
         final Map<Node, Map<TopicPartition, Long>> timestampsToSearchByNode = new HashMap<>();
         for (Map.Entry<TopicPartition, Long> entry : timestampsToSearch.entrySet()) {
             TopicPartition tp = entry.getKey();
+            // 获取分区详细信息
             PartitionInfo info = metadata.fetch().partition(tp);
+            // 当前 topic 是新加入的，标记需要更新集群元数据信息
             if (info == null) {
                 metadata.add(tp.topic());
                 log.debug("Partition {} is unknown for fetching offset, wait for metadata refresh", tp);
                 return RequestFuture.staleMetadata();
-            } else if (info.leader() == null) {
+            }
+            // 当前 TP 未知 leader 分区
+            else if (info.leader() == null) {
                 log.debug("Leader for partition {} unavailable for fetching offset, wait for metadata refresh", tp);
                 return RequestFuture.leaderNotAvailable();
             } else {
+                // 获取 leader 分区所在节点
                 Node node = info.leader();
                 Map<TopicPartition, Long> topicData = timestampsToSearchByNode.get(node);
                 if (topicData == null) {
@@ -656,7 +667,8 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
         final Map<TopicPartition, OffsetData> fetchedTimestampOffsets = new HashMap<>();
         final AtomicInteger remainingResponses = new AtomicInteger(timestampsToSearchByNode.size());
         for (Map.Entry<Node, Map<TopicPartition, Long>> entry : timestampsToSearchByNode.entrySet()) {
-            sendListOffsetRequest(entry.getKey(), entry.getValue(), requireTimestamps)
+            // 创建并发送 ListOffsetRequest 请求到目标节点，以获取对应的 offset
+            this.sendListOffsetRequest(entry.getKey(), entry.getValue(), requireTimestamps)
                     .addListener(new RequestFutureListener<Map<TopicPartition, OffsetData>>() {
                         @Override
                         public void onSuccess(Map<TopicPartition, OffsetData> value) {
@@ -695,8 +707,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
                                                                                  boolean requireTimestamp) {
         ListOffsetRequest.Builder builder = new ListOffsetRequest.Builder().setTargetTimes(timestampsToSearch);
 
-        // If we need a timestamp in the response, the minimum RPC version we can send is v1.
-        // Otherwise, v0 is OK.
+        // If we need a timestamp in the response, the minimum RPC version we can send is v1. Otherwise, v0 is OK.
         builder.setMinVersion(requireTimestamp ? (short) 1 : (short) 0);
 
         log.trace("Sending ListOffsetRequest {} to broker {}", builder, node);
@@ -706,6 +717,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
                     public void onSuccess(ClientResponse response, RequestFuture<Map<TopicPartition, OffsetData>> future) {
                         ListOffsetResponse lor = (ListOffsetResponse) response.responseBody();
                         log.trace("Received ListOffsetResponse {} from broker {}", lor, node);
+                        // 处理响应
                         handleListOffsetResponse(timestampsToSearch, lor, future);
                     }
                 });
@@ -725,31 +737,31 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
         Map<TopicPartition, OffsetData> timestampOffsetMap = new HashMap<>();
         for (Map.Entry<TopicPartition, Long> entry : timestampsToSearch.entrySet()) {
             TopicPartition topicPartition = entry.getKey();
+            // 获取 TP 对应的响应
             ListOffsetResponse.PartitionData partitionData = listOffsetResponse.responseData().get(topicPartition);
+            // 解析响应错误码
             Errors error = Errors.forCode(partitionData.errorCode);
+            // 正常响应
             if (error == Errors.NONE) {
                 if (partitionData.offsets != null) {
                     // Handle v0 response
                     long offset;
                     if (partitionData.offsets.size() > 1) {
-                        future.raise(new IllegalStateException("Unexpected partitionData response of length " +
-                                partitionData.offsets.size()));
+                        future.raise(new IllegalStateException("Unexpected partitionData response of length " + partitionData.offsets.size()));
                         return;
                     } else if (partitionData.offsets.isEmpty()) {
                         offset = ListOffsetResponse.UNKNOWN_OFFSET;
                     } else {
                         offset = partitionData.offsets.get(0);
                     }
-                    log.debug("Handling v0 ListOffsetResponse response for {}. Fetched offset {}",
-                            topicPartition, offset);
+                    log.debug("Handling v0 ListOffsetResponse response for {}. Fetched offset {}", topicPartition, offset);
                     if (offset != ListOffsetResponse.UNKNOWN_OFFSET) {
                         OffsetData offsetData = new OffsetData(offset, null);
                         timestampOffsetMap.put(topicPartition, offsetData);
                     }
                 } else {
                     // Handle v1 and later response
-                    log.debug("Handling ListOffsetResponse response for {}. Fetched offset {}, timestamp {}",
-                            topicPartition, partitionData.offset, partitionData.timestamp);
+                    log.debug("Handling ListOffsetResponse response for {}. Fetched offset {}, timestamp {}", topicPartition, partitionData.offset, partitionData.timestamp);
                     if (partitionData.offset != ListOffsetResponse.UNKNOWN_OFFSET) {
                         OffsetData offsetData = new OffsetData(partitionData.offset, partitionData.timestamp);
                         timestampOffsetMap.put(topicPartition, offsetData);
@@ -757,12 +769,10 @@ public class Fetcher<K, V> implements SubscriptionState.Listener {
                 }
             } else if (error == Errors.UNSUPPORTED_FOR_MESSAGE_FORMAT) {
                 // The message format on the broker side is before 0.10.0, we simply put null in the response.
-                log.debug("Cannot search by timestamp for partition {} because the message format version " +
-                        "is before 0.10.0", topicPartition);
+                log.debug("Cannot search by timestamp for partition {} because the message format version is before 0.10.0", topicPartition);
                 timestampOffsetMap.put(topicPartition, null);
             } else if (error == Errors.NOT_LEADER_FOR_PARTITION) {
-                log.debug("Attempt to fetch offsets for partition {} failed due to obsolete leadership information, retrying.",
-                        topicPartition);
+                log.debug("Attempt to fetch offsets for partition {} failed due to obsolete leadership information, retrying.", topicPartition);
                 future.raise(error);
             } else if (error == Errors.UNKNOWN_TOPIC_OR_PARTITION) {
                 log.warn("Received unknown topic or partition error in ListOffset request for partition {}. The topic/partition " +

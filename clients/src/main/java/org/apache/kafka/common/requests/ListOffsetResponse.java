@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.kafka.common.requests;
 
 import org.apache.kafka.common.TopicPartition;
@@ -31,9 +32,10 @@ import java.util.List;
 import java.util.Map;
 
 public class ListOffsetResponse extends AbstractResponse {
+
     public static final long UNKNOWN_TIMESTAMP = -1L;
     public static final long UNKNOWN_OFFSET = -1L;
-    
+
     private static final Schema CURRENT_SCHEMA = ProtoUtils.currentResponseSchema(ApiKeys.LIST_OFFSETS.id);
     private static final String RESPONSES_KEY_NAME = "responses";
 
@@ -48,10 +50,10 @@ public class ListOffsetResponse extends AbstractResponse {
     /**
      * Possible error code:
      *
-     *  UNKNOWN_TOPIC_OR_PARTITION (3)
-     *  NOT_LEADER_FOR_PARTITION (6)
-     *  UNSUPPORTED_FOR_MESSAGE_FORMAT (43)
-     *  UNKNOWN (-1)
+     * UNKNOWN_TOPIC_OR_PARTITION (3)
+     * NOT_LEADER_FOR_PARTITION (6)
+     * UNSUPPORTED_FOR_MESSAGE_FORMAT (43)
+     * UNKNOWN (-1)
      */
 
     // This key is only used by ListOffsetResponse v0
@@ -95,10 +97,10 @@ public class ListOffsetResponse extends AbstractResponse {
         public String toString() {
             StringBuilder bld = new StringBuilder();
             bld.append("PartitionData{").
-                append("errorCode: ").append((int) errorCode).
-                append(", timestamp: ").append(timestamp).
-                append(", offset: ").append(offset).
-                append(", offsets: ");
+                    append("errorCode: ").append((int) errorCode).
+                    append(", timestamp: ").append(timestamp).
+                    append(", offset: ").append(offset).
+                    append(", offsets: ");
             if (offsets == null) {
                 bld.append(offsets);
             } else {
@@ -122,7 +124,7 @@ public class ListOffsetResponse extends AbstractResponse {
         Map<String, Map<Integer, PartitionData>> topicsData = CollectionUtils.groupDataByTopic(responseData);
 
         List<Struct> topicArray = new ArrayList<Struct>();
-        for (Map.Entry<String, Map<Integer, PartitionData>> topicEntry: topicsData.entrySet()) {
+        for (Map.Entry<String, Map<Integer, PartitionData>> topicEntry : topicsData.entrySet()) {
             Struct topicData = struct.instance(RESPONSES_KEY_NAME);
             topicData.set(TOPIC_KEY_NAME, topicEntry.getKey());
             List<Struct> partitionArray = new ArrayList<Struct>();
@@ -131,9 +133,9 @@ public class ListOffsetResponse extends AbstractResponse {
                 Struct partitionData = topicData.instance(PARTITIONS_KEY_NAME);
                 partitionData.set(PARTITION_KEY_NAME, partitionEntry.getKey());
                 partitionData.set(ERROR_CODE_KEY_NAME, offsetPartitionData.errorCode);
-                if (version == 0)
+                if (version == 0) {
                     partitionData.set(OFFSETS_KEY_NAME, offsetPartitionData.offsets.toArray());
-                else {
+                } else {
                     partitionData.set(TIMESTAMP_KEY_NAME, offsetPartitionData.timestamp);
                     partitionData.set(OFFSET_KEY_NAME, offsetPartitionData.offset);
                 }

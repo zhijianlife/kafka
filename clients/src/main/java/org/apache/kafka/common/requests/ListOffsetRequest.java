@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.kafka.common.requests;
 
 import org.apache.kafka.common.TopicPartition;
@@ -35,6 +36,7 @@ import java.util.Map;
 import java.util.Set;
 
 public class ListOffsetRequest extends AbstractRequest {
+
     public static final long EARLIEST_TIMESTAMP = -2L;
     public static final long LATEST_TIMESTAMP = -1L;
 
@@ -88,16 +90,16 @@ public class ListOffsetRequest extends AbstractRequest {
             short version = version();
             if (version < minVersion) {
                 throw new UnsupportedVersionException("Cannot create a v" + version + " ListOffsetRequest because " +
-                    "we require features supported only in " + minVersion + " or later.");
+                        "we require features supported only in " + minVersion + " or later.");
             }
             if (version == 0) {
                 if (offsetData == null) {
                     if (partitionTimestamps == null) {
                         throw new RuntimeException("Must set partitionTimestamps or offsetData when creating a v0 " +
-                            "ListOffsetRequest");
+                                "ListOffsetRequest");
                     } else {
                         offsetData = new HashMap<>();
-                        for (Map.Entry<TopicPartition, Long> entry: partitionTimestamps.entrySet()) {
+                        for (Map.Entry<TopicPartition, Long> entry : partitionTimestamps.entrySet()) {
                             offsetData.put(entry.getKey(),
                                     new PartitionData(entry.getValue(), 1));
                         }
@@ -107,13 +109,13 @@ public class ListOffsetRequest extends AbstractRequest {
             } else {
                 if (offsetData != null) {
                     throw new RuntimeException("Cannot create a v" + version + " ListOffsetRequest with v0 " +
-                        "PartitionData.");
+                            "PartitionData.");
                 } else if (partitionTimestamps == null) {
                     throw new RuntimeException("Must set partitionTimestamps when creating a v" +
                             version + " ListOffsetRequest");
                 }
             }
-            Map<TopicPartition, ?> m = (version == 0) ?  offsetData : partitionTimestamps;
+            Map<TopicPartition, ?> m = (version == 0) ? offsetData : partitionTimestamps;
             return new ListOffsetRequest(replicaId, m, version);
         }
 
@@ -129,7 +131,7 @@ public class ListOffsetRequest extends AbstractRequest {
         public String toString() {
             StringBuilder bld = new StringBuilder();
             bld.append("(type=ListOffsetRequest")
-               .append(", replicaId=").append(replicaId);
+                    .append(", replicaId=").append(replicaId);
             if (offsetData != null) {
                 bld.append(", offsetData=").append(Utils.mkString(offsetData));
             }
@@ -159,8 +161,8 @@ public class ListOffsetRequest extends AbstractRequest {
         public String toString() {
             StringBuilder bld = new StringBuilder();
             bld.append("{timestamp: ").append(timestamp).
-                append(", maxNumOffsets: ").append(maxNumOffsets).
-                append("}");
+                    append(", maxNumOffsets: ").append(maxNumOffsets).
+                    append("}");
             return bld.toString();
         }
     }
@@ -176,7 +178,7 @@ public class ListOffsetRequest extends AbstractRequest {
 
         struct.set(REPLICA_ID_KEY_NAME, replicaId);
         List<Struct> topicArray = new ArrayList<Struct>();
-        for (Map.Entry<String, Map<Integer, Object>> topicEntry: topicsData.entrySet()) {
+        for (Map.Entry<String, Map<Integer, Object>> topicEntry : topicsData.entrySet()) {
             Struct topicData = struct.instance(TOPICS_KEY_NAME);
             topicData.set(TOPIC_KEY_NAME, topicEntry.getKey());
             List<Struct> partitionArray = new ArrayList<>();
@@ -225,8 +227,9 @@ public class ListOffsetRequest extends AbstractRequest {
                     PartitionData partitionData = new PartitionData(timestamp, maxNumOffsets);
                     offsetData.put(tp, partitionData);
                 } else {
-                    if (partitionTimestamps.put(tp, timestamp) != null)
+                    if (partitionTimestamps.put(tp, timestamp) != null) {
                         duplicatePartitions.add(tp);
+                    }
                 }
             }
         }

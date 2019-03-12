@@ -517,9 +517,8 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     public void refreshCommittedOffsetsIfNeeded() {
         // 如果需要从 GroupCoordinator 获取最近提交的 offset
         if (subscriptions.refreshCommitsNeeded()) {
-            // 请求获取指定分区上次提交的 offset 信息
-            Map<TopicPartition, OffsetAndMetadata> offsets =
-                    this.fetchCommittedOffsets(subscriptions.assignedPartitions());
+            // 请求获取分区上次提交的 offset 信息
+            Map<TopicPartition, OffsetAndMetadata> offsets = this.fetchCommittedOffsets(subscriptions.assignedPartitions());
             for (Map.Entry<TopicPartition, OffsetAndMetadata> entry : offsets.entrySet()) {
                 TopicPartition tp = entry.getKey();
                 // verify assignment is still active
