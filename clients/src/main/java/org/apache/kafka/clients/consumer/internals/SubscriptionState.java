@@ -87,7 +87,7 @@ public class SubscriptionState {
     private final Set<String> groupSubscription;
 
     /**
-     * 记录每个 TopicPartition 的消费状态
+     * 记录分配给当前消费者的每个 TopicPartition 的消费状态
      *
      * the partitions that are currently assigned, note that the order of partition matters (see FetchBuilder for more details)
      */
@@ -422,7 +422,7 @@ public class SubscriptionState {
     }
 
     public void needOffsetReset(TopicPartition partition) {
-        needOffsetReset(partition, defaultResetStrategy);
+        this.needOffsetReset(partition, defaultResetStrategy);
     }
 
     public boolean hasDefaultOffsetResetPolicy() {
@@ -470,6 +470,12 @@ public class SubscriptionState {
         return missing;
     }
 
+    /**
+     * 指定分区是否分配给当前消费者
+     *
+     * @param tp
+     * @return
+     */
     public boolean isAssigned(TopicPartition tp) {
         return assignment.contains(tp);
     }

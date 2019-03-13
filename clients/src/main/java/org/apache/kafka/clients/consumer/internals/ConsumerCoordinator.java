@@ -320,22 +320,24 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
      * @param now current time in milliseconds
      */
     public void poll(long now) {
-        invokeCompletedOffsetCommitCallbacks();
+        // 如果 offset 提交成功，则触发注册的 OffsetCommitCallback.onComplete 方法
+        this.invokeCompletedOffsetCommitCallbacks();
 
-        // 当前是 AUTO_TOPICS 或 AUTO_PATTERN（USER_ASSIGNED 不需要 rebalance），且 coordinator 不可达，则需要触发 rebalance
-        if (subscriptions.partitionsAutoAssigned() && coordinatorUnknown()) {
+        // 确保当前是 AUTO_TOPICS 或 AUTO_PATTERN（USER_ASSIGNED 不需要再平衡）订阅模式，
+        // 且目标 coordinator 节点可达，如果不可达，则会尝试寻找一个可用的节点
+        if (subscriptions.partitionsAutoAssigned() && this.coordinatorUnknown()) {
             this.ensureCoordinatorReady();
             now = time.milliseconds();
         }
 
-        // 需要执行 rejoin
+        // 需要执行再平衡
         if (this.needRejoin()) {
             /*
              * due to a race condition between the initial metadata fetch and the initial rebalance,
              * we need to ensure that the metadata is fresh before joining initially.
              * This ensures that we have matched the pattern against the cluster's topics at least once before joining.
              *
-             * 如果是 AUTO_PATTERN 订阅模式，则需要检查是否需要更新集群元数据
+             * 如果是 AUTO_PATTERN 订阅模式，则检查是否需要更新集群元数据
              */
             if (subscriptions.hasPatternSubscription()) {
                 client.ensureFreshMetadata();
@@ -344,7 +346,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
             /*
              * 1. 检查目标 coordinator 节点是否准备好接收请求
              * 2. 启动心跳线程
-             * 3. 执行 join group 操作
+             * 3. 执行再平衡操作
              */
             this.ensureActiveGroup();
             now = time.milliseconds();

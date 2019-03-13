@@ -1046,7 +1046,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             long start = time.milliseconds();
             long remaining = timeout;
             do {
-                // 拉取消息
+                // 拉取消息，优先从本地缓存中获取，如果没有则会请求服务端，期间还会执行再平衡策略，以及异步提交 offset
                 Map<TopicPartition, List<ConsumerRecord<K, V>>> records = this.pollOnce(remaining);
                 if (!records.isEmpty()) {
                     /*
@@ -1094,14 +1094,14 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
         if (!subscriptions.hasAllFetchPositions()) {
             /*
              * 如果存在没有分配 offset 的 topic 分区，则进行更新：
-             * 1. 基于重置策略
-             * 2. 基于最近一次提交的 offset
-             * 3. 基于自动重置策略
+             * 1. 如果需要重置，则按照指定策略重置 offset
+             * 2. 否则，尝试获取上次提交的 offset，如果结果为空则按照默认重置策略进行重置
+             * 3. 否则，使用上次提交的 offset 更新本地记录的 offset 值
              */
             this.updateFetchPositions(subscriptions.missingFetchPositions());
         }
 
-        // 如果本地有缓存的消息，则直接返回
+        // 如果本地有缓存可用的消息，则直接返回
         Map<TopicPartition, List<ConsumerRecord<K, V>>> records = fetcher.fetchedRecords();
         if (!records.isEmpty()) {
             return records;
@@ -1666,9 +1666,14 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
 
         // 如果仍然存在没有分配 offset 的分区
         if (!subscriptions.hasAllFetchPositions(partitions)) {
-            // 如果需要从 GroupCoordinator 获取上次提交的 offset，则请求获取并更新
+            // 如果需要从 GroupCoordinator 获取上次提交的 offset，则请求更新
             coordinator.refreshCommittedOffsetsIfNeeded();
-            // 再次尝试对未分配 offset 的分区进行更新
+            /*
+             * 再次尝试对未分配 offset 的分区进行更新：
+             * 1. 如果需要重置，则按照指定策略重置 offset
+             * 2. 如果获取到的上次提交的 offset 为空，则按照默认重置策略进行重置
+             * 3. 使用上次提交的 offset 更新本地记录的 offset 值
+             */
             fetcher.updateFetchPositions(partitions);
         }
     }
