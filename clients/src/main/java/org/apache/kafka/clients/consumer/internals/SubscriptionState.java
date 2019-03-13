@@ -196,6 +196,7 @@ public class SubscriptionState {
      * Reset the group's subscription to only contain topics subscribed by this consumer.
      */
     public void resetGroupSubscription() {
+        // 从 groupSubscription 中移除所有不包含在 subscription 中的 topic
         this.groupSubscription.retainAll(subscription);
     }
 

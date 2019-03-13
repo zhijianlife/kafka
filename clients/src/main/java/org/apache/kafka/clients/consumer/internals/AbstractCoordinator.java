@@ -381,29 +381,24 @@ public abstract class AbstractCoordinator implements Closeable {
      * visible for testing. Joins the group without starting the heartbeat thread.
      */
     void joinGroupIfNeeded() {
-        while (needRejoin() || rejoinIncomplete()) {
+        // 如果需要再平衡，且操作未完成
+        while (this.needRejoin() || this.rejoinIncomplete()) {
             // 检查目标 coordinator 节点是否准备好接收请求
             this.ensureCoordinatorReady();
 
-            /*
-             * call onJoinPrepare if needed.
-             * We set a flag to make sure that we do not call it a second time
-             * if the client is woken up before a pending rebalance completes.
-             * This must be called on each iteration of the loop because an event requiring a rebalance
-             * (such as a metadata refresh which changes the matched subscription set) can occur
-             * while another rebalance is still in progress.
-             */
+            // 执行前期准备工作
             if (needsJoinPrepare) {
                 /*
                  * 1. 如果开启了 offset 自动提交，则同步提交 offset
                  * 2. 调用注册的 ConsumerRebalanceListener 监听器的 onPartitionsRevoked 方法
-                 * 3. 收缩 groupSubscription
+                 * 3. 取消当前消费者的 leader 身份（如果是的话），同时移除 groupSubscription 中非当前消费者订阅的 topic
                  */
                 this.onJoinPrepare(generation.generationId, generation.memberId);
                 needsJoinPrepare = false;
             }
 
-            // 发起 join group 操作
+            // TODO by zhenchao 2019-03-13 19:05:47
+            // 创建并发送 JoinGroupRequest 请求
             RequestFuture<ByteBuffer> future = this.initiateJoinGroup();
             client.poll(future);
             this.resetJoinGroupFuture();

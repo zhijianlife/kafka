@@ -79,6 +79,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     private final ConsumerCoordinatorMetrics sensors;
     /** 追踪 TopicPartition 和 offset 的对应关系 */
     private final SubscriptionState subscriptions;
+    /** 默认的 offset 提交完成时的 callback */
     private final OffsetCommitCallback defaultOffsetCommitCallback;
     /** 是否启用自动提交 */
     private final boolean autoCommitEnabled;
@@ -88,20 +89,21 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     private final ConsumerInterceptors<?, ?> interceptors;
     /** 是否排除内部 topic */
     private final boolean excludeInternalTopics;
+    /** 记录正在等待异步提交 offset 的请求数目 */
     private final AtomicInteger pendingAsyncCommits;
 
-    /**
-     * this collection must be thread-safe because it is modified from the response handler
-     * of offset commit requests, which may be invoked from the heartbeat thread
-     */
+    /** 记录每个 offset 提交对应的响应 callback */
     private final ConcurrentLinkedQueue<OffsetCommitCompletion> completedOffsetCommits;
 
+    /** 标记是不是 leader 消费者 */
     private boolean isLeader = false;
+    /** 分配的给当前消费者的 topic 集合 */
     private Set<String> joinedSubscription;
     /** 元数据快照，用于检测 topic 分区数量是否发生变化 */
     private MetadataSnapshot metadataSnapshot;
     /** 元数据快照，用于检测分区分配过程中分区数量是否发生变化 */
     private MetadataSnapshot assignmentSnapshot;
+    /** 下一次自动提交时间戳 */
     private long nextAutoCommitDeadline;
 
     /**
@@ -320,7 +322,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
      * @param now current time in milliseconds
      */
     public void poll(long now) {
-        // 如果 offset 提交成功，则触发注册的 OffsetCommitCallback.onComplete 方法
+        // 如果 offset 提交完成，则触发注册的 OffsetCommitCallback.onComplete 方法
         this.invokeCompletedOffsetCommitCallbacks();
 
         // 确保当前是 AUTO_TOPICS 或 AUTO_PATTERN（USER_ASSIGNED 不需要再平衡）订阅模式，
@@ -474,7 +476,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         // 如果设置 offset 自动提交，则同步提交 offset
         this.maybeAutoCommitOffsetsSync(rebalanceTimeoutMs);
 
-        // 调用注册的 ConsumerRebalanceListener 监听器的 onPartitionsRevoked 方法
+        // 激活注册的 ConsumerRebalanceListener 监听器的 onPartitionsRevoked 方法
         ConsumerRebalanceListener listener = subscriptions.listener();
         log.info("Revoking previously assigned partitions {} for group {}", subscriptions.assignedPartitions(), groupId);
         try {
@@ -486,30 +488,27 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
             log.error("User provided listener {} for group {} failed on partition revocation", listener.getClass().getName(), groupId, e);
         }
 
+        // 标记为非 leader
         isLeader = false;
-        // 收缩 groupSubscription
+        // 移除 groupSubscription 中非当前消费者订阅的 topic，主要是针对 leader 消费者
         subscriptions.resetGroupSubscription();
     }
 
     @Override
     public boolean needRejoin() {
-        // USER_ASSIGNED 不需要 rebalance
+        // USER_ASSIGNED 不需要执行再平衡
         if (!subscriptions.partitionsAutoAssigned()) {
             return false;
         }
-
-        // we need to rejoin if we performed the assignment and metadata has changed
-        // 分区分配过程中分区数量是否发生变化
+        // 再平衡过程中分区数量是否发生变化
         if (assignmentSnapshot != null && !assignmentSnapshot.equals(metadataSnapshot)) {
             return true;
         }
-
-        // we need to join if our subscription has changed since the last join
         // 消费者订阅信息发生变化
         if (joinedSubscription != null && !joinedSubscription.equals(subscriptions.subscription())) {
             return true;
         }
-
+        // 其它标识需要再平衡的操作
         return super.needRejoin();
     }
 
@@ -763,18 +762,15 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
             try {
                 log.debug("Sending synchronous auto-commit of offsets {} for group {}", allConsumedOffsets, groupId);
                 if (!commitOffsetsSync(allConsumedOffsets, timeoutMs)) {
-                    log.debug("Auto-commit of offsets {} for group {} timed out before completion",
-                            allConsumedOffsets, groupId);
+                    log.debug("Auto-commit of offsets {} for group {} timed out before completion", allConsumedOffsets, groupId);
                 }
             } catch (WakeupException | InterruptException e) {
-                log.debug("Auto-commit of offsets {} for group {} was interrupted before completion",
-                        allConsumedOffsets, groupId);
+                log.debug("Auto-commit of offsets {} for group {} was interrupted before completion", allConsumedOffsets, groupId);
                 // rethrow wakeups since they are triggered by the user
                 throw e;
             } catch (Exception e) {
                 // consistent with async auto-commit failures, we do not propagate the exception
-                log.warn("Auto-commit of offsets {} failed for group {}: {}", allConsumedOffsets, groupId,
-                        e.getMessage());
+                log.warn("Auto-commit of offsets {} failed for group {}: {}", allConsumedOffsets, groupId, e.getMessage());
             }
         }
     }
