@@ -257,29 +257,18 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
 
         // 反序列化获取分区分配信息
         Assignment assignment = ConsumerProtocol.deserializeAssignment(assignmentBuffer);
-
         // 标记需要从 GroupCoordinator 获取最近提交的 offset，
         subscriptions.needRefreshCommits();
-
-        // 初始化每个分区对应的分区状态
+        // 重新设置每个分区对应的消费状态
         subscriptions.assignFromSubscribed(assignment.partitions());
 
-        /*
-         * check if the assignment contains some topics that were not in the original subscription,
-         * if yes we will obey what leader has decided and add these topics into the subscriptions
-         * as long as they still match the subscribed pattern
-         *
-         * TODO this part of the logic should be removed once we allow regex on leader assign
-         */
-
-        // 遍历获取新分配的 topic
+        // 遍历获取新分配的 topic，并更新本地订阅信息
         Set<String> addedTopics = new HashSet<>();
         for (TopicPartition tp : subscriptions.assignedPartitions()) {
             if (!joinedSubscription.contains(tp.topic())) {
-                addedTopics.add(tp.topic());
+                addedTopics.add(tp.topic()); // 新分配的分区
             }
         }
-
         if (!addedTopics.isEmpty()) {
             Set<String> newSubscription = new HashSet<>(subscriptions.subscription());
             Set<String> newJoinedSubscription = new HashSet<>(joinedSubscription);
@@ -298,10 +287,10 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         // give the assignor a chance to update internal state based on the received assignment
         assignor.onAssignment(assignment);
 
-        // reschedule the auto commit starting from now
+        // 重置下次需要自动提交的时间
         nextAutoCommitDeadline = time.milliseconds() + autoCommitIntervalMs;
 
-        // 应用监听分区 rebalance 操作的监听器
+        // 应用监听分区再平衡操作完成的监听器
         ConsumerRebalanceListener listener = subscriptions.listener();
         log.info("Setting newly assigned partitions {} for group {}", subscriptions.assignedPartitions(), groupId);
         try {
@@ -379,17 +368,18 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     }
 
     @Override
-    protected Map<String, ByteBuffer> performAssignment(String leaderId,
-                                                        String assignmentStrategy,
-                                                        Map<String, ByteBuffer> allSubscriptions) {
-        // 从消费者支持的分配策略集合中选择 assignmentStrategy 的对应的策略
+    protected Map<String, ByteBuffer> performAssignment(String leaderId, // leader 消费者 ID
+                                                        String assignmentStrategy, // 服务端选择的分区分配策略
+                                                        Map<String, ByteBuffer> allSubscriptions // group 中所有消费者的订阅信息
+    ) {
+        // 从消费者支持的分配策略集合中选择 assignmentStrategy 名称的对应的策略
         PartitionAssignor assignor = this.lookupAssignor(assignmentStrategy);
         if (assignor == null) {
             throw new IllegalStateException("Coordinator selected invalid assignment protocol: " + assignmentStrategy);
         }
 
         // 解析封装订阅信息
-        Set<String> allSubscribedTopics = new HashSet<>(); // group 中消费者订阅的所有 topic
+        Set<String> allSubscribedTopics = new HashSet<>(); // 记录 group 中所有消费者订阅的 topic
         Map<String, Subscription> subscriptions = new HashMap<>(); // Map<String, ByteBuffer> -> Map<String, Subscription>
         for (Map.Entry<String, ByteBuffer> subscriptionEntry : allSubscriptions.entrySet()) {
             // ByteBuffer -> Subscription
@@ -405,30 +395,18 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         this.subscriptions.groupSubscribe(allSubscribedTopics);
         metadata.setTopics(this.subscriptions.groupSubscription());
 
-        /*
-         * update metadata (if needed) and keep track of the metadata used for assignment,
-         * so that we can check after rebalance completion whether anything has changed
-         */
-        client.ensureFreshMetadata(); // 更新元数据信息
-
+        // 再平衡之后，检测是否需要更新集群元数据信息，如果需要则立即更新
+        client.ensureFreshMetadata();
+        // 标记当前消费者为 leader
         isLeader = true;
 
         log.debug("Performing assignment for group {} using strategy {} with subscriptions {}", groupId, assignor.name(), subscriptions);
 
         /*
          * 执行分区分配，依据具体的分区分配策略（range/round-robin）进行分区
-         * 返回结果：key 是消费 ID，value 是对应的分区分配结果
+         * 返回结果：key 是消费者 ID，value 是对应的分区分配结果
          */
         Map<String, Assignment> assignment = assignor.assign(metadata.fetch(), subscriptions);
-
-        /*
-         * user-customized assignor may have created some topics
-         * that are not in the subscription list and assign their partitions to the members;
-         * in this case we would like to update the leader's own metadata with the newly added topics
-         * so that it will not trigger a subsequent rebalance when these topics gets updated from metadata refresh.
-         *
-         * TODO: this is a hack and not something we want to support long-term unless we push regex into the protocol we may need to modify the PartitionAssignor API to better support this case.
-         */
 
         // 记录所有分配的 topic
         Set<String> assignedTopics = new HashSet<>();
@@ -436,14 +414,14 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
             for (TopicPartition tp : assigned.partitions())
                 assignedTopics.add(tp.topic());
         }
-        // 如果 group 中存在某些订阅 topic 为分配，则日志记录
+        // 如果 group 中一些已经订阅的 topic 并未分配，则日志记录
         if (!assignedTopics.containsAll(allSubscribedTopics)) {
             Set<String> notAssignedTopics = new HashSet<>(allSubscribedTopics);
             notAssignedTopics.removeAll(assignedTopics);
             log.warn("The following subscribed topics are not assigned to any members in the group {} : {} ", groupId, notAssignedTopics);
         }
 
-        // 如果分配的 topic 包含一些未订阅的 topic
+        // 如果分配的 topic 集合包含一些未订阅的 topic
         if (!allSubscribedTopics.containsAll(assignedTopics)) {
             // 日志记录这些未订阅的 topic
             Set<String> newlyAddedTopics = new HashSet<>(assignedTopics);

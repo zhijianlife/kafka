@@ -20,9 +20,12 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Result of an asynchronous request from {@link ConsumerNetworkClient}. Use {@link ConsumerNetworkClient#poll(long)}
- * (and variants) to finish a request future. Use {@link #isDone()} to check if the future is complete, and
- * {@link #succeeded()} to check if the request completed successfully. Typical usage might look like this:
+ * Result of an asynchronous request from {@link ConsumerNetworkClient}.
+ * Use {@link ConsumerNetworkClient#poll(long)} (and variants) to finish a request future.
+ * Use {@link #isDone()} to check if the future is complete,
+ * and {@link #succeeded()} to check if the request completed successfully.
+ *
+ * Typical usage might look like this:
  *
  * <pre>
  *     RequestFuture<ClientResponse> future = client.send(api, request);
