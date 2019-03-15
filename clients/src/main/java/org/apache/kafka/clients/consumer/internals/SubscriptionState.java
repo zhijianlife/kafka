@@ -408,10 +408,17 @@ public class SubscriptionState {
         assignedState(tp).highWatermark = highWatermark;
     }
 
+    /**
+     * 获取当前消费者消费的所有分区，以及分区对应的消费状态信息
+     *
+     * @return
+     */
     public Map<TopicPartition, OffsetAndMetadata> allConsumed() {
         Map<TopicPartition, OffsetAndMetadata> allConsumed = new HashMap<>();
+        // 遍历处理每个分区的消费状态
         for (PartitionStates.PartitionState<TopicPartitionState> state : assignment.partitionStates()) {
             if (state.value().hasValidPosition()) {
+                // 对于所有在本地记录了消费 offset 的分区，封装返回
                 allConsumed.put(state.topicPartition(), new OffsetAndMetadata(state.value().position));
             }
         }
