@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.kafka.common.network;
 
 import org.apache.kafka.common.protocol.SecurityProtocol;
@@ -40,7 +41,7 @@ public final class ListenerName {
     private final String value;
 
     public ListenerName(String value) {
-        Objects.requireNonNull("value should not be null");
+        Objects.requireNonNull(value, "value should not be null");
         this.value = value;
     }
 
@@ -50,8 +51,9 @@ public final class ListenerName {
 
     @Override
     public boolean equals(Object o) {
-        if (!(o instanceof ListenerName))
+        if (!(o instanceof ListenerName)) {
             return false;
+        }
         ListenerName that = (ListenerName) o;
         return value.equals(that.value);
     }
