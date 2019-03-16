@@ -5,8 +5,8 @@
  * The ASF licenses this file to You under the Apache License, Version 2.0
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
- * 
- *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -26,86 +26,92 @@ import org.apache.kafka.common.record.Records
  */
 object MessageSet {
 
-  val MessageSizeLength = 4
-  val OffsetLength = 8
-  val LogOverhead = MessageSizeLength + OffsetLength
-  val Empty = new ByteBufferMessageSet(ByteBuffer.allocate(0))
-  
-  /**
-   * The size of a message set containing the given messages
-   */
-  def messageSetSize(messages: Iterable[Message]): Int =
-    messages.foldLeft(0)(_ + entrySize(_))
+    val MessageSizeLength = 4 // 记录消息数据的长度
+    val OffsetLength = 8 // 记录 offset 值
+    val LogOverhead: Int = MessageSizeLength + OffsetLength
+    val Empty = new ByteBufferMessageSet(ByteBuffer.allocate(0))
 
-  /**
-   * The size of a size-delimited entry in a message set
-   */
-  def entrySize(message: Message): Int = LogOverhead + message.size
+    /**
+     * The size of a message set containing the given messages
+     */
+    def messageSetSize(messages: Iterable[Message]): Int = messages.foldLeft(0)(_ + entrySize(_))
 
-  /**
-   * Validate that all "magic" values in `messages` are the same and return their magic value and max timestamp
-   */
-  def magicAndLargestTimestamp(messages: Seq[Message]): MagicAndTimestamp = {
-    val firstMagicValue = messages.head.magic
-    var largestTimestamp = Message.NoTimestamp
-    for (message <- messages) {
-      if (message.magic != firstMagicValue)
-        throw new IllegalStateException("Messages in the same message set must have same magic value")
-      if (firstMagicValue > Message.MagicValue_V0)
-        largestTimestamp = math.max(largestTimestamp, message.timestamp)
+    /**
+     * The size of a size-delimited entry in a message set
+     */
+    def entrySize(message: Message): Int = LogOverhead + message.size
+
+    /**
+     * Validate that all "magic" values in `messages` are the same and return their magic value and max timestamp
+     */
+    def magicAndLargestTimestamp(messages: Seq[Message]): MagicAndTimestamp = {
+        val firstMagicValue = messages.head.magic
+        var largestTimestamp = Message.NoTimestamp
+        for (message <- messages) {
+            if (message.magic != firstMagicValue)
+                throw new IllegalStateException("Messages in the same message set must have same magic value")
+            if (firstMagicValue > Message.MagicValue_V0)
+                largestTimestamp = math.max(largestTimestamp, message.timestamp)
+        }
+        MagicAndTimestamp(firstMagicValue, largestTimestamp)
     }
-    MagicAndTimestamp(firstMagicValue, largestTimestamp)
-  }
 
 }
 
 case class MagicAndTimestamp(magic: Byte, timestamp: Long)
 
 /**
- * A set of messages with offsets. A message set has a fixed serialized form, though the container
- * for the bytes could be either in-memory or on disk. The format of each message is
- * as follows:
- * 8 byte message offset number
- * 4 byte size containing an integer N
- * N message bytes as described in the Message class
+ * A set of messages with offsets. A message set has a fixed serialized form,
+ * though the container for the bytes could be either in-memory or on disk.
+ *
+ * The format of each message is as follows:
+ * - 8 byte message offset number
+ * - 4 byte size containing an integer N
+ * - N message bytes as described in the Message class
+ *
+ * - 8 字节的 offset 值
+ * - 4 字节表示 message 数据大小
+ * - N 字节表示消息的数据，对应一个 Message 对象
  */
 abstract class MessageSet extends Iterable[MessageAndOffset] {
 
-  /**
-   * Provides an iterator over the message/offset pairs in this set
-   */
-  def iterator: Iterator[MessageAndOffset]
-  
-  /**
-   * Gives the total size of this message set in bytes
-   */
-  def sizeInBytes: Int
+    /**
+     * Provides an iterator over the message/offset pairs in this set
+     *
+     * 顺序读取消息
+     */
+    def iterator: Iterator[MessageAndOffset]
 
-  /**
-   * Get the client representation of the message set
-   */
-  def asRecords: Records
+    /**
+     * Gives the total size of this message set in bytes
+     */
+    def sizeInBytes: Int
 
-  /**
-   * Print this message set's contents. If the message set has more than 100 messages, just
-   * print the first 100.
-   */
-  override def toString: String = {
-    val builder = new StringBuilder()
-    builder.append(getClass.getSimpleName + "(")
-    val iter = this.asRecords.shallowEntries.iterator
-    var i = 0
-    while(iter.hasNext && i < 100) {
-      val message = iter.next
-      builder.append(message)
-      if(iter.hasNext)
-        builder.append(", ")
-      i += 1
+    /**
+     * Get the client representation of the message set
+     */
+    def asRecords: Records
+
+    /**
+     * Print this message set's contents.
+     * If the message set has more than 100 messages, just print the first 100.
+     */
+    override def toString: String = {
+        val builder = new StringBuilder()
+        builder.append(getClass.getSimpleName + "(")
+        val iter = this.asRecords.shallowEntries.iterator
+        var i = 0
+        while (iter.hasNext && i < 100) {
+            val message = iter.next
+            builder.append(message)
+            if (iter.hasNext)
+                builder.append(", ")
+            i += 1
+        }
+        if (iter.hasNext)
+            builder.append("...")
+        builder.append(")")
+        builder.toString
     }
-    if(iter.hasNext)
-      builder.append("...")
-    builder.append(")")
-    builder.toString
-  }
 
 }

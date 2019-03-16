@@ -97,14 +97,8 @@ public class Selector implements Selectable {
     /** 暂存一次 OP_READ 事件处理过程中读取到的全部请求，当这些请求处理完成之后会保存到 completedReceives 中 */
     private final Map<KafkaChannel, Deque<NetworkReceive>> stagedReceives;
 
-    /**
-     *
-     */
     private final Set<SelectionKey> immediatelyConnectedKeys;
 
-    /**
-     *
-     */
     private final Map<String, KafkaChannel> closingChannels;
 
     /** 记录一次 poll 过程中发现的断开的连接 */
@@ -293,14 +287,14 @@ public class Selector implements Selectable {
     public void send(Send send) {
         String connectionId = send.destination();
         if (closingChannels.containsKey(connectionId)) {
-            this.failedSends.add(connectionId);
+            failedSends.add(connectionId);
         } else {
-            KafkaChannel channel = channelOrFail(connectionId, false);
+            KafkaChannel channel = this.channelOrFail(connectionId, false);
             try {
                 channel.setSend(send);
             } catch (CancelledKeyException e) {
-                this.failedSends.add(connectionId);
-                close(channel, false);
+                failedSends.add(connectionId);
+                this.close(channel, false);
             }
         }
     }
@@ -465,8 +459,8 @@ public class Selector implements Selectable {
 
     @Override
     public void mute(String id) {
-        KafkaChannel channel = channelOrFail(id, true);
-        mute(channel);
+        KafkaChannel channel = this.channelOrFail(id, true);
+        this.mute(channel);
     }
 
     private void mute(KafkaChannel channel) {
@@ -475,8 +469,8 @@ public class Selector implements Selectable {
 
     @Override
     public void unmute(String id) {
-        KafkaChannel channel = channelOrFail(id, true);
-        unmute(channel);
+        KafkaChannel channel = this.channelOrFail(id, true);
+        this.unmute(channel);
     }
 
     private void unmute(KafkaChannel channel) {
@@ -656,8 +650,8 @@ public class Selector implements Selectable {
     }
 
     /**
-     * Return the channel with the specified id if it was disconnected, but not yet closed
-     * since there are outstanding messages to be processed.
+     * Return the channel with the specified id if it was disconnected,
+     * but not yet closed since there are outstanding messages to be processed.
      */
     public KafkaChannel closingChannel(String id) {
         return closingChannels.get(id);

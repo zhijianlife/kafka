@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,25 +20,25 @@ package kafka.message
 import org.apache.kafka.common.record.LogEntry
 
 object MessageAndOffset {
-  def fromLogEntry(logEntry : LogEntry): MessageAndOffset = {
-    MessageAndOffset(Message.fromRecord(logEntry.record), logEntry.offset)
-  }
+    def fromLogEntry(logEntry: LogEntry): MessageAndOffset = {
+        MessageAndOffset(Message.fromRecord(logEntry.record), logEntry.offset)
+    }
 }
 
 case class MessageAndOffset(message: Message, offset: Long) {
-  
-  /**
-   * Compute the offset of the next message in the log
-   */
-  def nextOffset: Long = offset + 1
 
-  /**
-   * We need to decompress the message, if required, to get the offset of the first uncompressed message.
-   */
-  def firstOffset: Long = toLogEntry.firstOffset
+    /**
+     * Compute the offset of the next message in the log
+     */
+    def nextOffset: Long = offset + 1
 
-  def toLogEntry: LogEntry = {
-    LogEntry.create(offset, message.asRecord)
-  }
+    /**
+     * We need to decompress the message, if required, to get the offset of the first uncompressed message.
+     */
+    def firstOffset: Long = toLogEntry.firstOffset
+
+    def toLogEntry: LogEntry = {
+        LogEntry.create(offset, message.asRecord)
+    }
 }
 

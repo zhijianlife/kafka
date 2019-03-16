@@ -19,10 +19,10 @@ package kafka.network
 
 import java.net.InetAddress
 import java.nio.ByteBuffer
-import java.util.HashMap
+import java.util
 import java.util.concurrent._
 
-import com.yammer.metrics.core.Gauge
+import com.yammer.metrics.core.{Gauge, Histogram, Meter}
 import kafka.api.{ControlledShutdownRequest, RequestOrResponse}
 import kafka.metrics.KafkaMetricsGroup
 import kafka.server.QuotaId
@@ -44,46 +44,51 @@ object RequestChannel extends Logging {
     private val requestLogger = Logger.getLogger("kafka.request.logger")
 
     private def getShutdownReceive = {
-        val emptyProduceRequest = new ProduceRequest.Builder(0, 0, new HashMap[TopicPartition, MemoryRecords]()).build()
+        val emptyProduceRequest = new ProduceRequest.Builder(0, 0, new util.HashMap[TopicPartition, MemoryRecords]()).build()
         val emptyRequestHeader = new RequestHeader(ApiKeys.PRODUCE.id, emptyProduceRequest.version, "", 0)
         AbstractRequestResponse.serialize(emptyRequestHeader, emptyProduceRequest)
     }
 
     case class Session(principal: KafkaPrincipal, clientAddress: InetAddress) {
-        val sanitizedUser = QuotaId.sanitize(principal.getName)
+        val sanitizedUser: String = QuotaId.sanitize(principal.getName)
     }
 
-    case class Request(processor: Int, connectionId: String, session: Session, private var buffer: ByteBuffer,
-                       startTimeMs: Long, listenerName: ListenerName, securityProtocol: SecurityProtocol) {
+    case class Request(processor: Int,
+                       connectionId: String,
+                       session: Session,
+                       private var buffer: ByteBuffer,
+                       startTimeMs: Long,
+                       listenerName: ListenerName,
+                       securityProtocol: SecurityProtocol) {
         // These need to be volatile because the readers are in the network thread and the writers are in the request
         // handler threads or the purgatory threads
-        @volatile var requestDequeueTimeMs = -1L
-        @volatile var apiLocalCompleteTimeMs = -1L
-        @volatile var responseCompleteTimeMs = -1L
-        @volatile var responseDequeueTimeMs = -1L
-        @volatile var apiRemoteCompleteTimeMs = -1L
+        @volatile var requestDequeueTimeMs: Long = -1L
+        @volatile var apiLocalCompleteTimeMs: Long = -1L
+        @volatile var responseCompleteTimeMs: Long = -1L
+        @volatile var responseDequeueTimeMs: Long = -1L
+        @volatile var apiRemoteCompleteTimeMs: Long = -1L
 
-        val requestId = buffer.getShort()
+        val requestId: Short = buffer.getShort()
 
-        // TODO: this will be removed once we remove support for v0 of ControlledShutdownRequest (which
-        // depends on a non-standard request header)
+        // TODO: this will be removed once we remove support for v0 of ControlledShutdownRequest (which depends on a non-standard request header)
         val requestObj: RequestOrResponse = if (requestId == ApiKeys.CONTROLLED_SHUTDOWN_KEY.id)
                                                 ControlledShutdownRequest.readFrom(buffer)
                                             else
                                                 null
 
-        // if we failed to find a server-side mapping, then try using the
-        // client-side request / response format
+        // if we failed to find a server-side mapping, then try using the client-side request / response format
         val header: RequestHeader =
-        if (requestObj == null) {
-            buffer.rewind
-            try RequestHeader.parse(buffer)
-            catch {
-                case ex: Throwable =>
-                    throw new InvalidRequestException(s"Error parsing request header. Our best guess of the apiKey is: $requestId", ex)
-            }
-        } else
-              null
+            if (requestObj == null) {
+                buffer.rewind
+                try RequestHeader.parse(buffer) // 解析请求头
+                catch {
+                    case ex: Throwable =>
+                        throw new InvalidRequestException(s"Error parsing request header. Our best guess of the apiKey is: $requestId", ex)
+                }
+            } else
+                  null
+
+        // 解析请求体
         val body: AbstractRequest =
             if (requestObj == null)
                 try {
@@ -160,7 +165,10 @@ object RequestChannel extends Logging {
         }
     }
 
-    case class Response(processor: Int, request: Request, responseSend: Send, responseAction: ResponseAction) {
+    case class Response(processor: Int,
+                        request: Request,
+                        responseSend: Send,
+                        responseAction: ResponseAction) {
         request.responseCompleteTimeMs = Time.SYSTEM.milliseconds
 
         def this(processor: Int, request: Request, responseSend: Send) =
@@ -173,27 +181,51 @@ object RequestChannel extends Logging {
             this(request, response.toSend(request.connectionId, request.header))
     }
 
+    /**
+     * 响应行为
+     */
     trait ResponseAction
 
+    /**
+     * 表示当前响应需要发送给客户端
+     */
     case object SendAction extends ResponseAction
 
+    /**
+     * 表示当前暂时没有响应需要发送
+     */
     case object NoOpAction extends ResponseAction
 
+    /**
+     * 表示需要关闭对应的连接
+     */
     case object CloseConnectionAction extends ResponseAction
 
 }
 
 /**
- * Processor 线程与 Handler 线程之间交换数据的队列
+ * Processor 线程与 Handler 线程之间交换数据的队列，
+ * Processor 将读取到的请求存入 requestQueue 中，Handler 线程从该队列中读取请求并处理，
+ * 然后将响应存储到放置该请求的 Processor 的 responseQueue 中，
+ * Processor 负责从自己的 responseQueue 中取出响应发送给客户端
  *
  * @param numProcessors processor 线程数
  * @param queueSize     请求队列大小
  */
-class RequestChannel(val numProcessors: Int, val queueSize: Int) extends KafkaMetricsGroup {
+class RequestChannel(val numProcessors: Int, // Processor 数目
+                     val queueSize: Int // 请求队列的最大长度
+                    ) extends KafkaMetricsGroup {
 
+    /** 响应监听器列表，用于在 Handler 往响应队列中防止响应时唤醒对应的 Processor */
     private var responseListeners: List[Int => Unit] = Nil
+
+    /** 请求队列 */
     private val requestQueue = new ArrayBlockingQueue[RequestChannel.Request](queueSize)
+
+    /** 响应队列，每个 Processor 对应一个响应队列 */
     private val responseQueues = new Array[BlockingQueue[RequestChannel.Response]](numProcessors)
+
+    // 为每个 Processor 注册一个响应队列
     for (i <- 0 until numProcessors)
         responseQueues(i) = new LinkedBlockingQueue[RequestChannel.Response]()
 
@@ -225,6 +257,7 @@ class RequestChannel(val numProcessors: Int, val queueSize: Int) extends KafkaMe
     /** Send a response back to the socket server to be sent over the network */
     def sendResponse(response: RequestChannel.Response) {
         responseQueues(response.processor).put(response)
+        // 遍历激活监听器，唤醒对应的 Processor 线程
         for (onResponse <- responseListeners)
             onResponse(response.processor)
     }
@@ -270,26 +303,26 @@ class RequestChannel(val numProcessors: Int, val queueSize: Int) extends KafkaMe
 
 object RequestMetrics {
     val metricsMap = new scala.collection.mutable.HashMap[String, RequestMetrics]
-    val consumerFetchMetricName = ApiKeys.FETCH.name + "Consumer"
-    val followFetchMetricName = ApiKeys.FETCH.name + "Follower"
+    val consumerFetchMetricName: String = ApiKeys.FETCH.name + "Consumer"
+    val followFetchMetricName: String = ApiKeys.FETCH.name + "Follower"
     (ApiKeys.values().toList.map(e => e.name)
             ++ List(consumerFetchMetricName, followFetchMetricName)).foreach(name => metricsMap.put(name, new RequestMetrics(name)))
 }
 
 class RequestMetrics(name: String) extends KafkaMetricsGroup {
-    val tags = Map("request" -> name)
-    val requestRate = newMeter("RequestsPerSec", "requests", TimeUnit.SECONDS, tags)
+    val tags: Map[String, String] = Map("request" -> name)
+    val requestRate: Meter = newMeter("RequestsPerSec", "requests", TimeUnit.SECONDS, tags)
     // time a request spent in a request queue
-    val requestQueueTimeHist = newHistogram("RequestQueueTimeMs", biased = true, tags)
+    val requestQueueTimeHist: Histogram = newHistogram("RequestQueueTimeMs", biased = true, tags)
     // time a request takes to be processed at the local broker
-    val localTimeHist = newHistogram("LocalTimeMs", biased = true, tags)
+    val localTimeHist: Histogram = newHistogram("LocalTimeMs", biased = true, tags)
     // time a request takes to wait on remote brokers (currently only relevant to fetch and produce requests)
-    val remoteTimeHist = newHistogram("RemoteTimeMs", biased = true, tags)
+    val remoteTimeHist: Histogram = newHistogram("RemoteTimeMs", biased = true, tags)
     // time a request is throttled (only relevant to fetch and produce requests)
-    val throttleTimeHist = newHistogram("ThrottleTimeMs", biased = true, tags)
+    val throttleTimeHist: Histogram = newHistogram("ThrottleTimeMs", biased = true, tags)
     // time a response spent in a response queue
-    val responseQueueTimeHist = newHistogram("ResponseQueueTimeMs", biased = true, tags)
+    val responseQueueTimeHist: Histogram = newHistogram("ResponseQueueTimeMs", biased = true, tags)
     // time to send the response to the requester
-    val responseSendTimeHist = newHistogram("ResponseSendTimeMs", biased = true, tags)
-    val totalTimeHist = newHistogram("TotalTimeMs", biased = true, tags)
+    val responseSendTimeHist: Histogram = newHistogram("ResponseSendTimeMs", biased = true, tags)
+    val totalTimeHist: Histogram = newHistogram("TotalTimeMs", biased = true, tags)
 }
