@@ -47,13 +47,18 @@ import kafka.utils.CoreUtils.inLock
  *
  * All external APIs translate from relative offsets to full offsets, so users of this class do not interact with the internal 
  * storage format.
+ *
+ * 一个日志索引文件包含两部分：
+ *
+ * 1. 相对 offset，占 4 个字节
+ * 2. 物理地址，占 4 个字节
  */
 class OffsetIndex(file: File, baseOffset: Long, maxIndexSize: Int = -1)
         extends AbstractIndex[Long, Int](file, baseOffset, maxIndexSize) {
 
     override def entrySize = 8
 
-    /* the last offset in the index */
+    /** 最后一个索引项的 offset */
     private[this] var _lastOffset = lastEntry.offset
 
     debug("Loaded index file %s with maxEntries = %d, maxIndexSize = %d, entries = %d, lastOffset = %d, file position = %d"
@@ -77,6 +82,8 @@ class OffsetIndex(file: File, baseOffset: Long, maxIndexSize: Int = -1)
      * Find the largest offset less than or equal to the given targetOffset
      * and return a pair holding this offset and its corresponding physical file position.
      *
+     * 基于二分查找小于等于 targetOffset 的最大 offset，返回 offset 和对应的物理地址
+     *
      * @param targetOffset The offset to look up.
      * @return The offset found and the corresponding file position for this offset
      *         If the target offset is smaller than the least entry in the index (or the index is empty),
@@ -85,20 +92,35 @@ class OffsetIndex(file: File, baseOffset: Long, maxIndexSize: Int = -1)
     def lookup(targetOffset: Long): OffsetPosition = {
         maybeLock(lock) {
             val idx = mmap.duplicate
-            val slot = indexSlotFor(idx, targetOffset, IndexSearchType.KEY)
+            // 二分查找
+            val slot = this.indexSlotFor(idx, targetOffset, IndexSearchType.KEY)
             if (slot == -1)
                 OffsetPosition(baseOffset, 0)
             else
-                parseEntry(idx, slot).asInstanceOf[OffsetPosition]
+                this.parseEntry(idx, slot).asInstanceOf[OffsetPosition]
         }
     }
 
+    /**
+     * 获取相对的 offset
+     *
+     * @param buffer
+     * @param n
+     * @return
+     */
     private def relativeOffset(buffer: ByteBuffer, n: Int): Int = buffer.getInt(n * entrySize)
 
+    /**
+     * 获取物理地址
+     *
+     * @param buffer
+     * @param n
+     * @return
+     */
     private def physical(buffer: ByteBuffer, n: Int): Int = buffer.getInt(n * entrySize + 4)
 
     override def parseEntry(buffer: ByteBuffer, n: Int): IndexEntry = {
-        OffsetPosition(baseOffset + relativeOffset(buffer, n), physical(buffer, n))
+        OffsetPosition(baseOffset + this.relativeOffset(buffer, n), this.physical(buffer, n))
     }
 
     /**
@@ -117,7 +139,10 @@ class OffsetIndex(file: File, baseOffset: Long, maxIndexSize: Int = -1)
     }
 
     /**
-     * Append an entry for the given offset/location pair to the index. This entry must have a larger offset than all subsequent entries.
+     * Append an entry for the given offset/location pair to the index.
+     * This entry must have a larger offset than all subsequent entries.
+     *
+     * 向索引文件添加索引项
      */
     def append(offset: Long, position: Int) {
         inLock(lock) {
@@ -136,8 +161,13 @@ class OffsetIndex(file: File, baseOffset: Long, maxIndexSize: Int = -1)
         }
     }
 
-    override def truncate() = truncateToEntries(0)
+    override def truncate(): Unit = truncateToEntries(0)
 
+    /**
+     * 截取索引文件
+     *
+     * @param offset
+     */
     override def truncateTo(offset: Long) {
         inLock(lock) {
             val idx = mmap.duplicate

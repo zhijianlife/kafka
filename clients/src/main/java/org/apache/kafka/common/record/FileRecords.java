@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  **/
+
 package org.apache.kafka.common.record;
 
 import org.apache.kafka.common.KafkaException;
@@ -33,19 +34,27 @@ import java.util.Iterator;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * A {@link Records} implementation backed by a file. An optional start and end position can be applied to this
- * instance to enable slicing a range of the log records.
+ * A {@link Records} implementation backed by a file.
+ * An optional start and end position can be applied to this instance to enable slicing a range of the log records.
  */
 public class FileRecords extends AbstractRecords implements Closeable {
+
+    /** 标识是否为日志文件分片 */
     private final boolean isSlice;
+    /** 分片的起始位置 */
     private final int start;
+    /** 分片的结束位置 */
     private final int end;
 
     private final Iterable<FileChannelLogEntry> shallowEntries;
 
-    // mutable state
+    /** 如果是分片则表示分片的大小（end - start），如果不是分片则表示整个日志文件的大小 */
     private final AtomicInteger size;
+
+    /** 读写对应的日志文件 */
     private final FileChannel channel;
+
+    /** 日志文件 */
     private volatile File file;
 
     /**
@@ -86,6 +95,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
 
     /**
      * Get the underlying file.
+     *
      * @return The file
      */
     public File file() {
@@ -94,6 +104,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
 
     /**
      * Get the underlying file channel.
+     *
      * @return The file channel
      */
     public FileChannel channel() {
@@ -108,7 +119,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
      * @param position Position in the buffer to read from
      * @return The same buffer
      * @throws IOException If an I/O error occurs, see {@link FileChannel#read(ByteBuffer, long)} for details on the
-     * possible exceptions
+     *                     possible exceptions
      */
     public ByteBuffer readInto(ByteBuffer buffer, int position) throws IOException {
         Utils.readFully(channel, buffer, position + this.start);
@@ -129,22 +140,26 @@ public class FileRecords extends AbstractRecords implements Closeable {
      * @return A sliced wrapper on this message set limited based on the given position and size
      */
     public FileRecords read(int position, int size) throws IOException {
-        if (position < 0)
+        if (position < 0) {
             throw new IllegalArgumentException("Invalid position: " + position);
-        if (size < 0)
+        }
+        if (size < 0) {
             throw new IllegalArgumentException("Invalid size: " + size);
+        }
 
         final int end;
         // handle integer overflow
-        if (this.start + position + size < 0)
+        if (this.start + position + size < 0) {
             end = sizeInBytes();
-        else
+        } else {
             end = Math.min(this.start + position + size, sizeInBytes());
+        }
         return new FileRecords(file, channel, this.start + position, end, true);
     }
 
     /**
      * Append log entries to the buffer
+     *
      * @param records The records to append
      * @return the number of bytes written to the underlying file
      */
@@ -164,6 +179,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
     /**
      * Close this record set
      */
+    @Override
     public void close() throws IOException {
         flush();
         trim();
@@ -172,6 +188,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
 
     /**
      * Delete this message set from the filesystem
+     *
      * @return True iff this message set was deleted.
      */
     public boolean delete() {
@@ -188,6 +205,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
 
     /**
      * Update the file reference (to be used with caution since this does not reopen the file channel)
+     *
      * @param file The new file to use
      */
     public void setFile(File file) {
@@ -196,12 +214,13 @@ public class FileRecords extends AbstractRecords implements Closeable {
 
     /**
      * Rename the file that backs this message set
+     *
      * @throws IOException if rename fails.
      */
     public void renameTo(File f) throws IOException {
         try {
             Utils.atomicMoveWithFallback(file.toPath(), f.toPath());
-        }  finally {
+        } finally {
             this.file = f;
         }
     }
@@ -213,14 +232,16 @@ public class FileRecords extends AbstractRecords implements Closeable {
      * update of the files mtime, so truncate is only performed if the targetSize is smaller than the
      * size of the underlying FileChannel.
      * It is expected that no other threads will do writes to the log when this function is called.
+     *
      * @param targetSize The size to truncate to. Must be between 0 and sizeInBytes.
      * @return The number of bytes truncated off
      */
     public int truncateTo(int targetSize) throws IOException {
         int originalSize = sizeInBytes();
-        if (targetSize > originalSize || targetSize < 0)
+        if (targetSize > originalSize || targetSize < 0) {
             throw new KafkaException("Attempt to truncate log segment to " + targetSize + " bytes failed, " +
                     " size of this log segment is " + originalSize + " bytes.");
+        }
         if (targetSize < (int) channel.size()) {
             channel.truncate(targetSize);
             channel.position(targetSize);
@@ -233,10 +254,11 @@ public class FileRecords extends AbstractRecords implements Closeable {
     public long writeTo(GatheringByteChannel destChannel, long offset, int length) throws IOException {
         long newSize = Math.min(channel.size(), end) - start;
         int oldSize = sizeInBytes();
-        if (newSize < oldSize)
+        if (newSize < oldSize) {
             throw new KafkaException(String.format(
                     "Size of FileRecords %s has been truncated during write: old size %d, new size %d",
                     file.getAbsolutePath(), oldSize, newSize));
+        }
 
         long position = start + offset;
         int count = Math.min(length, oldSize);
@@ -261,8 +283,9 @@ public class FileRecords extends AbstractRecords implements Closeable {
     public LogEntryPosition searchForOffsetWithSize(long targetOffset, int startingPosition) {
         for (FileChannelLogEntry entry : shallowEntriesFrom(startingPosition)) {
             long offset = entry.offset();
-            if (offset >= targetOffset)
+            if (offset >= targetOffset) {
                 return new LogEntryPosition(offset, entry.position(), entry.sizeInBytes());
+            }
         }
         return null;
     }
@@ -281,11 +304,12 @@ public class FileRecords extends AbstractRecords implements Closeable {
                 // We found a message
                 for (LogEntry deepLogEntry : shallowEntry) {
                     long timestamp = deepLogEntry.record().timestamp();
-                    if (timestamp >= targetTimestamp)
+                    if (timestamp >= targetTimestamp) {
                         return new TimestampAndOffset(timestamp, deepLogEntry.offset());
+                    }
                 }
                 throw new IllegalStateException(String.format("The message set (max timestamp = %s, max offset = %s" +
-                        " should contain target timestamp %s, but does not.", shallowRecord.timestamp(),
+                                " should contain target timestamp %s, but does not.", shallowRecord.timestamp(),
                         shallowEntry.offset(), targetTimestamp));
             }
         }
@@ -294,6 +318,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
 
     /**
      * Return the largest timestamp of the messages after a given position in this file message set.
+     *
      * @param startingPosition The starting position.
      * @return The largest timestamp of the messages after the given position.
      */
@@ -315,6 +340,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
      * Get an iterator over the shallow entries in the file. Note that the entries are
      * backed by the open file channel. When the channel is closed (i.e. when this instance
      * is closed), the entries will generally no longer be readable.
+     *
      * @return An iterator over the shallow entries
      */
     @Override
@@ -324,6 +350,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
 
     /**
      * Get an iterator over the shallow entries, enforcing a maximum record size
+     *
      * @param maxRecordSize The maximum allowable size of individual records (including compressed record sets)
      * @return An iterator over the shallow entries
      */
@@ -346,11 +373,14 @@ public class FileRecords extends AbstractRecords implements Closeable {
 
     private Iterator<FileChannelLogEntry> shallowIterator(int maxRecordSize, int start) {
         final int end;
-        if (isSlice)
+        if (isSlice) {
+            // 如果是分片文件
             end = this.end;
-        else
+        } else {
             end = this.sizeInBytes();
+        }
         FileLogInputStream inputStream = new FileLogInputStream(channel, maxRecordSize, start, end);
+        // 返回对应的浅层迭代器
         return RecordsIterator.shallowIterator(inputStream);
     }
 
@@ -371,10 +401,11 @@ public class FileRecords extends AbstractRecords implements Closeable {
 
     private Iterator<LogEntry> deepIterator(BufferSupplier bufferSupplier) {
         final int end;
-        if (isSlice)
+        if (isSlice) {
             end = this.end;
-        else
+        } else {
             end = this.sizeInBytes();
+        }
         FileLogInputStream inputStream = new FileLogInputStream(channel, Integer.MAX_VALUE, start, end);
         return new RecordsIterator(inputStream, false, false, Integer.MAX_VALUE, bufferSupplier);
     }
@@ -408,6 +439,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
      * Open a channel for the given file
      * For windows NTFS and some old LINUX file system, set preallocate to true and initFileSize
      * with one value (for example 512 * 1025 *1024 ) can improve the kafka produce performance.
+     *
      * @param file File path
      * @param mutable mutable
      * @param fileAlreadyExists File already exists or not

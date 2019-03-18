@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  **/
+
 package org.apache.kafka.common.record;
 
 import org.apache.kafka.common.KafkaException;
@@ -36,6 +37,7 @@ public class FileLogInputStream implements LogInputStream<FileLogInputStream.Fil
 
     /**
      * Create a new log input stream over the FileChannel
+     *
      * @param channel Underlying FileChannel
      * @param maxRecordSize Maximum size of records
      * @param start Position in the file channel to start from
@@ -53,8 +55,9 @@ public class FileLogInputStream implements LogInputStream<FileLogInputStream.Fil
 
     @Override
     public FileChannelLogEntry nextEntry() throws IOException {
-        if (position + Records.LOG_OVERHEAD >= end)
+        if (position + Records.LOG_OVERHEAD >= end) {
             return null;
+        }
 
         logHeaderBuffer.rewind();
         Utils.readFullyOrFail(channel, logHeaderBuffer, position, "log header");
@@ -63,14 +66,17 @@ public class FileLogInputStream implements LogInputStream<FileLogInputStream.Fil
         long offset = logHeaderBuffer.getLong();
         int size = logHeaderBuffer.getInt();
 
-        if (size < Record.RECORD_OVERHEAD_V0)
+        if (size < Record.RECORD_OVERHEAD_V0) {
             throw new CorruptRecordException(String.format("Record size is smaller than minimum record overhead (%d).", Record.RECORD_OVERHEAD_V0));
+        }
 
-        if (size > maxRecordSize)
+        if (size > maxRecordSize) {
             throw new CorruptRecordException(String.format("Record size exceeds the largest allowable message size (%d).", maxRecordSize));
+        }
 
-        if (position + Records.LOG_OVERHEAD + size > end)
+        if (position + Records.LOG_OVERHEAD + size > end) {
             return null;
+        }
 
         FileChannelLogEntry logEntry = new FileChannelLogEntry(offset, channel, position, size);
         position += logEntry.sizeInBytes();
@@ -90,9 +96,9 @@ public class FileLogInputStream implements LogInputStream<FileLogInputStream.Fil
         private Record record = null;
 
         private FileChannelLogEntry(long offset,
-                                   FileChannel channel,
-                                   int position,
-                                   int recordSize) {
+                                    FileChannel channel,
+                                    int position,
+                                    int recordSize) {
             this.offset = offset;
             this.channel = channel;
             this.position = position;
@@ -110,8 +116,9 @@ public class FileLogInputStream implements LogInputStream<FileLogInputStream.Fil
 
         @Override
         public byte magic() {
-            if (record != null)
+            if (record != null) {
                 return record.magic();
+            }
 
             try {
                 byte[] magic = new byte[1];
@@ -125,12 +132,14 @@ public class FileLogInputStream implements LogInputStream<FileLogInputStream.Fil
 
         /**
          * Force load the record and its data (key and value) into memory.
+         *
          * @return The resulting record
          * @throws IOException for any IO errors reading from the underlying file
          */
         private Record loadRecord() throws IOException {
-            if (record != null)
+            if (record != null) {
                 return record;
+            }
 
             ByteBuffer recordBuffer = ByteBuffer.allocate(recordSize);
             Utils.readFullyOrFail(channel, recordBuffer, position + Records.LOG_OVERHEAD, "full record");
@@ -142,8 +151,9 @@ public class FileLogInputStream implements LogInputStream<FileLogInputStream.Fil
 
         @Override
         public Record record() {
-            if (record != null)
+            if (record != null) {
                 return record;
+            }
 
             try {
                 return loadRecord();

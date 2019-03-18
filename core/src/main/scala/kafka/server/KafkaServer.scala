@@ -93,7 +93,11 @@ object KafkaServer {
  * Represents the lifecycle of a single Kafka broker. Handles all functionality required
  * to start up and shutdown a single Kafka node.
  */
-class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNamePrefix: Option[String] = None, kafkaMetricsReporters: Seq[KafkaMetricsReporter] = List()) extends Logging with KafkaMetricsGroup {
+class KafkaServer(val config: KafkaConfig,
+                  time: Time = Time.SYSTEM,
+                  threadNamePrefix: Option[String] = None,
+                  kafkaMetricsReporters: Seq[KafkaMetricsReporter] = List()) extends Logging with KafkaMetricsGroup {
+
     private val startupComplete = new AtomicBoolean(false)
     private val isShuttingDown = new AtomicBoolean(false)
     private val isStartingUp = new AtomicBoolean(false)
@@ -102,61 +106,62 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
 
     private val jmxPrefix: String = "kafka.server"
 
-    var metrics: Metrics = null
+    var metrics: Metrics = _
 
     val brokerState: BrokerState = new BrokerState
 
-    var apis: KafkaApis = null
+    var apis: KafkaApis = _
     var authorizer: Option[Authorizer] = None
-    var socketServer: SocketServer = null
-    var requestHandlerPool: KafkaRequestHandlerPool = null
+    var socketServer: SocketServer = _
+    var requestHandlerPool: KafkaRequestHandlerPool = _
 
-    var logManager: LogManager = null
+    var logManager: LogManager = _
 
-    var replicaManager: ReplicaManager = null
-    var adminManager: AdminManager = null
+    var replicaManager: ReplicaManager = _
+    var adminManager: AdminManager = _
 
-    var dynamicConfigHandlers: Map[String, ConfigHandler] = null
-    var dynamicConfigManager: DynamicConfigManager = null
-    var credentialProvider: CredentialProvider = null
+    var dynamicConfigHandlers: Map[String, ConfigHandler] = _
+    var dynamicConfigManager: DynamicConfigManager = _
+    var credentialProvider: CredentialProvider = _
 
-    var groupCoordinator: GroupCoordinator = null
+    var groupCoordinator: GroupCoordinator = _
 
-    var kafkaController: KafkaController = null
+    var kafkaController: KafkaController = _
 
     val kafkaScheduler = new KafkaScheduler(config.backgroundThreads)
 
-    var kafkaHealthcheck: KafkaHealthcheck = null
-    var metadataCache: MetadataCache = null
-    var quotaManagers: QuotaFactory.QuotaManagers = null
+    var kafkaHealthcheck: KafkaHealthcheck = _
+    var metadataCache: MetadataCache = _
+    var quotaManagers: QuotaFactory.QuotaManagers = _
 
-    var zkUtils: ZkUtils = null
+    var zkUtils: ZkUtils = _
     val correlationId: AtomicInteger = new AtomicInteger(0)
     val brokerMetaPropsFile = "meta.properties"
-    val brokerMetadataCheckpoints = config.logDirs.map(logDir => (logDir, new BrokerMetadataCheckpoint(new File(logDir + File.separator + brokerMetaPropsFile)))).toMap
+    val brokerMetadataCheckpoints: Predef.Map[String, BrokerMetadataCheckpoint] =
+        config.logDirs.map(logDir => (logDir, new BrokerMetadataCheckpoint(new File(logDir + File.separator + brokerMetaPropsFile)))).toMap
 
-    private var _clusterId: String = null
+    private var _clusterId: String = _
 
     def clusterId: String = _clusterId
 
     newGauge(
         "BrokerState",
         new Gauge[Int] {
-            def value = brokerState.currentState
+            def value: Int = brokerState.currentState
         }
     )
 
     newGauge(
         "ClusterId",
         new Gauge[String] {
-            def value = clusterId
+            def value: String = clusterId
         }
     )
 
     newGauge(
         "yammer-metrics-count",
         new Gauge[Int] {
-            def value = {
+            def value: Int = {
                 com.yammer.metrics.Metrics.defaultRegistry().allMetrics().size()
             }
         }
@@ -196,7 +201,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
 
                 /* create and configure metrics */
                 val reporters = config.getConfiguredInstances(KafkaConfig.MetricReporterClassesProp, classOf[MetricsReporter],
-                    Map[String, AnyRef](KafkaConfig.BrokerIdProp -> (config.brokerId.toString)).asJava)
+                    Map[String, AnyRef](KafkaConfig.BrokerIdProp -> config.brokerId.toString).asJava)
                 reporters.add(new JmxReporter(jmxPrefix))
                 val metricConfig = KafkaServer.metricConfig(config)
                 metrics = new Metrics(metricConfig, reporters, time, true)
@@ -625,7 +630,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
      */
     def awaitShutdown(): Unit = shutdownLatch.await()
 
-    def getLogManager(): LogManager = logManager
+    def getLogManager: LogManager = logManager
 
     def boundPort(listenerName: ListenerName): Int = socketServer.boundPort(listenerName)
 
@@ -633,9 +638,10 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         val defaultProps = KafkaServer.copyKafkaConfigToLog(config)
         val defaultLogConfig = LogConfig(defaultProps)
 
-        val configs = AdminUtils.fetchAllTopicConfigs(zkUtils).map { case (topic, configs) =>
+        val configs = AdminUtils.fetchAllTopicConfigs(zkUtils).map { case (topic, `configs`) =>
             topic -> LogConfig.fromProps(defaultProps, configs)
         }
+
         // read the log configurations from zookeeper
         val cleanerConfig = CleanerConfig(numThreads = config.logCleanerThreads,
             dedupeBufferSize = config.logCleanerDedupeBufferSize,
@@ -645,6 +651,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
             maxIoBytesPerSecond = config.logCleanerIoMaxBytesPerSecond,
             backOffMs = config.logCleanerBackoffMs,
             enableCleaner = config.logCleanerEnable)
+
         new LogManager(logDirs = config.logDirs.map(new File(_)).toArray,
             topicConfigs = configs,
             defaultConfig = defaultLogConfig,
