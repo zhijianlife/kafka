@@ -463,8 +463,8 @@ public class MemoryRecords extends AbstractRecords {
         long firstOffset = firstEntry.offset();
         byte magic = firstEntry.record().magic();
 
-        MemoryRecordsBuilder builder = MemoryRecords.builder(buffer, magic, compressionType, timestampType,
-                firstOffset, logAppendTime);
+        MemoryRecordsBuilder builder = MemoryRecords.builder(
+                buffer, magic, compressionType, timestampType, firstOffset, logAppendTime);
         for (LogEntry entry : entries)
             builder.appendWithOffset(entry.offset(), entry.record());
 

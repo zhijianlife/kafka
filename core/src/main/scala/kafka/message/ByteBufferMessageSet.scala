@@ -25,57 +25,12 @@ import org.apache.kafka.common.record._
 
 import scala.collection.JavaConverters._
 
-object ByteBufferMessageSet {
-
-    private def create(offsetAssigner: OffsetAssigner,
-                       compressionCodec: CompressionCodec,
-                       wrapperMessageTimestamp: Option[Long],
-                       timestampType: TimestampType,
-                       messages: Message*): ByteBuffer = {
-        if (messages.isEmpty)
-            MessageSet.Empty.buffer
-        else {
-            val magicAndTimestamp = wrapperMessageTimestamp match {
-                case Some(ts) => MagicAndTimestamp(messages.head.magic, ts)
-                case None => MessageSet.magicAndLargestTimestamp(messages)
-            }
-
-            val entries = messages.map(message => LogEntry.create(offsetAssigner.nextAbsoluteOffset(), message.asRecord))
-            val builder = MemoryRecords.builderWithEntries(timestampType, CompressionType.forId(compressionCodec.codec),
-                magicAndTimestamp.timestamp, entries.asJava)
-            builder.build().buffer
-        }
-    }
-
-}
-
-private object OffsetAssigner {
-
-    def apply(offsetCounter: LongRef, size: Int): OffsetAssigner =
-        new OffsetAssigner(offsetCounter.value to offsetCounter.addAndGet(size))
-
-}
-
-private class OffsetAssigner(offsets: Seq[Long]) {
-    private var index = 0
-
-    def nextAbsoluteOffset(): Long = {
-        val result = offsets(index)
-        index += 1
-        result
-    }
-
-    def toInnerOffset(offset: Long): Long = offset - offsets.head
-
-}
-
 /**
  * A sequence of messages stored in a byte buffer
  *
  * There are two ways to create a ByteBufferMessageSet
  *
  * Option 1: From a ByteBuffer which already contains the serialized message set. Consumers will use this method.
- *
  * Option 2: Give it a list of messages along with instructions relating to serialization format. Producers will use this method.
  *
  *
@@ -106,17 +61,14 @@ private class OffsetAssigner(offsets: Seq[Long]) {
  * AO = AO_Of_Last_Inner_Message + RO
  *
  * However, note that the message sets sent by producers are compressed in a streaming way.
- * And the relative offset of an inner message compared with the last inner message is not known until
- * the last inner message is written.
+ * And the relative offset of an inner message compared with the last inner message is not known until the last inner message is written.
  * Unfortunately we are not able to change the previously written messages after the last message is written to
  * the message set when stream compression is used.
  *
  * To solve this issue, we use the following solution:
  *
- * 1. When the producer creates a message set, it simply writes all the messages into a compressed message set with
- * offset 0, 1, ... (inner offset).
- * 2. The broker will set the offset of the wrapper message to the absolute offset of the last message in the
- * message set.
+ * 1. When the producer creates a message set, it simply writes all the messages into a compressed message set with offset 0, 1, ... (inner offset).
+ * 2. The broker will set the offset of the wrapper message to the absolute offset of the last message in the message set.
  * 3. When a consumer sees the message set, it first decompresses the entire message set to find out the inner
  * offset (IO) of the last inner message. Then it computes RO and AO of previous messages:
  *
@@ -133,8 +85,8 @@ class ByteBufferMessageSet(val buffer: ByteBuffer) extends MessageSet with Loggi
                             wrapperMessageTimestamp: Option[Long],
                             timestampType: TimestampType,
                             messages: Message*) {
-        this(ByteBufferMessageSet.create(OffsetAssigner(offsetCounter, messages.size), compressionCodec,
-            wrapperMessageTimestamp, timestampType, messages: _*))
+        this(ByteBufferMessageSet.create(
+            OffsetAssigner(offsetCounter, messages.size), compressionCodec, wrapperMessageTimestamp, timestampType, messages: _*))
     }
 
     def this(compressionCodec: CompressionCodec, offsetCounter: LongRef, messages: Message*) {
@@ -158,18 +110,22 @@ class ByteBufferMessageSet(val buffer: ByteBuffer) extends MessageSet with Loggi
 
     override def asRecords: MemoryRecords = MemoryRecords.readableRecords(buffer.duplicate())
 
-    /** default iterator that iterates over decompressed messages */
-    override def iterator: Iterator[MessageAndOffset] = internalIterator()
+    /**
+     * default iterator that iterates over decompressed messages
+     *
+     * 默认获取浅层迭代器，用于处理非压缩的消息
+     */
+    override def iterator: Iterator[MessageAndOffset] = this.internalIterator()
 
     /** iterator over compressed messages without decompressing */
-    def shallowIterator: Iterator[MessageAndOffset] = internalIterator(isShallow = true)
+    def shallowIterator: Iterator[MessageAndOffset] = this.internalIterator(isShallow = true)
 
     /** When flag isShallow is set to be true, we do a shallow iteration: just traverse the first level of messages. **/
     private def internalIterator(isShallow: Boolean = false): Iterator[MessageAndOffset] = {
         val entries = if (isShallow)
-                          asRecords.shallowEntries
+                          asRecords.shallowEntries // 浅层迭代器
                       else
-                          asRecords.deepEntries
+                          asRecords.deepEntries // 深层迭代器
         entries.iterator.asScala.map(MessageAndOffset.fromLogEntry)
     }
 
@@ -195,5 +151,64 @@ class ByteBufferMessageSet(val buffer: ByteBuffer) extends MessageSet with Loggi
     }
 
     override def hashCode: Int = buffer.hashCode
+
+}
+
+object ByteBufferMessageSet {
+
+    /**
+     * 消息集合 -> ByteBuffer
+     *
+     * @param offsetAssigner
+     * @param compressionCodec
+     * @param wrapperMessageTimestamp
+     * @param timestampType
+     * @param messages
+     * @return
+     */
+    private def create(offsetAssigner: OffsetAssigner,
+                       compressionCodec: CompressionCodec,
+                       wrapperMessageTimestamp: Option[Long],
+                       timestampType: TimestampType,
+                       messages: Message*): ByteBuffer = {
+        // 需要处理的消息集合为空
+        if (messages.isEmpty)
+            MessageSet.Empty.buffer
+        else {
+            val magicAndTimestamp = wrapperMessageTimestamp match {
+                case Some(ts) => MagicAndTimestamp(messages.head.magic, ts)
+                // 以当前消息集合中的最大时间戳作为时间戳
+                case None => MessageSet.magicAndLargestTimestamp(messages)
+            }
+
+            // 遍历为每个 message 创建一个 LogEntry 对象（基于 SimpleLogEntry 创建）
+            val entries = messages.map(message => LogEntry.create(offsetAssigner.nextAbsoluteOffset(), message.asRecord))
+            // 将所有的 LogEntry 对象封装到 MemoryRecordsBuilder 中
+            val builder = MemoryRecords.builderWithEntries(
+                timestampType, CompressionType.forId(compressionCodec.codec), magicAndTimestamp.timestamp, entries.asJava)
+            builder.build().buffer
+        }
+    }
+
+}
+
+private object OffsetAssigner {
+
+    def apply(offsetCounter: LongRef, size: Int): OffsetAssigner =
+        new OffsetAssigner(offsetCounter.value to offsetCounter.addAndGet(size))
+
+}
+
+private class OffsetAssigner(offsets: Seq[Long]) {
+
+    private var index = 0
+
+    def nextAbsoluteOffset(): Long = {
+        val result = offsets(index)
+        index += 1
+        result
+    }
+
+    def toInnerOffset(offset: Long): Long = offset - offsets.head
 
 }

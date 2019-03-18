@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  **/
+
 package org.apache.kafka.common.record;
 
 import org.apache.kafka.common.KafkaException;
@@ -31,11 +32,16 @@ import java.util.Iterator;
  * An iterator which handles both the shallow and deep iteration of record sets.
  */
 public class RecordsIterator extends AbstractIterator<LogEntry> {
+
+    /**
+     * 标识当前迭代器是深层迭代（压缩消息）还是浅层迭代（非压缩消息）
+     */
     private final boolean shallow;
     private final boolean ensureMatchingMagic;
     private final int maxRecordSize;
     private final ShallowRecordsIterator<?> shallowIter;
     private final BufferSupplier bufferSupplier;
+    /** 执行深层迭代时的 inner 迭代器 */
     private DeepRecordsIterator innerIter;
 
     public RecordsIterator(LogInputStream<?> logInputStream,
@@ -52,6 +58,7 @@ public class RecordsIterator extends AbstractIterator<LogEntry> {
 
     /**
      * Get a shallow iterator over the given input stream.
+     *
      * @param logInputStream The log input stream to read the entries from
      * @param <T> The type of the log entry
      * @return The shallow iterator.
@@ -62,9 +69,12 @@ public class RecordsIterator extends AbstractIterator<LogEntry> {
 
     @Override
     protected LogEntry makeNext() {
-        if (innerDone()) {
-            if (!shallowIter.hasNext())
+        // 如果当前深层迭代器已经完成
+        if (this.innerDone()) {
+            // 浅层迭代器已经完成
+            if (!shallowIter.hasNext()) {
                 return allDone();
+            }
 
             LogEntry entry = shallowIter.next();
 
@@ -102,28 +112,34 @@ public class RecordsIterator extends AbstractIterator<LogEntry> {
             this.offsetAndSizeBuffer = ByteBuffer.allocate(Records.LOG_OVERHEAD);
         }
 
+        @Override
         public LogEntry nextEntry() throws IOException {
             offsetAndSizeBuffer.clear();
             Utils.readFully(stream, offsetAndSizeBuffer);
-            if (offsetAndSizeBuffer.hasRemaining())
+            if (offsetAndSizeBuffer.hasRemaining()) {
                 return null;
+            }
             long offset = offsetAndSizeBuffer.getLong(Records.OFFSET_OFFSET);
             int size = offsetAndSizeBuffer.getInt(Records.SIZE_OFFSET);
-            if (size < Record.RECORD_OVERHEAD_V0)
+            if (size < Record.RECORD_OVERHEAD_V0) {
                 throw new CorruptRecordException(String.format("Record size is less than the minimum record overhead (%d)", Record.RECORD_OVERHEAD_V0));
-            if (size > maxMessageSize)
+            }
+            if (size > maxMessageSize) {
                 throw new CorruptRecordException(String.format("Record size exceeds the largest allowable message size (%d).", maxMessageSize));
+            }
 
             ByteBuffer batchBuffer = ByteBuffer.allocate(size);
             Utils.readFully(stream, batchBuffer);
-            if (batchBuffer.hasRemaining())
+            if (batchBuffer.hasRemaining()) {
                 return null;
+            }
             batchBuffer.flip();
             return LogEntry.create(offset, new Record(batchBuffer));
         }
     }
 
     private static class ShallowRecordsIterator<T extends LogEntry> extends AbstractIterator<T> {
+
         private final LogInputStream<T> logStream;
 
         public ShallowRecordsIterator(LogInputStream<T> logStream) {
@@ -134,8 +150,9 @@ public class RecordsIterator extends AbstractIterator<LogEntry> {
         protected T makeNext() {
             try {
                 T entry = logStream.nextEntry();
-                if (entry == null)
+                if (entry == null) {
                     return allDone();
+                }
                 return entry;
             } catch (IOException e) {
                 throw new KafkaException(e);
@@ -167,14 +184,16 @@ public class RecordsIterator extends AbstractIterator<LogEntry> {
             try {
                 while (true) {
                     LogEntry logEntry = logStream.nextEntry();
-                    if (logEntry == null)
+                    if (logEntry == null) {
                         break;
+                    }
 
                     Record record = logEntry.record();
                     byte magic = record.magic();
 
-                    if (ensureMatchingMagic && magic != wrapperMagic)
+                    if (ensureMatchingMagic && magic != wrapperMagic) {
                         throw new InvalidRecordException("Compressed message magic does not match wrapper magic");
+                    }
 
                     if (magic > Record.MAGIC_VALUE_V0) {
                         Record recordWithTimestamp = new Record(
@@ -186,10 +205,11 @@ public class RecordsIterator extends AbstractIterator<LogEntry> {
                     }
                     logEntries.addLast(logEntry);
                 }
-                if (wrapperMagic > Record.MAGIC_VALUE_V0)
+                if (wrapperMagic > Record.MAGIC_VALUE_V0) {
                     this.absoluteBaseOffset = wrapperRecordOffset - logEntries.getLast().offset();
-                else
+                } else {
                     this.absoluteBaseOffset = -1;
+                }
             } catch (IOException e) {
                 throw new KafkaException(e);
             } finally {
@@ -199,8 +219,9 @@ public class RecordsIterator extends AbstractIterator<LogEntry> {
 
         @Override
         protected LogEntry makeNext() {
-            if (logEntries.isEmpty())
+            if (logEntries.isEmpty()) {
                 return allDone();
+            }
 
             LogEntry entry = logEntries.remove();
 
@@ -210,8 +231,9 @@ public class RecordsIterator extends AbstractIterator<LogEntry> {
                 entry = LogEntry.create(absoluteOffset, entry.record());
             }
 
-            if (entry.isCompressed())
+            if (entry.isCompressed()) {
                 throw new InvalidRecordException("Inner messages must not be compressed");
+            }
 
             return entry;
         }

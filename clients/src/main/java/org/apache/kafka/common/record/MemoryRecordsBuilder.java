@@ -213,8 +213,9 @@ public class MemoryRecordsBuilder {
             throw new KafkaException(e);
         }
 
+        // 指定了压缩类型
         if (compressionType != CompressionType.NONE) {
-            writerCompressedWrapperHeader();
+            this.writerCompressedWrapperHeader();
         }
 
         ByteBuffer buffer = buffer().duplicate();
@@ -237,8 +238,8 @@ public class MemoryRecordsBuilder {
 
         buffer.position(pos);
 
-        // update the compression ratio
-        this.compressionRate = (float) writtenCompressed / this.writtenUncompressed;
+        // 更新压缩率
+        this.compressionRate = (float) writtenCompressed / writtenUncompressed;
         TYPE_TO_RATE[compressionType.id] = TYPE_TO_RATE[compressionType.id] * COMPRESSION_RATE_DAMPING_FACTOR +
                 compressionRate * (1 - COMPRESSION_RATE_DAMPING_FACTOR);
     }

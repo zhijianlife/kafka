@@ -20,9 +20,11 @@ package kafka.message
 import org.apache.kafka.common.record.LogEntry
 
 object MessageAndOffset {
+
     def fromLogEntry(logEntry: LogEntry): MessageAndOffset = {
         MessageAndOffset(Message.fromRecord(logEntry.record), logEntry.offset)
     }
+
 }
 
 case class MessageAndOffset(message: Message, offset: Long) {

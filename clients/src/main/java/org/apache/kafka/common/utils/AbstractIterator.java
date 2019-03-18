@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.kafka.common.utils;
 
 import java.util.Iterator;
@@ -21,12 +22,16 @@ import java.util.NoSuchElementException;
 
 /**
  * A base class that simplifies implementing an iterator
+ *
  * @param <T> The type of thing we are iterating over
  */
 public abstract class AbstractIterator<T> implements Iterator<T> {
 
     private enum State {
-        READY, NOT_READY, DONE, FAILED
+        READY, // 迭代器已经准备好迭代下一项
+        NOT_READY, // 迭代器未准备好迭代下一项，需要调用 maybeComputeNext 进一步获取状态
+        DONE, // 迭代已经结束
+        FAILED // 迭代过程中出现异常
     }
 
     private State state = State.NOT_READY;
@@ -42,17 +47,19 @@ public abstract class AbstractIterator<T> implements Iterator<T> {
             case READY:
                 return true;
             default:
-                return maybeComputeNext();
+                return this.maybeComputeNext();
         }
     }
 
     @Override
     public T next() {
-        if (!hasNext())
+        if (!hasNext()) {
             throw new NoSuchElementException();
+        }
         state = State.NOT_READY;
-        if (next == null)
+        if (next == null) {
             throw new IllegalStateException("Expected item but none found.");
+        }
         return next;
     }
 
@@ -62,8 +69,9 @@ public abstract class AbstractIterator<T> implements Iterator<T> {
     }
 
     public T peek() {
-        if (!hasNext())
+        if (!hasNext()) {
             throw new NoSuchElementException();
+        }
         return next;
     }
 
@@ -76,7 +84,7 @@ public abstract class AbstractIterator<T> implements Iterator<T> {
 
     private Boolean maybeComputeNext() {
         state = State.FAILED;
-        next = makeNext();
+        next = this.makeNext();
         if (state == State.DONE) {
             return false;
         } else {

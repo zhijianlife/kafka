@@ -21,30 +21,30 @@ import org.apache.log4j.Logger
 
 trait Logging {
 
-    val loggerName = this.getClass.getName
+    val loggerName: String = this.getClass.getName
 
-    lazy val logger = Logger.getLogger(loggerName)
+    lazy val logger: Logger = Logger.getLogger(loggerName)
 
-    protected var logIdent: String = null
+    protected var logIdent: String = _
 
     // Force initialization to register Log4jControllerMBean
     private val log4jController = Log4jController
 
-    private def msgWithLogIdent(msg: String) =
+    private def msgWithLogIdent(msg: String): String =
         if (logIdent == null) msg else logIdent + msg
 
     def trace(msg: => String): Unit = {
-        if (logger.isTraceEnabled())
+        if (logger.isTraceEnabled)
             logger.trace(msgWithLogIdent(msg))
     }
 
     def trace(e: => Throwable): Any = {
-        if (logger.isTraceEnabled())
+        if (logger.isTraceEnabled)
             logger.trace(logIdent, e)
     }
 
-    def trace(msg: => String, e: => Throwable) = {
-        if (logger.isTraceEnabled())
+    def trace(msg: => String, e: => Throwable): Unit = {
+        if (logger.isTraceEnabled)
             logger.trace(msgWithLogIdent(msg), e)
     }
 
@@ -55,17 +55,17 @@ trait Logging {
     def isDebugEnabled: Boolean = logger.isDebugEnabled
 
     def debug(msg: => String): Unit = {
-        if (logger.isDebugEnabled())
+        if (logger.isDebugEnabled)
             logger.debug(msgWithLogIdent(msg))
     }
 
     def debug(e: => Throwable): Any = {
-        if (logger.isDebugEnabled())
+        if (logger.isDebugEnabled)
             logger.debug(logIdent, e)
     }
 
-    def debug(msg: => String, e: => Throwable) = {
-        if (logger.isDebugEnabled())
+    def debug(msg: => String, e: => Throwable): Unit = {
+        if (logger.isDebugEnabled)
             logger.debug(msgWithLogIdent(msg), e)
     }
 
@@ -74,17 +74,17 @@ trait Logging {
     }
 
     def info(msg: => String): Unit = {
-        if (logger.isInfoEnabled())
+        if (logger.isInfoEnabled)
             logger.info(msgWithLogIdent(msg))
     }
 
     def info(e: => Throwable): Any = {
-        if (logger.isInfoEnabled())
+        if (logger.isInfoEnabled)
             logger.info(logIdent, e)
     }
 
-    def info(msg: => String, e: => Throwable) = {
-        if (logger.isInfoEnabled())
+    def info(msg: => String, e: => Throwable): Unit = {
+        if (logger.isInfoEnabled)
             logger.info(msgWithLogIdent(msg), e)
     }
 
@@ -100,7 +100,7 @@ trait Logging {
         logger.warn(logIdent, e)
     }
 
-    def warn(msg: => String, e: => Throwable) = {
+    def warn(msg: => String, e: => Throwable): Unit = {
         logger.warn(msgWithLogIdent(msg), e)
     }
 
@@ -108,7 +108,7 @@ trait Logging {
         CoreUtils.swallow(logger.warn, action)
     }
 
-    def swallow(action: => Unit) = swallowWarn(action)
+    def swallow(action: => Unit): Unit = swallowWarn(action)
 
     def error(msg: => String): Unit = {
         logger.error(msgWithLogIdent(msg))
@@ -118,7 +118,7 @@ trait Logging {
         logger.error(logIdent, e)
     }
 
-    def error(msg: => String, e: => Throwable) = {
+    def error(msg: => String, e: => Throwable): Unit = {
         logger.error(msgWithLogIdent(msg), e)
     }
 
@@ -134,7 +134,7 @@ trait Logging {
         logger.fatal(logIdent, e)
     }
 
-    def fatal(msg: => String, e: => Throwable) = {
+    def fatal(msg: => String, e: => Throwable): Unit = {
         logger.fatal(msgWithLogIdent(msg), e)
     }
 }
