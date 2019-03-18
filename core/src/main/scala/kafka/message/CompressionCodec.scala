@@ -20,6 +20,7 @@ package kafka.message
 import java.util.Locale
 
 object CompressionCodec {
+
     def getCompressionCodec(codec: Int): CompressionCodec = {
         codec match {
             case NoCompressionCodec.codec => NoCompressionCodec
