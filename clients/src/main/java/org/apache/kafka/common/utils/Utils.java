@@ -733,8 +733,7 @@ public class Utils {
         } catch (IOException outer) {
             try {
                 Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
-                log.debug("Non-atomic move of " + source + " to " + target + " succeeded after atomic move failed due to "
-                        + outer.getMessage());
+                log.debug("Non-atomic move of " + source + " to " + target + " succeeded after atomic move failed due to " + outer.getMessage());
             } catch (IOException inner) {
                 inner.addSuppressed(outer);
                 throw inner;

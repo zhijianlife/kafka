@@ -54,6 +54,10 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
                  val brokerState: BrokerState,
                  time: Time) extends Logging {
 
+    /**
+     * 每个 log 目录下面都有一个 recovery-point-offset-checkpoint 文件，
+     * 记录了当前 log 每个 Log 的 recoveryPoint 值，用于在 broker 启动时恢复 Log
+     */
     val RecoveryPointCheckpointFile = "recovery-point-offset-checkpoint"
     val LockFile = ".lock"
     val InitialTaskDelayMs: Int = 30 * 1000
@@ -63,6 +67,8 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
 
     /** 管理 TP 与 Log 之间的映射关系 */
     private val logs = new Pool[TopicPartition, Log]()
+
+    /** 记录需要被删除的 Log */
     private val logsToBeDeleted = new LinkedBlockingQueue[Log]()
 
     this.createAndValidateLogDirs(logDirs)
@@ -71,16 +77,14 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
     private val dirLocks = this.lockLogDirs(logDirs)
 
     /** 管理每个 log 目录与其下的 recovery-point-offset-checkpoint 文件的映射关系 */
-    private val recoveryPointCheckpoints = logDirs.map(dir => (dir, new OffsetCheckpoint(new File(dir, RecoveryPointCheckpointFile)))).toMap
+    private val recoveryPointCheckpoints = logDirs.map(
+        dir => (dir, new OffsetCheckpoint(new File(dir, RecoveryPointCheckpointFile)))).toMap
 
     this.loadLogs()
 
     // public, so we can access this from kafka.admin.DeleteTopicTest
     val cleaner: LogCleaner =
-        if (cleanerConfig.enableCleaner)
-            new LogCleaner(cleanerConfig, logDirs, logs, time = time)
-        else
-            null
+        if (cleanerConfig.enableCleaner) new LogCleaner(cleanerConfig, logDirs, logs, time = time) else null
 
     /**
      * Create and check validity of the given directories, specifically:
@@ -356,8 +360,10 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
      * Make a checkpoint for all logs in provided directory.
      */
     private def checkpointLogsInDir(dir: File): Unit = {
+        // 获取指定 log 对应的 Map[TopicPartition, Log] 信息
         val recoveryPoints = logsByDir.get(dir.toString)
         if (recoveryPoints.isDefined) {
+            // 更新对应的 recovery-point-offset-checkpoint 文件
             this.recoveryPointCheckpoints(dir).write(recoveryPoints.get.mapValues(_.recoveryPoint))
         }
     }
@@ -521,11 +527,14 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
     private def flushDirtyLogs(): Unit = {
         debug("Checking for dirty logs to flush...")
 
+        // 遍历处理 TP 对应的 Log
         for ((topicPartition, log) <- logs) {
             try {
+                // 距离上次执行 flush 的时间
                 val timeSinceLastFlush = time.milliseconds - log.lastFlushTime
                 debug("Checking if flush is needed on " + topicPartition.topic + " flush interval  " + log.config.flushMs +
                         " last flushed " + log.lastFlushTime + " time since last flush: " + timeSinceLastFlush)
+                // 如果时间超过 flush.ms 配置值，则执行 flush 操作
                 if (timeSinceLastFlush >= log.config.flushMs)
                     log.flush()
             } catch {

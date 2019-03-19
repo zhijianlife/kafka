@@ -664,7 +664,7 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
         if (targetTimestamp == ListOffsetRequest.EARLIEST_TIMESTAMP)
             return Some(TimestampOffset(Record.NO_TIMESTAMP, segmentsCopy.head.baseOffset))
         else if (targetTimestamp == ListOffsetRequest.LATEST_TIMESTAMP)
-                 return Some(TimestampOffset(Record.NO_TIMESTAMP, logEndOffset))
+            return Some(TimestampOffset(Record.NO_TIMESTAMP, logEndOffset))
 
         val targetSeg = {
             // Get all the segments whose largest timestamp is smaller than target timestamp
@@ -997,7 +997,7 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
                 rollJitterMs = config.randomSegmentJitter,
                 time = time,
                 fileAlreadyExists = false,
-                initFileSize = initFileSize,
+                initFileSize = initFileSize(),
                 preallocate = config.preallocate))
             updateLogEndOffset(newOffset)
             this.recoveryPoint = math.min(newOffset, this.recoveryPoint)
@@ -1006,6 +1006,8 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
 
     /**
      * The time this log is last known to have been fully flushed to disk
+     *
+     * 上次执行 flush 的时间
      */
     def lastFlushTime(): Long = lastflushedTime.get
 
