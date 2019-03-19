@@ -98,6 +98,7 @@ class KafkaScheduler(val threads: Int,
                 cachedExecutor.shutdown()
                 this.executor = null
             }
+            // 等待一天
             cachedExecutor.awaitTermination(1, TimeUnit.DAYS)
         }
     }
@@ -106,11 +107,11 @@ class KafkaScheduler(val threads: Int,
         debug("Scheduling task %s with initial delay %d ms and period %d ms."
                 .format(name, TimeUnit.MILLISECONDS.convert(delay, unit), TimeUnit.MILLISECONDS.convert(period, unit)))
         this synchronized {
-            ensureRunning()
+            this.ensureRunning()
             val runnable = CoreUtils.runnable {
                 try {
                     trace("Beginning execution of scheduled task '%s'.".format(name))
-                    fun()
+                    fun() // 调用 fun 方法
                 } catch {
                     case t: Throwable => error("Uncaught exception in scheduled task '" + name + "'", t)
                 } finally {
@@ -118,8 +119,10 @@ class KafkaScheduler(val threads: Int,
                 }
             }
             if (period >= 0)
+            // 处理周期性定时任务
                 executor.scheduleAtFixedRate(runnable, delay, period, unit)
             else
+            // 处理非周期性定时任务
                 executor.schedule(runnable, delay, unit)
         }
     }

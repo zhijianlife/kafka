@@ -479,17 +479,17 @@ class LogSegment(val log: FileRecords,
     /**
      * The last modified time of this log segment as a unix time stamp
      */
-    def lastModified = log.file.lastModified
+    def lastModified: Long = log.file.lastModified
 
     /**
      * The largest timestamp this segment contains.
      */
-    def largestTimestamp = if (maxTimestampSoFar >= 0) maxTimestampSoFar else lastModified
+    def largestTimestamp: Long = if (maxTimestampSoFar >= 0) maxTimestampSoFar else lastModified
 
     /**
      * Change the last modified time for this log segment
      */
-    def lastModified_=(ms: Long) = {
+    def lastModified_=(ms: Long): Boolean = {
         log.file.setLastModified(ms)
         index.file.setLastModified(ms)
         timeIndex.file.setLastModified(ms)

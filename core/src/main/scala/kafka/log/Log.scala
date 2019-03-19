@@ -98,14 +98,11 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
     /* A lock that guards all modifications to the log */
     private val lock = new Object
 
-    /* last time it was flushed */
+    /** 最近一次执行 flush 的时间 */
     private val lastflushedTime = new AtomicLong(time.milliseconds)
 
     def initFileSize(): Int = {
-        if (config.preallocate)
-            config.segmentSize
-        else
-            0
+        if (config.preallocate) config.segmentSize else 0
     }
 
     /**
@@ -299,7 +296,7 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
     private def recoverLog() {
         // if we have the clean shutdown marker, skip recovery
         if (hasCleanShutdownFile) {
-            this.recoveryPoint = activeSegment.nextOffset
+            this.recoveryPoint = activeSegment.nextOffset()
             return
         }
 
@@ -430,7 +427,7 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
                         "Message set size is %d bytes which exceeds the maximum configured segment size of %s.".format(validRecords.sizeInBytes, config.segmentSize))
                 }
 
-                // 获取 activeSegment
+                // 获取或创建 activeSegment
                 val segment = this.maybeRoll(
                     messagesSize = validRecords.sizeInBytes,
                     maxTimestampInMessages = appendInfo.maxTimestamp,
@@ -452,6 +449,7 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
 
                 // 如果刷盘时间间隔达到阈值，则执行刷盘
                 if (unflushedMessages >= config.flushInterval)
+                // 将 [recoveryPoint, logEndOffset) 之间的数据刷盘
                     this.flush()
 
                 appendInfo
@@ -573,16 +571,20 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
      * @throws OffsetOutOfRangeException If startOffset is beyond the log end offset or before the base offset of the first segment.
      * @return The fetch data information including fetch starting offset metadata and messages read.
      */
-    def read(startOffset: Long, maxLength: Int, maxOffset: Option[Long] = None, minOneMessage: Boolean = false): FetchDataInfo = {
+    def read(startOffset: Long,
+             maxLength: Int,
+             maxOffset: Option[Long] = None,
+             minOneMessage: Boolean = false): FetchDataInfo = {
+
         trace("Reading %d bytes from offset %d in log %s of length %d bytes".format(maxLength, startOffset, name, size))
 
-        // Because we don't use lock for reading, the synchronization is a little bit tricky.
-        // We create the local variables to avoid race conditions with updates to the log.
+        // 将 nextOffsetMetadata 保存成局部变量，从而避免加锁带来的竞态条件
         val currentNextOffsetMetadata = nextOffsetMetadata
         val next = currentNextOffsetMetadata.messageOffset
         if (startOffset == next)
             return FetchDataInfo(currentNextOffsetMetadata, MemoryRecords.EMPTY)
 
+        // 查找 baseOffset 小于 startOffset 且最大的 LogSegment
         var entry = segments.floorEntry(startOffset)
 
         // attempt to read beyond the log end offset is an error
@@ -598,20 +600,26 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
             // cause OffsetOutOfRangeException. To solve that, we cap the reading up to exposed position instead of the log
             // end of the active segment.
             val maxPosition = {
+                // 如果当前读取的是 activeSegment，这里的逻辑重点参考一下书本
                 if (entry == segments.lastEntry) {
                     val exposedPos = nextOffsetMetadata.relativePositionInSegment.toLong
                     // Check the segment again in case a new segment has just rolled out.
                     if (entry != segments.lastEntry)
                     // New log segment has rolled out, we can read up to the file end.
+                    // 期间正好写线程执行了 roll 操作，当前 activeSegment 已经被刷盘，不在活跃了，所以可以直接读取到结尾
                         entry.getValue.size
                     else
                         exposedPos
                 } else {
+                    // 如果当前是非 activeSegment，则直接读取到结尾
                     entry.getValue.size
                 }
             }
+
+            // 调用 LogSegment.read 方法读取消息
             val fetchInfo = entry.getValue.read(startOffset, maxOffset, maxLength, maxPosition, minOneMessage)
             if (fetchInfo == null) {
+                // 如果没有读取到消息，则读取下一个 LogSegment
                 entry = segments.higherEntry(entry.getKey)
             } else {
                 return fetchInfo
@@ -621,6 +629,7 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
         // okay we are beyond the end of the last segment with no data fetched although the start offset is in range,
         // this can happen when all messages with offset larger than start offsets have been deleted.
         // In this case, we will return the empty set with log end offset metadata
+        // 没有找到 startOffset 之后的消息
         FetchDataInfo(nextOffsetMetadata, MemoryRecords.EMPTY)
     }
 
@@ -655,7 +664,7 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
         if (targetTimestamp == ListOffsetRequest.EARLIEST_TIMESTAMP)
             return Some(TimestampOffset(Record.NO_TIMESTAMP, segmentsCopy.head.baseOffset))
         else if (targetTimestamp == ListOffsetRequest.LATEST_TIMESTAMP)
-            return Some(TimestampOffset(Record.NO_TIMESTAMP, logEndOffset))
+                 return Some(TimestampOffset(Record.NO_TIMESTAMP, logEndOffset))
 
         val targetSeg = {
             // Get all the segments whose largest timestamp is smaller than target timestamp
@@ -687,18 +696,19 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
      * Delete any log segments matching the given predicate function,
      * starting with the oldest segment and moving forward until a segment doesn't match.
      *
-     * @param predicate A function that takes in a single log segment and returns true iff it is deletable
+     * @param predicate A function that takes in a single log segment and returns true if it is deletable
      * @return The number of segments deleted
      */
     private def deleteOldSegments(predicate: LogSegment => Boolean): Int = {
         lock synchronized {
-            val deletable = deletableSegments(predicate)
+            // 依据时间检查当前 Log 中的 LogSegment 是否满足 predicate 条件
+            val deletable = this.deletableSegments(predicate)
             val numToDelete = deletable.size
             if (numToDelete > 0) {
-                // we must always have at least one segment, so if we are going to delete all the segments, create a new one first
+                // 如果当前 Log 中所有的 LogSegment 都需要被删除，则在删除之前创建一个新的 activeSegment
                 if (segments.size == numToDelete)
-                    roll()
-                // remove the segments for lookups
+                    this.roll()
+                // 遍历删除这些需要删除的 LogSegment 文件
                 deletable.foreach(deleteSegment)
             }
             numToDelete
@@ -712,10 +722,13 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
      * @param predicate A function that takes in a single log segment and returns true iff it is deletable
      * @return the segments ready to be deleted
      */
-    private def deletableSegments(predicate: LogSegment => Boolean) = {
+    private def deletableSegments(predicate: LogSegment => Boolean): Iterable[LogSegment] = {
         val lastEntry = segments.lastEntry
         if (lastEntry == null) Seq.empty
-        else logSegments.takeWhile(s => predicate(s) && (s.baseOffset != lastEntry.getValue.baseOffset || s.size > 0))
+        // 遍历 logSegments 中所有满足删除条件的 LogSegment
+        else logSegments.takeWhile(
+            s => predicate(s) // 如果当前 LogSegment 中最大消息的时间戳相对于当前时间已经超过 retention.ms，则允许删除
+                    && (s.baseOffset != lastEntry.getValue.baseOffset || s.size > 0)) // 且当前 LogSegment 中有数据
     }
 
     /**
@@ -724,21 +737,32 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
      */
     def deleteOldSegments(): Int = {
         if (!config.delete) return 0
-        deleteRetenionMsBreachedSegments() + deleteRetentionSizeBreachedSegments()
+        this.deleteRetentionMsBreachedSegments() + this.deleteRetentionSizeBreachedSegments()
     }
 
-    private def deleteRetenionMsBreachedSegments(): Int = {
+    /**
+     * 依据 retention.ms 配置检测 Log 中的 LogSegment 是否过期，并删除过期的 LogSegment
+     *
+     * @return
+     */
+    private def deleteRetentionMsBreachedSegments(): Int = {
         if (config.retentionMs < 0) return 0
         val startMs = time.milliseconds
-        deleteOldSegments(startMs - _.largestTimestamp > config.retentionMs)
+        this.deleteOldSegments(startMs - _.largestTimestamp > config.retentionMs)
     }
 
+    /**
+     * 依据 retention.bytes 配置检测 Log 的大小是否过大，删除部分文件保证 Log 的大小在允许范围之内
+     *
+     * @return
+     */
     private def deleteRetentionSizeBreachedSegments(): Int = {
         if (config.retentionSize < 0 || size < config.retentionSize) return 0
-        var diff = size - config.retentionSize
+        var diff = size - config.retentionSize // Log 的大小减去允许的大小（retention.bytes）
 
-        def shouldDelete(segment: LogSegment) = {
+        def shouldDelete(segment: LogSegment): Boolean = {
             if (diff - segment.size >= 0) {
+                // 减去超出大小的部分
                 diff -= segment.size
                 true
             } else {
@@ -746,7 +770,8 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
             }
         }
 
-        deleteOldSegments(shouldDelete)
+        // 删除 Log 中超出大小的部分
+        this.deleteOldSegments(shouldDelete)
     }
 
     /**
@@ -789,26 +814,28 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
         val segment = activeSegment
         val now = time.milliseconds
         val reachedRollMs = segment.timeWaitedForRoll(now, maxTimestampInMessages) > config.segmentMs - segment.rollJitterMs
-        if (segment.size > config.segmentSize - messagesSize
-                || (segment.size > 0 && reachedRollMs)
-                || segment.index.isFull
+        if (segment.size > config.segmentSize - messagesSize // 当前 activeSegment 大小加上本次带追加的消息的大小，超过允许的 LogSegment 的最大长度
+                || (segment.size > 0 && reachedRollMs) // 当前 activeSegment 的活跃时间已将超过了允许的最大活跃时间
+                || segment.index.isFull // 索引文件满了
                 || segment.timeIndex.isFull
                 || !segment.canConvertToRelativeOffset(maxOffsetInMessages)) {
             debug(s"Rolling new log segment in $name (log_size = ${segment.size}/${config.segmentSize}}, " +
                     s"index_size = ${segment.index.entries}/${segment.index.maxEntries}, " +
                     s"time_index_size = ${segment.timeIndex.entries}/${segment.timeIndex.maxEntries}, " +
                     s"inactive_time_ms = ${segment.timeWaitedForRoll(now, maxTimestampInMessages)}/${config.segmentMs - segment.rollJitterMs}).")
+
             /*
-              maxOffsetInMessages - Integer.MAX_VALUE is a heuristic value for the first offset in the set of messages.
-              Since the offset in messages will not differ by more than Integer.MAX_VALUE, this is guaranteed <= the real
-              first offset in the set. Determining the true first offset in the set requires decompression, which the follower
-              is trying to avoid during log append. Prior behavior assigned new baseOffset = logEndOffset from old segment.
-              This was problematic in the case that two consecutive messages differed in offset by
-              Integer.MAX_VALUE.toLong + 2 or more.  In this case, the prior behavior would roll a new log segment whose
-              base offset was too low to contain the next message.  This edge case is possible when a replica is recovering a
-              highly compacted topic from scratch.
+             * maxOffsetInMessages - Integer.MAX_VALUE is a heuristic value for the first offset in the set of messages.
+             * Since the offset in messages will not differ by more than Integer.MAX_VALUE, this is guaranteed <= the real
+             * first offset in the set. Determining the true first offset in the set requires decompression, which the follower
+             * is trying to avoid during log append. Prior behavior assigned new baseOffset = logEndOffset from old segment.
+             * This was problematic in the case that two consecutive messages differed in offset by Integer.MAX_VALUE.toLong + 2 or more.
+             * In this case, the prior behavior would roll a new log segment whose base offset was too low to contain the next message.
+             * This edge case is possible when a replica is recovering a highly compacted topic from scratch.
+             *
+             * 创建新的 activeSegment
              */
-            roll(maxOffsetInMessages - Integer.MAX_VALUE)
+            this.roll(maxOffsetInMessages - Integer.MAX_VALUE)
         } else {
             segment
         }
@@ -824,44 +851,61 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
         val start = time.nanoseconds
         lock synchronized {
             val newOffset = Math.max(expectedNextOffset, logEndOffset)
+            // 获取日志文件（名称是 ${LEO}.log）
             val logFile = Log.logFile(dir, newOffset)
+            // 获取索引文件（名称是 ${LEO}.index）
             val indexFile = indexFilename(dir, newOffset)
+            // 获取时间索引文件（名称是 ${LEO}.timeindex）
             val timeIndexFile = timeIndexFilename(dir, newOffset)
+            // 遍历检查，如果文件已经存在则删除
             for (file <- List(logFile, indexFile, timeIndexFile); if file.exists) {
                 warn("Newly rolled segment file " + file.getName + " already exists; deleting it first")
                 file.delete()
             }
 
+            // 处理上一任 activeSegment
             segments.lastEntry() match {
                 case null =>
-                case entry => {
+                case entry =>
                     val seg = entry.getValue
+                    // 追加最大时间戳和对应的 offset 到 timeindex
                     seg.onBecomeInactiveSegment()
+                    // 对日志文件和索引文件进行阶段处理，仅保留有效字节
                     seg.index.trimToValidSize()
                     seg.timeIndex.trimToValidSize()
                     seg.log.trim()
-                }
             }
-            val segment = new LogSegment(dir,
+
+            // 创建新的 activeSegment
+            val segment = new LogSegment(
+                dir,
                 startOffset = newOffset,
                 indexIntervalBytes = config.indexInterval,
                 maxIndexSize = config.maxIndexSize,
                 rollJitterMs = config.randomSegmentJitter,
                 time = time,
                 fileAlreadyExists = false,
-                initFileSize = initFileSize,
+                initFileSize = initFileSize(),
                 preallocate = config.preallocate)
-            val prev = addSegment(segment)
+
+            // 添加新创建的 LogSegment 到 segments 跳跃表
+            val prev = this.addSegment(segment)
+
+            // 如果已经存在对应 baseOffset 的 LogSegment，则抛出异常
             if (prev != null)
                 throw new KafkaException("Trying to roll a new log segment for topic partition %s with start offset %d while it already exists.".format(name, newOffset))
             // We need to update the segment base offset and append position data of the metadata when log rolls.
             // The next offset should not change.
-            updateLogEndOffset(nextOffsetMetadata.messageOffset)
+            // 更新 nextOffsetMetadata，主要是更新 segmentBaseOffset 和 relativePositionInSegment
+            this.updateLogEndOffset(nextOffsetMetadata.messageOffset)
+
             // schedule an asynchronous flush of the old segment
-            scheduler.schedule("flush-log", () => flush(newOffset), delay = 0L)
+            // 执行 flush 操作
+            scheduler.schedule("flush-log", () => this.flush(newOffset))
 
             info("Rolled new log segment for '" + name + "' in %.0f ms.".format((System.nanoTime - start) / (1000.0 * 1000.0)))
 
+            // 返回新的 activeSegment
             segment
         }
     }
@@ -869,12 +913,12 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
     /**
      * The number of messages appended to the log since the last flush
      */
-    def unflushedMessages() = this.logEndOffset - this.recoveryPoint
+    def unflushedMessages(): Long = this.logEndOffset - this.recoveryPoint
 
     /**
      * Flush all log segments
      */
-    def flush(): Unit = flush(this.logEndOffset)
+    def flush(): Unit = this.flush(this.logEndOffset)
 
     /**
      * Flush log segments for all offsets up to offset-1
@@ -882,15 +926,18 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
      * @param offset The offset to flush up to (non-inclusive); the new recovery point
      */
     def flush(offset: Long): Unit = {
+        // 如果尾部 offset 小于等于 recoveryPoint，则直接返回，因为已经全部落盘了
         if (offset <= this.recoveryPoint)
             return
-        debug("Flushing log '" + name + " up to offset " + offset + ", last flushed: " + lastFlushTime + " current time: " +
-                time.milliseconds + " unflushed = " + unflushedMessages)
-        for (segment <- logSegments(this.recoveryPoint, offset))
-            segment.flush()
+        debug("Flushing log '" + name + " up to offset " + offset + ", last flushed: " + lastFlushTime + " current time: " + time.milliseconds + " unflushed = " + unflushedMessages)
+        // 遍历处理 [recoveryPoint, offset) 之间的 LogSegment
+        for (segment <- this.logSegments(this.recoveryPoint, offset))
+            segment.flush() // 执行刷盘操作
         lock synchronized {
             if (offset > this.recoveryPoint) {
+                // 更新 recoveryPoint
                 this.recoveryPoint = offset
+                // 更新最近一次执行 flush 的时间
                 lastflushedTime.set(time.milliseconds)
             }
         }
@@ -990,7 +1037,7 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
         }
     }
 
-    override def toString = "Log(" + dir + ")"
+    override def toString: String = "Log(" + dir + ")"
 
     /**
      * This method performs an asynchronous log segment delete by doing the following:
@@ -1007,8 +1054,10 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
     private def deleteSegment(segment: LogSegment) {
         info("Scheduling log segment %d for log %s for deletion.".format(segment.baseOffset, name))
         lock synchronized {
+            // 从跳跃表中删除当前 LogSegment 对象
             segments.remove(segment.baseOffset)
-            asyncDeleteSegment(segment)
+            // 将对应的日志文件和索引文件后缀改为 .deleted，并提交一个定时任务执行删除操作
+            this.asyncDeleteSegment(segment)
         }
     }
 
@@ -1018,6 +1067,7 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
      * @throws KafkaStorageException if the file can't be renamed and still exists
      */
     private def asyncDeleteSegment(segment: LogSegment) {
+        // 修改文件后缀为 deleted
         segment.changeFileSuffixes("", Log.DeletedFileSuffix)
 
         def deleteSeg() {
@@ -1025,6 +1075,7 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
             segment.delete()
         }
 
+        // 提交到定时任务执行删除
         scheduler.schedule("delete-file", deleteSeg, delay = config.fileDeleteDelayMs)
     }
 
@@ -1088,7 +1139,7 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
      *
      * @param segment The segment to add
      */
-    def addSegment(segment: LogSegment) = this.segments.put(segment.baseOffset, segment)
+    def addSegment(segment: LogSegment): LogSegment = this.segments.put(segment.baseOffset, segment)
 
 }
 
@@ -1146,8 +1197,7 @@ object Log {
      * @param dir    The directory in which the log will reside
      * @param offset The base offset of the log file
      */
-    def logFile(dir: File, offset: Long) =
-        new File(dir, filenamePrefixFromOffset(offset) + LogFileSuffix)
+    def logFile(dir: File, offset: Long) = new File(dir, filenamePrefixFromOffset(offset) + LogFileSuffix)
 
     /**
      * Return a directory name to rename the log directory to for async deletion. The name will be in the following
@@ -1164,8 +1214,7 @@ object Log {
      * @param dir    The directory in which the log will reside
      * @param offset The base offset of the log file
      */
-    def indexFilename(dir: File, offset: Long) =
-        new File(dir, filenamePrefixFromOffset(offset) + IndexFileSuffix)
+    def indexFilename(dir: File, offset: Long) = new File(dir, filenamePrefixFromOffset(offset) + IndexFileSuffix)
 
     /**
      * Construct a time index file name in the given dir using the given base offset
@@ -1173,8 +1222,7 @@ object Log {
      * @param dir    The directory in which the log will reside
      * @param offset The base offset of the log file
      */
-    def timeIndexFilename(dir: File, offset: Long) =
-        new File(dir, filenamePrefixFromOffset(offset) + TimeIndexFileSuffix)
+    def timeIndexFilename(dir: File, offset: Long) = new File(dir, filenamePrefixFromOffset(offset) + TimeIndexFileSuffix)
 
     /**
      * Parse the topic and partition out of the directory name of a log

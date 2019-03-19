@@ -38,31 +38,42 @@ import scala.collection._
  * size or I/O rate.
  *
  * A background thread handles log retention by periodically truncating excess log segments.
+ *
+ * 提供了加载 Log、创建、删除、查询 Log 集合等功能
  */
 @threadsafe
-class LogManager(val logDirs: Array[File],
+class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs 配置，一般选择 log 数目最少的目录进行创建
                  val topicConfigs: Map[String, LogConfig],
                  val defaultConfig: LogConfig,
                  val cleanerConfig: CleanerConfig,
-                 ioThreads: Int,
+                 ioThreads: Int, // 每个 log 目录下分配的执行加载任务的线程数目
                  val flushCheckMs: Long,
                  val flushCheckpointMs: Long,
                  val retentionCheckMs: Long,
-                 scheduler: Scheduler,
+                 scheduler: Scheduler, // 周期任务调度器
                  val brokerState: BrokerState,
                  time: Time) extends Logging {
+
     val RecoveryPointCheckpointFile = "recovery-point-offset-checkpoint"
     val LockFile = ".lock"
     val InitialTaskDelayMs: Int = 30 * 1000
 
+    /** 创建或删除 Log 时的锁对象 */
     private val logCreationOrDeletionLock = new Object
+
+    /** 管理 TP 与 Log 之间的映射关系 */
     private val logs = new Pool[TopicPartition, Log]()
     private val logsToBeDeleted = new LinkedBlockingQueue[Log]()
 
-    createAndValidateLogDirs(logDirs)
-    private val dirLocks = lockLogDirs(logDirs)
+    this.createAndValidateLogDirs(logDirs)
+
+    /** 在文件系统层面加锁 */
+    private val dirLocks = this.lockLogDirs(logDirs)
+
+    /** 管理每个 log 目录与其下的 recovery-point-offset-checkpoint 文件的映射关系 */
     private val recoveryPointCheckpoints = logDirs.map(dir => (dir, new OffsetCheckpoint(new File(dir, RecoveryPointCheckpointFile)))).toMap
-    loadLogs()
+
+    this.loadLogs()
 
     // public, so we can access this from kafka.admin.DeleteTopicTest
     val cleaner: LogCleaner =
@@ -134,7 +145,7 @@ class LogManager(val logDirs: Array[File],
 
             var recoveryPoints = Map[TopicPartition, Long]()
             try {
-                recoveryPoints = this.recoveryPointCheckpoints(dir).read
+                recoveryPoints = this.recoveryPointCheckpoints(dir).read()
             } catch {
                 case e: Exception =>
                     warn("Error occured while reading recovery-point-offset-checkpoint file of directory " + dir, e)
@@ -175,10 +186,9 @@ class LogManager(val logDirs: Array[File],
                 cleanShutdownFile.delete()
             }
         } catch {
-            case e: ExecutionException => {
+            case e: ExecutionException =>
                 error("There was an error in one of the threads during logs loading: " + e.getCause)
                 throw e.getCause
-            }
         } finally {
             threadPools.foreach(_.shutdown())
         }
@@ -192,31 +202,39 @@ class LogManager(val logDirs: Array[File],
     def startup() {
         /* Schedule the cleanup task to delete old logs */
         if (scheduler != null) {
+            // 1. 启动 log retention 周期性任务
             info("Starting log cleanup with a period of %d ms.".format(retentionCheckMs))
             scheduler.schedule("kafka-log-retention",
                 cleanupLogs,
                 delay = InitialTaskDelayMs,
                 period = retentionCheckMs,
                 TimeUnit.MILLISECONDS)
+
+            // 2. 启动 log flusher 周期性任务
             info("Starting log flusher with a default period of %d ms.".format(flushCheckMs))
             scheduler.schedule("kafka-log-flusher",
                 flushDirtyLogs,
                 delay = InitialTaskDelayMs,
                 period = flushCheckMs,
                 TimeUnit.MILLISECONDS)
+
+            // 3. 启动 recovery point checkpoint 周期性任务
             scheduler.schedule("kafka-recovery-point-checkpoint",
                 checkpointRecoveryPointOffsets,
                 delay = InitialTaskDelayMs,
                 period = flushCheckpointMs,
                 TimeUnit.MILLISECONDS)
+
+            // 4. 启动 delete logs 周期性任务
             scheduler.schedule("kafka-delete-logs",
                 deleteLogs,
                 delay = InitialTaskDelayMs,
                 period = defaultConfig.fileDeleteDelayMs,
                 TimeUnit.MILLISECONDS)
         }
+
         if (cleanerConfig.enableCleaner)
-            cleaner.startup()
+            cleaner.startup() // 启动 LogCleaner
     }
 
     /**
@@ -327,16 +345,18 @@ class LogManager(val logDirs: Array[File],
     /**
      * Write out the current recovery point for all logs to a text file in the log directory
      * to avoid recovering the whole log on startup.
+     *
+     * 定时将每个 Log 的 recoveryPoint 写入 recovery-point-offset-checkpoint 文件
      */
     def checkpointRecoveryPointOffsets() {
-        this.logDirs.foreach(checkpointLogsInDir)
+        logDirs.foreach(checkpointLogsInDir)
     }
 
     /**
      * Make a checkpoint for all logs in provided directory.
      */
     private def checkpointLogsInDir(dir: File): Unit = {
-        val recoveryPoints = this.logsByDir.get(dir.toString)
+        val recoveryPoints = logsByDir.get(dir.toString)
         if (recoveryPoints.isDefined) {
             this.recoveryPointCheckpoints(dir).write(recoveryPoints.get.mapValues(_.recoveryPoint))
         }
@@ -372,6 +392,8 @@ class LogManager(val logDirs: Array[File],
 
     /**
      * Delete logs marked for deletion.
+     *
+     * 定时删除标记为删除的日志文件
      */
     private def deleteLogs(): Unit = {
         try {
@@ -454,19 +476,22 @@ class LogManager(val logDirs: Array[File],
     }
 
     /**
-     * Delete any eligible logs. Return the number of segments deleted.
-     * Only consider logs that are not compacted.
+     * Delete any eligible（合格的） logs. Return the number of segments deleted. Only consider logs that are not compacted.
+     *
+     * 按照以下条件执行 log 清理工作：
+     * 1. LogSegment 的存活时长
+     * 2. 整个 Log 的大小
      */
     def cleanupLogs() {
         debug("Beginning log cleanup...")
         var total = 0
         val startMs = time.milliseconds
+        // 遍历处理每个 TP 对应的 Log，只有对应 Log 配置了 cleanup.policy=delete 才会执行删除
         for (log <- allLogs(); if !log.config.compact) {
             debug("Garbage collecting '" + log.name + "'")
             total += log.deleteOldSegments()
         }
-        debug("Log cleanup completed. " + total + " files deleted in " +
-                (time.milliseconds - startMs) / 1000 + " seconds")
+        debug("Log cleanup completed. " + total + " files deleted in " + (time.milliseconds - startMs) / 1000 + " seconds")
     }
 
     /**
@@ -490,6 +515,8 @@ class LogManager(val logDirs: Array[File],
 
     /**
      * Flush any log which has exceeded its flush interval and has unwritten messages.
+     *
+     * 依据配置定时对 Log 执行 flush 操作
      */
     private def flushDirtyLogs(): Unit = {
         debug("Checking for dirty logs to flush...")

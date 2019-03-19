@@ -84,7 +84,7 @@ abstract class AbstractIndex[K, V](@volatile var file: File, val baseOffset: Lon
     protected var _entries: Int = mmap.position / entrySize
 
     /**
-     * True iff there are no more slots available in this index
+     * True if there are no more slots available in this index
      */
     def isFull: Boolean = _entries >= _maxEntries
 
