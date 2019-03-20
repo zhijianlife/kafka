@@ -267,17 +267,17 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
             }
         }
 
-        // Finally, complete any interrupted swap operations. To be crash-safe,
-        // log files that are replaced by the swap segment should be renamed to .deleted
-        // before the swap file is restored as the new segment file.
+        // 3. 遍历处理步骤 1 中记录的 swap 文件
         for (swapFile <- swapFiles) {
             val logFile = new File(CoreUtils.replaceSuffix(swapFile.getPath, SwapFileSuffix, ""))
             val fileName = logFile.getName
+            // 基于 log 文件名得到对应的 baseOffset
             val startOffset = fileName.substring(0, fileName.length - LogFileSuffix.length).toLong
             val indexFile = new File(CoreUtils.replaceSuffix(logFile.getPath, LogFileSuffix, IndexFileSuffix) + SwapFileSuffix)
             val index = new OffsetIndex(indexFile, baseOffset = startOffset, maxIndexSize = config.maxIndexSize)
             val timeIndexFile = new File(CoreUtils.replaceSuffix(logFile.getPath, LogFileSuffix, TimeIndexFileSuffix) + SwapFileSuffix)
             val timeIndex = new TimeIndex(timeIndexFile, baseOffset = startOffset, maxIndexSize = config.maxIndexSize)
+            // 创建对应的 LogSegment 对象
             val swapSegment = new LogSegment(FileRecords.open(swapFile),
                 index = index,
                 timeIndex = timeIndex,
@@ -286,11 +286,16 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
                 rollJitterMs = config.randomSegmentJitter,
                 time = time)
             info("Found log file %s from interrupted swap operation, repairing.".format(swapFile.getPath))
+            // 依据日志文件重建索引文件，同时验证日志文件中的消息的合法性
             swapSegment.recover(config.maxMessageSize)
-            val oldSegments = logSegments(swapSegment.baseOffset, swapSegment.nextOffset)
+            // 查找 swapSegment 对应的日志压缩前的 LogSegment 集合
+            val oldSegments = logSegments(swapSegment.baseOffset, swapSegment.nextOffset())
+            // 将 swapSegment 对象加入到 segments 中，将 oldSegments 中所有的 LogSegment 对象从 segments 中删除
+            // 并删除对应的日志文件和索引文件，最后移除文件的 ".swap" 后缀
             replaceSegments(swapSegment, oldSegments.toSeq, isRecoveredSwapFile = true)
         }
 
+        // 4. 如果 segments 为空，则需要创建一个 activeSegment
         if (logSegments.isEmpty) {
             // no existing segments, create a new mutable segment beginning at offset 0
             segments.put(0L, new LogSegment(dir = dir,
@@ -303,8 +308,10 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
                 initFileSize = this.initFileSize(),
                 preallocate = config.preallocate))
         } else {
+            // 如果 segments 不为空
             if (!dir.getAbsolutePath.endsWith(Log.DeleteDirSuffix)) {
-                recoverLog()
+                // 处理 broker 异常关闭时到的数据异常，需要验证 [recoveryPoint, activeSegment] 中的所有消息，并移除验证失败的消息
+                this.recoverLog()
                 // reset the index size of the currently active log segment to allow more entries
                 activeSegment.index.resize(config.maxIndexSize)
                 activeSegment.timeIndex.resize(config.maxIndexSize)

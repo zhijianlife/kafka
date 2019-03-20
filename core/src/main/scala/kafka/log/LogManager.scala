@@ -400,6 +400,8 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
     /**
      * Create a log for the given topic and the given partition
      * If the log already exists, just return a copy of the existing log
+     *
+     * 选择或创建 log 对应的目录，优先选择 Log 数目最少的目录
      */
     def createLog(topicPartition: TopicPartition, config: LogConfig): Log = {
         logCreationOrDeletionLock synchronized {
