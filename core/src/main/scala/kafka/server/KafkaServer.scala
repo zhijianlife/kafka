@@ -337,14 +337,14 @@ class KafkaServer(val config: KafkaConfig,
     }
 
     def getOrGenerateClusterId(zkUtils: ZkUtils): String = {
-        zkUtils.getClusterId.getOrElse(zkUtils.createOrGetClusterId(CoreUtils.generateUuidAsBase64))
+        zkUtils.getClusterId.getOrElse(zkUtils.createOrGetClusterId(CoreUtils.generateUuidAsBase64()))
     }
 
     /**
      * Forces some dynamic jmx beans to be registered on server startup.
      */
     private def registerStats() {
-        BrokerTopicStats.getBrokerAllTopicsStats()
+        BrokerTopicStats.getBrokerAllTopicsStats
         ControllerStats.uncleanLeaderElectionRate
         ControllerStats.leaderElectionTimer
     }
@@ -638,8 +638,8 @@ class KafkaServer(val config: KafkaConfig,
         val defaultProps = KafkaServer.copyKafkaConfigToLog(config)
         val defaultLogConfig = LogConfig(defaultProps)
 
-        val configs = AdminUtils.fetchAllTopicConfigs(zkUtils).map { case (topic, `configs`) =>
-            topic -> LogConfig.fromProps(defaultProps, configs)
+        val configs = AdminUtils.fetchAllTopicConfigs(zkUtils).map {
+            case (topic, cfs) => topic -> LogConfig.fromProps(defaultProps, cfs)
         }
 
         // read the log configurations from zookeeper

@@ -786,16 +786,16 @@ object KafkaConfig {
 
     }
 
-    def configNames() = configDef.names().asScala.toList.sorted
+    def configNames(): List[String] = configDef.names().asScala.toList.sorted
 
     def fromProps(props: Properties): KafkaConfig =
-        fromProps(props, true)
+        fromProps(props, doLog = true)
 
     def fromProps(props: Properties, doLog: Boolean): KafkaConfig =
         new KafkaConfig(props, doLog)
 
     def fromProps(defaults: Properties, overrides: Properties): KafkaConfig =
-        fromProps(defaults, overrides, true)
+        fromProps(defaults, overrides, doLog = true)
 
     def fromProps(defaults: Properties, overrides: Properties, doLog: Boolean): KafkaConfig = {
         val props = new Properties()
@@ -836,9 +836,9 @@ class KafkaConfig(val props: java.util.Map[_, _], doLog: Boolean) extends Abstra
     val authorizerClassName: String = getString(KafkaConfig.AuthorizerClassNameProp)
 
     /** ********* Socket Server Configuration ***********/
-    val hostName = getString(KafkaConfig.HostNameProp)
-    val port = getInt(KafkaConfig.PortProp)
-    val advertisedHostName = Option(getString(KafkaConfig.AdvertisedHostNameProp)).getOrElse(hostName)
+    val hostName: String = getString(KafkaConfig.HostNameProp)
+    val port: Integer = getInt(KafkaConfig.PortProp)
+    val advertisedHostName: String = Option(getString(KafkaConfig.AdvertisedHostNameProp)).getOrElse(hostName)
     val advertisedPort: java.lang.Integer = Option(getInt(KafkaConfig.AdvertisedPortProp)).getOrElse(port)
 
     val socketSendBufferBytes: Integer = getInt(KafkaConfig.SocketSendBufferBytesProp)

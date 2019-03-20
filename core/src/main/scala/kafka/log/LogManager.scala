@@ -71,6 +71,9 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
     /** 记录需要被删除的 Log */
     private val logsToBeDeleted = new LinkedBlockingQueue[Log]()
 
+    /**
+     * 确保没有重复的 log.dirs 配置，且配置中的路径都是目录且可读，如果不存在则会创建
+     */
     this.createAndValidateLogDirs(logDirs)
 
     /** 在文件系统层面加锁 */
@@ -80,6 +83,9 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
     private val recoveryPointCheckpoints = logDirs.map(
         dir => (dir, new OffsetCheckpoint(new File(dir, RecoveryPointCheckpointFile)))).toMap
 
+    /**
+     * 加载所有 log 路径下的 Log
+     */
     this.loadLogs()
 
     // public, so we can access this from kafka.admin.DeleteTopicTest
@@ -96,14 +102,19 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
      */
     private def createAndValidateLogDirs(dirs: Seq[File]) {
         if (dirs.map(_.getCanonicalPath).toSet.size < dirs.size)
+        // 存在重复的 log 目录
             throw new KafkaException("Duplicate log directory found: " + logDirs.mkString(", "))
+
+        // 遍历处理每个 log 目录
         for (dir <- dirs) {
+            // 如果目录不存在则创建
             if (!dir.exists) {
                 info("Log directory '" + dir.getAbsolutePath + "' not found, creating it.")
                 val created = dir.mkdirs()
                 if (!created)
                     throw new KafkaException("Failed to create data directory " + dir.getAbsolutePath)
             }
+            // 校验路径是不是目录，是不是可读
             if (!dir.isDirectory || !dir.canRead)
                 throw new KafkaException(dir.getAbsolutePath + " is not a readable log directory.")
         }
@@ -128,25 +139,27 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
     private def loadLogs(): Unit = {
         info("Loading logs.")
         val startMs = time.milliseconds
+        // 用于记录所有 log 目录对应的线程池
         val threadPools = mutable.ArrayBuffer.empty[ExecutorService]
         val jobs = mutable.Map.empty[File, Seq[Future[_]]]
 
+        // 遍历处理每个 log 目录
         for (dir <- this.logDirs) {
+            // 为每个 log 目录创建一个 ioThreads 大小的线程池
             val pool = Executors.newFixedThreadPool(ioThreads)
             threadPools.append(pool)
 
+            // 尝试获取 .kafka_cleanshutdown 文件，如果该文件存在则说明 broker 节点是正常关闭的
             val cleanShutdownFile = new File(dir, Log.CleanShutdownFile)
-
             if (cleanShutdownFile.exists) {
-                debug(
-                    "Found clean shutdown file. " +
-                            "Skipping recovery for all logs in data directory: " +
-                            dir.getAbsolutePath)
+                debug("Found clean shutdown file. Skipping recovery for all logs in data directory: " + dir.getAbsolutePath)
             } else {
                 // log recovery itself is being performed by `Log` class during initialization
+                // broker 上次是非正常关闭的，设置状态
                 brokerState.newState(RecoveringFromUncleanShutdown)
             }
 
+            // 读取每个 log 目录下的 recovery-point-offset-checkpoint 文件，返回 TP 与 recoveryCheckpoint 之间的映射关系
             var recoveryPoints = Map[TopicPartition, Long]()
             try {
                 recoveryPoints = this.recoveryPointCheckpoints(dir).read()
@@ -156,34 +169,44 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
                     warn("Resetting the recovery checkpoint to 0")
             }
 
+            // 遍历当前 log 目录的子目录，仅处理目录，忽略文件
             val jobsForDir = for {
                 dirContent <- Option(dir.listFiles).toList
+                // 只处理目录
                 logDir <- dirContent if logDir.isDirectory
             } yield {
+                // 为每个 Log 目录创建一个 runnable 任务
                 CoreUtils.runnable {
                     debug("Loading log '" + logDir.getName + "'")
 
+                    // 依据文件名解析得到对应的 TP
                     val topicPartition = Log.parseTopicPartitionName(logDir)
+                    // 获取 Log 对应的配置
                     val config = topicConfigs.getOrElse(topicPartition.topic, defaultConfig)
+                    // 获取 Log 对应的 recoveryPoint
                     val logRecoveryPoint = recoveryPoints.getOrElse(topicPartition, 0L)
 
+                    // 创建对应的 Log 对象
                     val current = new Log(logDir, config, logRecoveryPoint, scheduler, time)
-                    if (logDir.getName.endsWith(Log.DeleteDirSuffix)) {
-                        this.logsToBeDeleted.add(current)
+                    // 如果当前 log 是需要被删除的文件，则记录到 logsToBeDeleted 中，会有周期性任务对其执行删除操作
+                    if (logDir.getName.endsWith(Log.DeleteDirSuffix)) { // -delete
+                        logsToBeDeleted.add(current)
                     } else {
-                        val previous = this.logs.put(topicPartition, current)
+                        // 将 Log 记录到 log 集合中
+                        val previous = logs.put(topicPartition, current)
                         if (previous != null) {
                             throw new IllegalArgumentException(
-                                "Duplicate log directories found: %s, %s!".format(
-                                    current.dir.getAbsolutePath, previous.dir.getAbsolutePath))
+                                "Duplicate log directories found: %s, %s!".format(current.dir.getAbsolutePath, previous.dir.getAbsolutePath))
                         }
                     }
                 }
             }
 
-            jobs(cleanShutdownFile) = jobsForDir.map(pool.submit).toSeq
+            // 提交任务，并将提交结果封装到 jobs 集合中
+            jobs(cleanShutdownFile) = jobsForDir.map(pool.submit)
         }
 
+        // 阻塞等待上面提交的任务执行完成
         try {
             for ((cleanShutdownFile, dirJobs) <- jobs) {
                 dirJobs.foreach(_.get)
@@ -194,6 +217,7 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
                 error("There was an error in one of the threads during logs loading: " + e.getCause)
                 throw e.getCause
         } finally {
+            // 遍历关闭线程池
             threadPools.foreach(_.shutdown())
         }
 

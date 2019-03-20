@@ -220,7 +220,7 @@ class LogCleaner(val config: CleanerConfig,
             cleanOrSleep()
         }
 
-        override def shutdown() = {
+        override def shutdown(): Unit = {
             initiateShutdown()
             backOffWaitLatch.countDown()
             awaitShutdown()
@@ -230,11 +230,12 @@ class LogCleaner(val config: CleanerConfig,
          * Clean a log if there is a dirty log available, otherwise sleep for a bit
          */
         private def cleanOrSleep() {
+            // 获取需要执行压缩的 Log
             val cleaned = cleanerManager.grabFilthiestCompactedLog(time) match {
-                case None =>
+                case None => // 没有需要压缩的 Log
                     false
                 case Some(cleanable) =>
-                    // there's a log, clean it
+                    // 执行日志压缩操作
                     var endOffset = cleanable.firstDirtyOffset
                     try {
                         val (nextDirtyOffset, cleanerStats) = cleaner.clean(cleanable)
@@ -256,6 +257,8 @@ class LogCleaner(val config: CleanerConfig,
                         cleanerManager.doneDeleting(topicPartition)
                     }
             }
+
+            // 如果没有需要执行压缩的 Log，则休息一会后继续重试
             if (!cleaned)
                 backOffWaitLatch.await(config.backOffMs, TimeUnit.MILLISECONDS)
         }
@@ -266,7 +269,7 @@ class LogCleaner(val config: CleanerConfig,
         def recordStats(id: Int, name: String, from: Long, to: Long, stats: CleanerStats) {
             this.lastStats = stats
 
-            def mb(bytes: Double) = bytes / (1024 * 1024)
+            def mb(bytes: Double): Double = bytes / (1024 * 1024)
 
             val message =
                 "%n\tLog cleaner thread %d cleaned log %s (dirty section = [%d, %d])%n".format(id, name, from, to) +
@@ -314,9 +317,9 @@ private[log] class Cleaner(val id: Int,
                            dupBufferLoadFactor: Double,
                            throttler: Throttler,
                            time: Time,
-                           checkDone: (TopicPartition) => Unit) extends Logging {
+                           checkDone: TopicPartition => Unit) extends Logging {
 
-    override val loggerName = classOf[LogCleaner].getName
+    override val loggerName: String = classOf[LogCleaner].getName
 
     this.logIdent = "Cleaner " + id + ": "
 
@@ -680,17 +683,17 @@ private[log] class Cleaner(val id: Int,
  * A simple struct for collecting stats about log cleaning
  */
 private class CleanerStats(time: Time = Time.SYSTEM) {
-    val startTime = time.milliseconds
-    var mapCompleteTime = -1L
-    var endTime = -1L
-    var bytesRead = 0L
-    var bytesWritten = 0L
-    var mapBytesRead = 0L
-    var mapMessagesRead = 0L
-    var messagesRead = 0L
-    var invalidMessagesRead = 0L
-    var messagesWritten = 0L
-    var bufferUtilization = 0.0d
+    val startTime: Long = time.milliseconds
+    var mapCompleteTime: Long = -1L
+    var endTime: Long = -1L
+    var bytesRead: Long = 0L
+    var bytesWritten: Long = 0L
+    var mapBytesRead: Long = 0L
+    var mapMessagesRead: Long = 0L
+    var messagesRead: Long = 0L
+    var invalidMessagesRead: Long = 0L
+    var messagesWritten: Long = 0L
+    var bufferUtilization: Double = 0.0d
 
     def readMessages(messagesRead: Int, bytesRead: Int) {
         this.messagesRead += messagesRead

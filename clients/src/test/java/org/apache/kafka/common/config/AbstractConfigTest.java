@@ -3,13 +3,14 @@
  * file distributed with this work for additional information regarding copyright ownership. The ASF licenses this file
  * to You under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
  * License. You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.common.config;
 
 import org.apache.kafka.common.KafkaException;
@@ -18,6 +19,10 @@ import org.apache.kafka.common.config.ConfigDef.Type;
 import org.apache.kafka.common.metrics.FakeMetricsReporter;
 import org.apache.kafka.common.metrics.JmxReporter;
 import org.apache.kafka.common.metrics.MetricsReporter;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -25,11 +30,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
-import static org.junit.Assert.assertEquals;
 
 public class AbstractConfigTest {
 
@@ -70,7 +70,7 @@ public class AbstractConfigTest {
         TestConfig config = new TestConfig(props);
 
         assertTrue("metric.extra_config should be marked unused before getConfiguredInstances is called",
-            config.unused().contains(FakeMetricsReporterConfig.EXTRA_CONFIG));
+                config.unused().contains(FakeMetricsReporterConfig.EXTRA_CONFIG));
 
         config.getConfiguredInstances(TestConfig.METRIC_REPORTER_CLASSES_CONFIG, MetricsReporter.class);
         assertTrue("All defined configurations should be marked as used", config.unused().isEmpty());
@@ -105,12 +105,14 @@ public class AbstractConfigTest {
             public RestrictedClassLoader() {
                 super(null);
             }
+
             @Override
             protected Class<?> findClass(String name) throws ClassNotFoundException {
-                if (name.equals(ClassTestConfig.DEFAULT_CLASS.getName()) || name.equals(ClassTestConfig.RESTRICTED_CLASS.getName()))
+                if (name.equals(ClassTestConfig.DEFAULT_CLASS.getName()) || name.equals(ClassTestConfig.RESTRICTED_CLASS.getName())) {
                     return null;
-                else
+                } else {
                     return ClassTestConfig.class.getClassLoader().loadClass(name);
+                }
             }
         }
 
@@ -172,9 +174,10 @@ public class AbstractConfigTest {
         static final Class<?> RESTRICTED_CLASS = ConfiguredFakeMetricsReporter.class;
 
         private static final ConfigDef CONFIG;
+
         static {
             CONFIG = new ConfigDef().define("class.prop", Type.CLASS, DEFAULT_CLASS, Importance.HIGH, "docs")
-                                    .define("list.prop", Type.LIST, Arrays.asList(DEFAULT_CLASS), Importance.HIGH, "docs");
+                    .define("list.prop", Type.LIST, Arrays.asList(DEFAULT_CLASS), Importance.HIGH, "docs");
         }
 
         public ClassTestConfig() {
@@ -205,10 +208,12 @@ public class AbstractConfigTest {
 
         private static Map<String, Object> overrideProps(Object classProp, Object listProp) {
             Map<String, Object> props = new HashMap<>();
-            if (classProp != null)
+            if (classProp != null) {
                 props.put("class.prop", classProp);
-            if (listProp != null)
+            }
+            if (listProp != null) {
                 props.put("list.prop", listProp);
+            }
             return props;
         }
     }
@@ -222,10 +227,10 @@ public class AbstractConfigTest {
 
         static {
             CONFIG = new ConfigDef().define(METRIC_REPORTER_CLASSES_CONFIG,
-                                            Type.LIST,
-                                            "",
-                                            Importance.LOW,
-                                            METRIC_REPORTER_CLASSES_DOC);
+                    Type.LIST,
+                    "",
+                    Importance.LOW,
+                    METRIC_REPORTER_CLASSES_DOC);
         }
 
         public TestConfig(Map<?, ?> props) {
@@ -250,7 +255,6 @@ public class AbstractConfigTest {
         private static final ConfigDef CONFIG = new ConfigDef().define(
                 EXTRA_CONFIG, ConfigDef.Type.STRING, "",
                 ConfigDef.Importance.LOW, EXTRA_CONFIG_DOC);
-
 
         public FakeMetricsReporterConfig(Map<?, ?> props) {
             super(CONFIG, props);

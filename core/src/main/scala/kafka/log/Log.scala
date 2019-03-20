@@ -95,7 +95,7 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
 
     import kafka.log.Log._
 
-    /* A lock that guards all modifications to the log */
+    /** A lock that guards all modifications to the log */
     private val lock = new Object
 
     /** 最近一次执行 flush 的时间 */
@@ -120,9 +120,10 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
         val startMs = time.milliseconds
 
         loadSegments()
+
         /* Calculate the offset of the next message */
-        nextOffsetMetadata = new LogOffsetMetadata(activeSegment.nextOffset(), activeSegment.baseOffset,
-            activeSegment.size.toInt)
+        nextOffsetMetadata = new LogOffsetMetadata(
+            activeSegment.nextOffset(), activeSegment.baseOffset, activeSegment.size.toInt)
 
         info("Completed load of log %s with %d log segments and log end offset %d in %d ms"
                 .format(name, segments.size(), logEndOffset, time.milliseconds - startMs))
@@ -159,60 +160,78 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
     /** The name of this log */
     def name: String = dir.getName
 
-    /* Load the log segments from the log files on disk */
+    /**
+     * Load the log segments from the log files on disk
+     */
     private def loadSegments() {
         // create the log directory if it doesn't exist
         dir.mkdirs()
         var swapFiles = Set[File]()
 
-        // first do a pass through the files in the log directory and remove any temporary files
-        // and find any interrupted swap operations
+        // 1. 删除 ".delete" 和 ".cleaned" 文件，将 ".swap" 文件加入到 swap 集合中
         for (file <- dir.listFiles if file.isFile) {
             if (!file.canRead)
                 throw new IOException("Could not read file " + file)
             val filename = file.getName
             if (filename.endsWith(DeletedFileSuffix) || filename.endsWith(CleanedFileSuffix)) {
-                // if the file ends in .deleted or .cleaned, delete it
+                /*
+                 * 删除 ".delete" 和 ".cleaned" 文件
+                 * - ".delete" 是指标识需要被删除的日志文件和索引文件
+                 * - ".cleaned" 是指在执行日志压缩过程中宕机，其中的数据状态不明确，无法正确恢复
+                 */
                 file.delete()
             } else if (filename.endsWith(SwapFileSuffix)) {
-                // we crashed in the middle of a swap operation, to recover:
-                // if a log, delete the .index file, complete the swap operation later
-                // if an index just delete it, it will be rebuilt
+                /*
+                 * 如果是 ".swap" 文件，则说明日志压缩过程完成，但是在执行 swap 过程中宕机，
+                 * 这种文件保存了日志压缩后的完整数据，可以进行恢复：
+                 *
+                 * 1. 如果是 log 文件，则删除 index 文件，稍后会完成 swap 操作
+                 * 2. 如果是 index 文件，则直接删除，因为后续可以重建
+                 */
+
+                // 移除 swap 后缀
                 val baseName = new File(CoreUtils.replaceSuffix(file.getPath, SwapFileSuffix, ""))
+                // 如果是 index 文件，则直接删除，因为后续可以重建
                 if (baseName.getPath.endsWith(IndexFileSuffix)) {
                     file.delete()
-                } else if (baseName.getPath.endsWith(LogFileSuffix)) {
-                    // delete the index
+                }
+                // 如果是 log 文件，则删除对应的 index 文件
+                else if (baseName.getPath.endsWith(LogFileSuffix)) {
                     val index = new File(CoreUtils.replaceSuffix(baseName.getPath, LogFileSuffix, IndexFileSuffix))
                     index.delete()
-                    swapFiles += file
+                    swapFiles += file // 将当前文件加入到 swap 集合中
                 }
             }
         }
 
-        // now do a second pass and load all the .log and all index files
+        // 2. 加载全部的日志文件和索引文件
         for (file <- dir.listFiles if file.isFile) {
             val filename = file.getName
+            // 处理 ".index" 和 ".timeindex" 文件
             if (filename.endsWith(IndexFileSuffix) || filename.endsWith(TimeIndexFileSuffix)) {
-                // if it is an index file, make sure it has a corresponding .log file
+                // 如果索引文件没有对应的 log 文件，则删除索引文件
                 val logFile =
                     if (filename.endsWith(TimeIndexFileSuffix))
                         new File(file.getAbsolutePath.replace(TimeIndexFileSuffix, LogFileSuffix))
                     else
                         new File(file.getAbsolutePath.replace(IndexFileSuffix, LogFileSuffix))
-
                 if (!logFile.exists) {
                     warn("Found an orphaned index file, %s, with no corresponding log file.".format(file.getAbsolutePath))
                     file.delete()
                 }
-            } else if (filename.endsWith(LogFileSuffix)) {
+            }
+            // 处理 ".log" 文件
+            else if (filename.endsWith(LogFileSuffix)) {
                 // if its a log file, load the corresponding log segment
                 val start = filename.substring(0, filename.length - LogFileSuffix.length).toLong
+                // 创建 ".index" 文件对象
                 val indexFile = Log.indexFilename(dir, start)
+                // 创建 ".timeindex" 文件对象
                 val timeIndexFile = Log.timeIndexFilename(dir, start)
 
                 val indexFileExists = indexFile.exists()
                 val timeIndexFileExists = timeIndexFile.exists()
+                // 创建对应的 LogSegment 对象
                 val segment = new LogSegment(dir = dir,
                     startOffset = start,
                     indexIntervalBytes = config.indexInterval,
@@ -221,8 +240,10 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
                     time = time,
                     fileAlreadyExists = true)
 
+                // 如果对应的索引文件存在
                 if (indexFileExists) {
                     try {
+                        // 校验 index 文件的完整性
                         segment.index.sanityCheck()
                         // Resize the time index file to 0 if it is newly created.
                         if (!timeIndexFileExists)
@@ -230,16 +251,18 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
                         segment.timeIndex.sanityCheck()
                     } catch {
                         case e: java.lang.IllegalArgumentException =>
-                            warn(s"Found a corrupted index file due to ${e.getMessage}}. deleting ${timeIndexFile.getAbsolutePath}, " +
-                                    s"${indexFile.getAbsolutePath} and rebuilding index...")
+                            warn(s"Found a corrupted index file due to ${e.getMessage}}. deleting ${timeIndexFile.getAbsolutePath}, " + s"${indexFile.getAbsolutePath} and rebuilding index...")
                             indexFile.delete()
                             timeIndexFile.delete()
                             segment.recover(config.maxMessageSize)
                     }
-                } else {
+                }
+                // 如果对应的索引文件不存在，则重建
+                else {
                     error("Could not find index file corresponding to log file %s, rebuilding index...".format(segment.log.file.getAbsolutePath))
                     segment.recover(config.maxMessageSize)
                 }
+                // 记录 LogSegment 到 segments 集合中
                 segments.put(start, segment)
             }
         }
@@ -664,7 +687,7 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
         if (targetTimestamp == ListOffsetRequest.EARLIEST_TIMESTAMP)
             return Some(TimestampOffset(Record.NO_TIMESTAMP, segmentsCopy.head.baseOffset))
         else if (targetTimestamp == ListOffsetRequest.LATEST_TIMESTAMP)
-            return Some(TimestampOffset(Record.NO_TIMESTAMP, logEndOffset))
+                 return Some(TimestampOffset(Record.NO_TIMESTAMP, logEndOffset))
 
         val targetSeg = {
             // Get all the segments whose largest timestamp is smaller than target timestamp

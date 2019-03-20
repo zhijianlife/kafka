@@ -69,7 +69,8 @@ private[log] class LogCleanerManager(val logDirs: Array[File],
      *
      * 维护 data 数据目录与 cleaner-offset-checkpoint 文件之间的映射关系
      */
-    private val checkpoints = logDirs.map(dir => (dir, new OffsetCheckpoint(new File(dir, offsetCheckpointFile)))).toMap
+    private val checkpoints = logDirs.map(
+        dir => (dir, new OffsetCheckpoint(new File(dir, offsetCheckpointFile)))).toMap
 
     /**
      * the set of logs currently being cleaned
@@ -111,23 +112,26 @@ private[log] class LogCleanerManager(val logDirs: Array[File],
         checkpoints.values.flatMap(_.read()).toMap
 
     /**
-     * Choose the log to clean next and add it to the in-progress set. We recompute this
-     * each time from the full set of logs to allow logs to be dynamically added to the pool of logs
-     * the log manager maintains.
+     * Choose the log to clean next and add it to the in-progress set.
+     * We recompute this each time from the full set of logs to allow logs
+     * to be dynamically added to the pool of logs the log manager maintains.
      */
     def grabFilthiestCompactedLog(time: Time): Option[LogToClean] = {
         inLock(lock) {
             val now = time.milliseconds
             this.timeOfLastRun = now
+            // 获取所有 Log 的 cleaner checkpoint
             val lastClean = allCleanerCheckpoints
             val dirtyLogs = logs.filter {
+                // 过滤掉 cleanup.policy 配置为 delete 的 Log
                 case (_, log) => log.config.compact // match logs that are marked as compacted
             }.filterNot {
+                // 过滤掉所有 inProgress 状态的 Log
                 case (topicPartition, _) => inProgress.contains(topicPartition) // skip any logs already in-progress
             }.map {
                 case (topicPartition, log) => // create a LogToClean instance for each
-                    val (firstDirtyOffset, firstUncleanableDirtyOffset) = LogCleanerManager.cleanableOffsets(log, topicPartition,
-                        lastClean, now)
+                    val (firstDirtyOffset, firstUncleanableDirtyOffset) =
+                        LogCleanerManager.cleanableOffsets(log, topicPartition, lastClean, now)
                     LogToClean(topicPartition, log, firstDirtyOffset, firstUncleanableDirtyOffset)
             }.filter(ltc => ltc.totalBytes > 0) // skip any empty logs
 
@@ -246,8 +250,11 @@ private[log] class LogCleanerManager(val logDirs: Array[File],
 
     def updateCheckpoints(dataDir: File, update: Option[(TopicPartition, Long)]) {
         inLock(lock) {
+            // 获取数据文件对应的 OffsetCheckpoint 对象
             val checkpoint = checkpoints(dataDir)
+            // 对 key 相同的 value 进行覆盖
             val existing = checkpoint.read().filterKeys(logs.keys) ++ update
+            // 更新 cleaner-offset-checkpoint 文件
             checkpoint.write(existing)
         }
     }

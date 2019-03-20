@@ -20,8 +20,10 @@ package kafka.utils
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
 
-abstract class ShutdownableThread(val name: String, val isInterruptible: Boolean = true)
+abstract class ShutdownableThread(val name: String,
+                                  val isInterruptible: Boolean = true)
         extends Thread(name) with Logging {
+
     this.setDaemon(false)
     this.logIdent = "[" + name + "], "
     val isRunning: AtomicBoolean = new AtomicBoolean(true)
@@ -63,9 +65,7 @@ abstract class ShutdownableThread(val name: String, val isInterruptible: Boolean
                 doWork()
             }
         } catch {
-            case e: Throwable =>
-                if (isRunning.get())
-                    error("Error due to ", e)
+            case e: Throwable => if (isRunning.get()) error("Error due to ", e)
         }
         shutdownLatch.countDown()
         info("Stopped ")
