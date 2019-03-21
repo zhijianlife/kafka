@@ -196,32 +196,48 @@ class Partition(val topic: String, // 分区所属的主题
     def getLeaderEpoch: Int = this.leaderEpoch
 
     /**
+     * 将本地副本设置成 leader 副本
+     *
      * Make the local replica the leader by resetting LogEndOffset for remote replicas (there could be old LogEndOffset
      * from the time when this broker was the leader last time) and setting the new leader and ISR.
-     * If the leader replica id does not change, return false to indicate the replica manager.
+     *
+     * @param controllerId
+     * @param partitionStateInfo
+     * @param correlationId
+     * @return If the leader replica id does not change, return false to indicate the replica manager.
      */
-    def makeLeader(controllerId: Int, partitionStateInfo: PartitionState, correlationId: Int): Boolean = {
+    def makeLeader(controllerId: Int,
+                   partitionStateInfo: PartitionState,
+                   correlationId: Int): Boolean = {
         val (leaderHWIncremented, isNewLeader) = inWriteLock(leaderIsrUpdateLock) {
+            // 获取需要分配的 AR 集合
             val allReplicas = partitionStateInfo.replicas.asScala.map(_.toInt)
-            // record the epoch of the controller that made the leadership decision. This is useful while updating the isr
-            // to maintain the decision maker controller's epoch in the zookeeper path
+            // record the epoch of the controller that made the leadership decision.
+            // This is useful while updating the isr to maintain the decision maker controller's epoch in the zookeeper path
+            // 记录 controllerEpoch
             controllerEpoch = partitionStateInfo.controllerEpoch
-            // add replicas that are new
+            // 1. 创建 AR 集合中所有副本对应的 Replica 对象
             allReplicas.foreach(replica => getOrCreateReplica(replica))
+            // 2. 获取 ISR 集合
             val newInSyncReplicas = partitionStateInfo.isr.asScala.map(r => getOrCreateReplica(r)).toSet
             // remove assigned replicas that have been removed by the controller
+            // 3. 依据 allReplicas 更新 assignedReplicas 集合
             (assignedReplicas.map(_.brokerId) -- allReplicas).foreach(removeReplica)
-            inSyncReplicas = newInSyncReplicas
-            leaderEpoch = partitionStateInfo.leaderEpoch
-            zkVersion = partitionStateInfo.zkVersion
+            // 4. 更新 Partition 字段
+            inSyncReplicas = newInSyncReplicas // 更新 ISR 集合
+            leaderEpoch = partitionStateInfo.leaderEpoch // 更新 leader 副本的年代信息
+            zkVersion = partitionStateInfo.zkVersion // 更新 ZK 的版本信息
+
+            // 5. 检测 leader 是否发生变化
             val isNewLeader =
                 if (leaderReplicaIdOpt.isDefined && leaderReplicaIdOpt.get == localBrokerId) {
-                    false
+                    false // 未发生变化
                 } else {
+                    // leader 发生变化，更新分区 leader 副本 ID
                     leaderReplicaIdOpt = Some(localBrokerId)
                     true
                 }
-            val leaderReplica = getReplica().get
+            val leaderReplica = getReplica().get // 获取本地副本
             val curLeaderLogEndOffset = leaderReplica.logEndOffset.messageOffset
             val curTimeMs = time.milliseconds
             // initialize lastCaughtUpTime of replicas as well as their lastFetchTimeMs and lastFetchLeaderLogEndOffset.
@@ -231,14 +247,22 @@ class Partition(val topic: String, // 分区所属的主题
             }
             // we may need to increment high watermark since ISR could be down to 1
             if (isNewLeader) {
-                // construct the high watermark metadata for the new leader replica
+                /*
+                 * 6. 初始化 leader 副本的 highWatermarkMetadata
+                 *
+                 * 如果 leader 副本发生迁移，则表示 leader 副本通过上面的步骤刚刚分配到此 broker 上，
+                 * 可能是刚启动，也可能是 follower 变成了 leader
+                 *
+                 * construct the high watermark metadata for the new leader replica
+                 */
                 leaderReplica.convertHWToLocalOffsetMetadata()
-                // reset log end offset for remote replicas
+                // 7. 重置所有远程副本的 LEO 值为 -1
                 assignedReplicas.filter(_.brokerId != localBrokerId).foreach(_.updateLogReadResult(LogReadResult.UnknownLogReadResult))
             }
+            // 8. 尝试更新 HW
             (maybeIncrementLeaderHW(leaderReplica), isNewLeader)
         }
-        // some delayed operations may be unblocked after HW changed
+        // 如果 leader 副本的 HW 增加了，则可能有 DelayedFetch 满足执行条件，尝试执行
         if (leaderHWIncremented)
             tryCompleteDelayedRequests()
         isNewLeader
@@ -247,6 +271,8 @@ class Partition(val topic: String, // 分区所属的主题
     /**
      * Make the local replica the follower by setting the new leader and ISR to empty
      * If the leader replica id does not change, return false to indicate the replica manager
+     *
+     * 依据 partitionStateInfo 信息，将本地副本设置为 follower
      */
     def makeFollower(controllerId: Int, partitionStateInfo: PartitionState, correlationId: Int): Boolean = {
         inWriteLock(leaderIsrUpdateLock) {
@@ -255,18 +281,21 @@ class Partition(val topic: String, // 分区所属的主题
             // record the epoch of the controller that made the leadership decision. This is useful while updating the isr
             // to maintain the decision maker controller's epoch in the zookeeper path
             controllerEpoch = partitionStateInfo.controllerEpoch
-            // add replicas that are new
+            // 创建对应的 Replica 对象
             allReplicas.foreach(r => getOrCreateReplica(r))
             // remove assigned replicas that have been removed by the controller
+            // 依据 partitionStateInfo 更新 AR 集合
             (assignedReplicas.map(_.brokerId) -- allReplicas).foreach(removeReplica)
+            // ISR 集合在 leader 副本上维护，所以将 follower 副本上的 ISR 置空
             inSyncReplicas = Set.empty[Replica]
-            leaderEpoch = partitionStateInfo.leaderEpoch
-            zkVersion = partitionStateInfo.zkVersion
+            leaderEpoch = partitionStateInfo.leaderEpoch // 更新 leader 副本的年代信息
+            zkVersion = partitionStateInfo.zkVersion // 更新 zk 版本信息
 
+            // 检测 leader 是否发生变化
             if (leaderReplicaIdOpt.isDefined && leaderReplicaIdOpt.get == newLeaderBrokerId) {
                 false
-            }
-            else {
+            } else {
+                // 发生变化，更新分区 leader 副本的 ID
                 leaderReplicaIdOpt = Some(newLeaderBrokerId)
                 true
             }
@@ -338,7 +367,7 @@ class Partition(val topic: String, // 分区所属的主题
             tryCompleteDelayedRequests()
     }
 
-    /*
+    /**
      * Returns a tuple where the first element is a boolean indicating whether enough replicas reached `requiredOffset`
      * and the second element is an error (which would be `Errors.NONE` for no error).
      *
@@ -401,14 +430,20 @@ class Partition(val topic: String, // 分区所属的主题
      * Returns true if the HW was incremented, and false otherwise.
      * Note There is no need to acquire the leaderIsrUpdate lock here
      * since all callers of this private API acquire that lock
+     *
+     * 尝试后移 leader 副本的 HW
      */
     private def maybeIncrementLeaderHW(leaderReplica: Replica, curTime: Long = time.milliseconds): Boolean = {
+        // 获取 ISR 集合中所有副本的 LEO
         val allLogEndOffsets = assignedReplicas.filter { replica =>
             curTime - replica.lastCaughtUpTimeMs <= replicaManager.config.replicaLagTimeMaxMs || inSyncReplicas.contains(replica)
         }.map(_.logEndOffset)
+        // 以 ISR 集合中最小的 LEO 作为新的 HW
         val newHighWatermark = allLogEndOffsets.min(new LogOffsetMetadata.OffsetOrdering)
         val oldHighWatermark = leaderReplica.highWatermark
+        // 比较新旧 HW 值，决定是否更新 HW
         if (oldHighWatermark.messageOffset < newHighWatermark.messageOffset || oldHighWatermark.onOlderSegment(newHighWatermark)) {
+            // 更新 HW
             leaderReplica.highWatermark = newHighWatermark
             debug("High watermark for partition [%s,%d] updated to %s".format(topic, partitionId, newHighWatermark))
             true
