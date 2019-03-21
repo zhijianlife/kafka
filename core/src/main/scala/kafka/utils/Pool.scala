@@ -24,6 +24,13 @@ import kafka.common.KafkaException
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
+/**
+ * 基于 ConcurrentHashMap 实现
+ *
+ * @param valueFactory
+ * @tparam K
+ * @tparam V
+ */
 class Pool[K, V](valueFactory: Option[K => V] = None) extends Iterable[(K, V)] {
 
     private val pool: ConcurrentMap[K, V] = new ConcurrentHashMap[K, V]

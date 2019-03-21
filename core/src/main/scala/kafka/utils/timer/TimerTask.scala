@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,34 +14,36 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package kafka.utils.timer
 
 trait TimerTask extends Runnable {
 
-  val delayMs: Long // timestamp in millisecond
+    /** 记录当前任务的延迟时长 */
+    val delayMs: Long // timestamp in millisecond
 
-  private[this] var timerTaskEntry: TimerTaskEntry = null
+    private[this] var timerTaskEntry: TimerTaskEntry = _
 
-  def cancel(): Unit = {
-    synchronized {
-      if (timerTaskEntry != null) timerTaskEntry.remove()
-      timerTaskEntry = null
+    def cancel(): Unit = {
+        synchronized {
+            if (timerTaskEntry != null) timerTaskEntry.remove()
+            timerTaskEntry = null
+        }
     }
-  }
 
-  private[timer] def setTimerTaskEntry(entry: TimerTaskEntry): Unit = {
-    synchronized {
-      // if this timerTask is already held by an existing timer task entry,
-      // we will remove such an entry first.
-      if (timerTaskEntry != null && timerTaskEntry != entry)
-        timerTaskEntry.remove()
+    private[timer] def setTimerTaskEntry(entry: TimerTaskEntry): Unit = {
+        synchronized {
+            // if this timerTask is already held by an existing timer task entry,
+            // we will remove such an entry first.
+            if (timerTaskEntry != null && timerTaskEntry != entry)
+                timerTaskEntry.remove()
 
-      timerTaskEntry = entry
+            timerTaskEntry = entry
+        }
     }
-  }
 
-  private[timer] def getTimerTaskEntry(): TimerTaskEntry = {
-    timerTaskEntry
-  }
+    private[timer] def getTimerTaskEntry: TimerTaskEntry = {
+        timerTaskEntry
+    }
 
 }

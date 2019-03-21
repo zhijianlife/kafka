@@ -21,8 +21,8 @@ import org.apache.kafka.common.KafkaException
 
 object LogOffsetMetadata {
     val UnknownOffsetMetadata = new LogOffsetMetadata(-1, 0, 0)
-    val UnknownSegBaseOffset = -1L
-    val UnknownFilePosition = -1
+    val UnknownSegBaseOffset: Long = -1L
+    val UnknownFilePosition: Int = -1
 
     class OffsetOrdering extends Ordering[LogOffsetMetadata] {
         override def compare(x: LogOffsetMetadata, y: LogOffsetMetadata): Int = {
