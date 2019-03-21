@@ -71,6 +71,11 @@ class Replica(val brokerId: Int, // 当前副本所在的 broker 的 ID，可以
 
     val topicPartition: TopicPartition = partition.topicPartition
 
+    /**
+     * 是否是本地副本
+     *
+     * @return
+     */
     def isLocal: Boolean = log.isDefined
 
     def lastCaughtUpTimeMs: Long = _lastCaughtUpTimeMs
@@ -91,8 +96,9 @@ class Replica(val brokerId: Int, // 当前副本所在的 broker 的 ID，可以
         if (logReadResult.info.fetchOffsetMetadata.messageOffset >= logReadResult.leaderLogEndOffset)
             _lastCaughtUpTimeMs = math.max(_lastCaughtUpTimeMs, logReadResult.fetchTimeMs)
         else if (logReadResult.info.fetchOffsetMetadata.messageOffset >= lastFetchLeaderLogEndOffset)
-                 _lastCaughtUpTimeMs = math.max(_lastCaughtUpTimeMs, lastFetchTimeMs)
+            _lastCaughtUpTimeMs = math.max(_lastCaughtUpTimeMs, lastFetchTimeMs)
 
+        // 更新 LEO
         logEndOffset = logReadResult.info.fetchOffsetMetadata
         lastFetchLeaderLogEndOffset = logReadResult.leaderLogEndOffset
         lastFetchTimeMs = logReadResult.fetchTimeMs
@@ -106,13 +112,20 @@ class Replica(val brokerId: Int, // 当前副本所在的 broker 的 ID，可以
 
     private def logEndOffset_=(newLogEndOffset: LogOffsetMetadata) {
         if (isLocal) {
+            // 对于本地副本，不能直接更新 LEO
             throw new KafkaException(s"Should not set log end offset on partition $topicPartition's local replica $brokerId")
         } else {
+            // 对于远程副本，LEO 是通过请求进行更新的
             logEndOffsetMetadata = newLogEndOffset
             trace(s"Setting log end offset for replica $brokerId for partition $topicPartition to [$logEndOffsetMetadata]")
         }
     }
 
+    /**
+     * 获取 LEO 副本
+     *
+     * @return
+     */
     def logEndOffset: LogOffsetMetadata =
         if (isLocal)
             log.get.logEndOffsetMetadata
@@ -121,6 +134,7 @@ class Replica(val brokerId: Int, // 当前副本所在的 broker 的 ID，可以
 
     def highWatermark_=(newHighWatermark: LogOffsetMetadata) {
         if (isLocal) {
+            // 只有本地副本可以更新 HW
             highWatermarkMetadata = newHighWatermark
             trace(s"Setting high watermark for replica $brokerId partition $topicPartition to [$newHighWatermark]")
         } else {
@@ -128,6 +142,11 @@ class Replica(val brokerId: Int, // 当前副本所在的 broker 的 ID，可以
         }
     }
 
+    /**
+     * 获取 hW
+     *
+     * @return
+     */
     def highWatermark: LogOffsetMetadata = highWatermarkMetadata
 
     def convertHWToLocalOffsetMetadata(): Unit = {

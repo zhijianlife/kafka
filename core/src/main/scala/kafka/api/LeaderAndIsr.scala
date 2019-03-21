@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -23,29 +23,29 @@ import kafka.utils._
 import scala.collection.Set
 
 object LeaderAndIsr {
-  val initialLeaderEpoch: Int = 0
-  val initialZKVersion: Int = 0
-  val NoLeader = -1
-  val LeaderDuringDelete = -2
+    val initialLeaderEpoch: Int = 0
+    val initialZKVersion: Int = 0
+    val NoLeader: Int = -1
+    val LeaderDuringDelete: Int = -2
 }
 
 case class LeaderAndIsr(var leader: Int, var leaderEpoch: Int, var isr: List[Int], var zkVersion: Int) {
-  def this(leader: Int, isr: List[Int]) = this(leader, LeaderAndIsr.initialLeaderEpoch, isr, LeaderAndIsr.initialZKVersion)
+    def this(leader: Int, isr: List[Int]) = this(leader, LeaderAndIsr.initialLeaderEpoch, isr, LeaderAndIsr.initialZKVersion)
 
-  override def toString: String = {
-    Json.encode(Map("leader" -> leader, "leader_epoch" -> leaderEpoch, "isr" -> isr))
-  }
+    override def toString: String = {
+        Json.encode(Map("leader" -> leader, "leader_epoch" -> leaderEpoch, "isr" -> isr))
+    }
 }
 
 case class PartitionStateInfo(leaderIsrAndControllerEpoch: LeaderIsrAndControllerEpoch, allReplicas: Set[Int]) {
 
-  def replicationFactor = allReplicas.size
+    def replicationFactor: Int = allReplicas.size
 
-  override def toString: String = {
-    val partitionStateInfo = new StringBuilder
-    partitionStateInfo.append("(LeaderAndIsrInfo:" + leaderIsrAndControllerEpoch.toString)
-    partitionStateInfo.append(",ReplicationFactor:" + replicationFactor + ")")
-    partitionStateInfo.append(",AllReplicas:" + allReplicas.mkString(",") + ")")
-    partitionStateInfo.toString()
-  }
+    override def toString: String = {
+        val partitionStateInfo = new StringBuilder
+        partitionStateInfo.append("(LeaderAndIsrInfo:" + leaderIsrAndControllerEpoch.toString)
+        partitionStateInfo.append(",ReplicationFactor:" + replicationFactor + ")")
+        partitionStateInfo.append(",AllReplicas:" + allReplicas.mkString(",") + ")")
+        partitionStateInfo.toString()
+    }
 }

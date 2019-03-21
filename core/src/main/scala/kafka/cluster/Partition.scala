@@ -25,7 +25,7 @@ import kafka.admin.AdminUtils
 import kafka.api.LeaderAndIsr
 import kafka.common._
 import kafka.controller.KafkaController
-import kafka.log.LogConfig
+import kafka.log.{LogAppendInfo, LogConfig}
 import kafka.metrics.KafkaMetricsGroup
 import kafka.server._
 import kafka.utils.CoreUtils.{inReadLock, inWriteLock}
@@ -41,40 +41,63 @@ import scala.collection.JavaConverters._
 
 /**
  * Data structure that represents a topic partition. The leader maintains the AR, ISR, CUR, RAR
+ *
+ * 分区，负责管理每个副本对应的 Replica 对象，进行 leader 切换，ISR 集合的管理，以及调用日志存储子系统完成写入消息
  */
-class Partition(val topic: String,
-                val partitionId: Int,
+class Partition(val topic: String, // 分区所属的主题
+                val partitionId: Int, // 分区编号
                 time: Time,
                 replicaManager: ReplicaManager) extends Logging with KafkaMetricsGroup {
 
     val topicPartition = new TopicPartition(topic, partitionId)
 
+    /** 当前 broker 的 ID */
     private val localBrokerId = replicaManager.config.brokerId
+
+    /** 管理分区日志 */
     private val logManager = replicaManager.logManager
+
+    /** ZK 工具类 */
     private val zkUtils = replicaManager.zkUtils
+
+    /** AR 集合，维护当前分区全部副本的集合 */
     private val assignedReplicaMap = new Pool[Int, Replica]
     // The read lock is only required when multiple reads are executed and needs to be in a consistent manner
     private val leaderIsrUpdateLock = new ReentrantReadWriteLock
     private var zkVersion: Int = LeaderAndIsr.initialZKVersion
+
+    /** Leader 副本的年代信息 */
     @volatile private var leaderEpoch: Int = LeaderAndIsr.initialLeaderEpoch - 1
+
+    /** 分区 leader 副本的 ID */
     @volatile var leaderReplicaIdOpt: Option[Int] = None
+
+    /** 维护当前分区的 ISR 集合 */
     @volatile var inSyncReplicas: Set[Replica] = Set.empty[Replica]
 
-    /* Epoch of the controller that last changed the leader. This needs to be initialized correctly upon broker startup.
+    /**
+     * Epoch of the controller that last changed the leader. This needs to be initialized correctly upon broker startup.
      * One way of doing that is through the controller's start replica state change command. When a new broker starts up
      * the controller sends it a start replica command containing the leader for each partition that the broker hosts.
      * In addition to the leader, the controller can also send the epoch of the controller that elected the leader for
-     * each partition. */
+     * each partition.
+     */
     private var controllerEpoch: Int = KafkaController.InitialControllerEpoch - 1
     this.logIdent = "Partition [%s,%d] on broker %d: ".format(topic, partitionId, localBrokerId)
 
+    /**
+     * 是不是本地副本
+     *
+     * @param replicaId
+     * @return
+     */
     private def isReplicaLocal(replicaId: Int): Boolean = replicaId == localBrokerId
 
-    val tags = Map("topic" -> topic, "partition" -> partitionId.toString)
+    val tags: Map[String, String] = Map("topic" -> topic, "partition" -> partitionId.toString)
 
     newGauge("UnderReplicated",
         new Gauge[Int] {
-            def value = {
+            def value: Int = {
                 if (isUnderReplicated) 1 else 0
             }
         },
@@ -83,7 +106,7 @@ class Partition(val topic: String,
 
     newGauge("InSyncReplicasCount",
         new Gauge[Int] {
-            def value = {
+            def value: Int = {
                 if (isLeaderReplicaLocal) inSyncReplicas.size else 0
             }
         },
@@ -92,7 +115,7 @@ class Partition(val topic: String,
 
     newGauge("ReplicasCount",
         new Gauge[Int] {
-            def value = {
+            def value: Int = {
                 if (isLeaderReplicaLocal) assignedReplicas.size else 0
             }
         },
@@ -104,19 +127,37 @@ class Partition(val topic: String,
     def isUnderReplicated: Boolean =
         isLeaderReplicaLocal && inSyncReplicas.size < assignedReplicas.size
 
+    /**
+     * 负责在 AR 集合中查找指定副本的 Replica 对象，如果不存在则创建并添加到 AR 集合中，
+     * 如果创建的是本地副本，则会创建或恢复对应的 Log，并初始化或恢复 HW。
+     *
+     * HW 与 Log.recoveryPoint 类似，也会记录到文件中，对应 replication-offset-checkpoint 文件
+     *
+     * @param replicaId
+     * @return
+     */
     def getOrCreateReplica(replicaId: Int = localBrokerId): Replica = {
+        // 尝试从 AR 集合中获取 replicaId 对应的 Replica 对象，如果不存在则创建一个
         assignedReplicaMap.getAndMaybePut(replicaId, {
-            if (isReplicaLocal(replicaId)) {
-                val config = LogConfig.fromProps(logManager.defaultConfig.originals,
-                    AdminUtils.fetchEntityConfig(zkUtils, ConfigType.Topic, topic))
+            // 如果是本地副本
+            if (this.isReplicaLocal(replicaId)) {
+                // 获取配置信息，ZK 中的配置会覆盖默认配置
+                val config = LogConfig.fromProps(logManager.defaultConfig.originals, AdminUtils.fetchEntityConfig(zkUtils, ConfigType.Topic, topic))
+                // 创建本地副本对应的 Log 对象，如果已经存在则直接返回
                 val log = logManager.createLog(topicPartition, config)
+                // 获取指定 log 目录对应的 OffsetCheckpoint 对象
                 val checkpoint = replicaManager.highWatermarkCheckpoints(log.dir.getParentFile.getAbsolutePath)
-                val offsetMap = checkpoint.read
+                // 加载 replication-offset-checkpoint 文件中记录的 HW 信息
+                val offsetMap = checkpoint.read()
                 if (!offsetMap.contains(topicPartition))
                     info(s"No checkpointed highwatermark is found for partition $topicPartition")
+                // 依据 TP 找到对应的 HW，并与 LEO 比较，选择较小的值作为此副本的 HW
                 val offset = math.min(offsetMap.getOrElse(topicPartition, 0L), log.logEndOffset)
+                // 创建 Replica 对象
                 new Replica(replicaId, this, time, offset, Some(log))
-            } else new Replica(replicaId, this, time)
+            }
+            // 如果是远程副本
+            else new Replica(replicaId, this, time)
         })
     }
 
@@ -314,7 +355,7 @@ class Partition(val topic: String,
                 def numAcks = curInSyncReplicas.count { r =>
                     if (!r.isLocal)
                         if (r.logEndOffset.messageOffset >= requiredOffset) {
-                            trace(s"Replica ${r.brokerId} of ${topic}-${partitionId} received offset $requiredOffset")
+                            trace(s"Replica ${r.brokerId} of $topic-$partitionId received offset $requiredOffset")
                             true
                         }
                         else
@@ -323,7 +364,7 @@ class Partition(val topic: String,
                         true /* also count the local (leader) replica */
                 }
 
-                trace(s"$numAcks acks satisfied for ${topic}-${partitionId} with acks = -1")
+                trace(s"$numAcks acks satisfied for $topic-$partitionId with acks = -1")
 
                 val minIsr = leaderReplica.log.get.config.minInSyncReplicas
 
@@ -337,7 +378,7 @@ class Partition(val topic: String,
                     else
                         (true, Errors.NOT_ENOUGH_REPLICAS_AFTER_APPEND)
                 } else
-                      (false, Errors.NONE)
+                    (false, Errors.NONE)
             case None =>
                 (false, Errors.NOT_LEADER_FOR_PARTITION)
         }
@@ -437,7 +478,7 @@ class Partition(val topic: String,
         laggingReplicas
     }
 
-    def appendRecordsToLeader(records: MemoryRecords, requiredAcks: Int = 0) = {
+    def appendRecordsToLeader(records: MemoryRecords, requiredAcks: Int = 0): LogAppendInfo = {
         val (info, leaderHWIncremented) = inReadLock(leaderIsrUpdateLock) {
             leaderReplicaIfLocal match {
                 case Some(leaderReplica) =>
@@ -447,11 +488,11 @@ class Partition(val topic: String,
 
                     // Avoid writing to leader if there are not enough insync replicas to make it safe
                     if (inSyncSize < minIsr && requiredAcks == -1) {
-                        throw new NotEnoughReplicasException("Number of insync replicas for partition %s is [%d], below required minimum [%d]"
+                        throw new NotEnoughReplicasException("Number of insync replicas for partition %s is [%d], below required minimum [%s]"
                                 .format(topicPartition, inSyncSize, minIsr))
                     }
 
-                    val info = log.append(records, assignOffsets = true)
+                    val info = log.append(records)
                     // probably unblock some follower fetch requests since log end offset has been updated
                     replicaManager.tryCompleteDelayedFetch(TopicPartitionOperationKey(this.topic, this.partitionId))
                     // we may need to increment high watermark since ISR could be down to 1

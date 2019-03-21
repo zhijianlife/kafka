@@ -114,8 +114,7 @@ class ReplicaManager(val config: KafkaConfig,
     /* epoch of the controller that last changed the leader */
     @volatile var controllerEpoch: Int = KafkaController.InitialControllerEpoch - 1
     private val localBrokerId = config.brokerId
-    private val allPartitions = new Pool[TopicPartition, Partition](valueFactory = Some(tp =>
-        new Partition(tp.topic, tp.partition, time, this)))
+    private val allPartitions = new Pool[TopicPartition, Partition](valueFactory = Some(tp => new Partition(tp.topic, tp.partition, time, this)))
     private val replicaStateChangeLock = new Object
     val replicaFetcherManager = new ReplicaFetcherManager(config, this, metrics, time, threadNamePrefix, quotaManager)
     private val highWatermarkCheckPointThreadStarted = new AtomicBoolean(false)
@@ -525,15 +524,15 @@ class ReplicaManager(val config: KafkaConfig,
 
                 // decide whether to only fetch from leader
                 val localReplica = if (fetchOnlyFromLeader)
-                                       getLeaderReplicaIfLocal(tp)
-                                   else
-                                       getReplicaOrException(tp)
+                    getLeaderReplicaIfLocal(tp)
+                else
+                    getReplicaOrException(tp)
 
                 // decide whether to only fetch committed data (i.e. messages below high watermark)
                 val maxOffsetOpt = if (readOnlyCommitted)
-                                       Some(localReplica.highWatermark.messageOffset)
-                                   else
-                                       None
+                    Some(localReplica.highWatermark.messageOffset)
+                else
+                    None
 
                 /* Read the LogOffsetMetadata prior to performing the read from the log.
                  * We use the LogOffsetMetadata to determine if a particular replica is in-sync or not.
@@ -557,7 +556,7 @@ class ReplicaManager(val config: KafkaConfig,
                         // For FetchRequest version 3, we replace incomplete message sets with an empty one as consumers can make
                         // progress in such cases and don't need to report a `RecordTooLargeException`
                         else if (!hardMaxBytesLimit && fetch.firstEntryIncomplete)
-                                 FetchDataInfo(fetch.fetchOffsetMetadata, MemoryRecords.EMPTY)
+                            FetchDataInfo(fetch.fetchOffsetMetadata, MemoryRecords.EMPTY)
                         else fetch
 
                     case None =>
@@ -695,13 +694,13 @@ class ReplicaManager(val config: KafkaConfig,
                 val partitionsToBeFollower = partitionState -- partitionsTobeLeader.keys
 
                 val partitionsBecomeLeader = if (partitionsTobeLeader.nonEmpty)
-                                                 makeLeaders(controllerId, controllerEpoch, partitionsTobeLeader, correlationId, responseMap)
-                                             else
-                                                 Set.empty[Partition]
+                    makeLeaders(controllerId, controllerEpoch, partitionsTobeLeader, correlationId, responseMap)
+                else
+                    Set.empty[Partition]
                 val partitionsBecomeFollower = if (partitionsToBeFollower.nonEmpty)
-                                                   makeFollowers(controllerId, controllerEpoch, partitionsToBeFollower, correlationId, responseMap, metadataCache)
-                                               else
-                                                   Set.empty[Partition]
+                    makeFollowers(controllerId, controllerEpoch, partitionsToBeFollower, correlationId, responseMap, metadataCache)
+                else
+                    Set.empty[Partition]
 
                 // we initialize highwatermark thread after the first leaderisrrequest. This ensures that all the partitions
                 // have been completely populated before starting the checkpointing there by avoiding weird race conditions
