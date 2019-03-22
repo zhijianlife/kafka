@@ -21,7 +21,7 @@ import java.io.{File, IOException}
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
 
-import com.yammer.metrics.core.Gauge
+import com.yammer.metrics.core.{Gauge, Meter}
 import kafka.api._
 import kafka.cluster.{Partition, Replica}
 import kafka.common._
@@ -43,7 +43,7 @@ import org.apache.kafka.common.utils.Time
 import scala.collection.JavaConverters._
 import scala.collection._
 
-/*
+/**
  * Result metadata of a log append operation on the log
  */
 case class LogAppendResult(info: LogAppendInfo, exception: Option[Throwable] = None) {
@@ -53,14 +53,15 @@ case class LogAppendResult(info: LogAppendInfo, exception: Option[Throwable] = N
     }
 }
 
-/*
+/**
  * Result metadata of a log read operation on the log
- * @param info @FetchDataInfo returned by the @Log read
- * @param hw high watermark of the local replica
- * @param readSize amount of data that was read from the log i.e. size of the fetch
+ *
+ * @param info             @FetchDataInfo returned by the @Log read
+ * @param hw               high watermark of the local replica
+ * @param readSize         amount of data that was read from the log i.e. size of the fetch
  * @param isReadFromLogEnd true if the request read up to the log end offset snapshot
  *                         when the read was initiated, false otherwise
- * @param error Exception if error encountered while reading from the log
+ * @param error            Exception if error encountered while reading from the log
  */
 case class LogReadResult(info: FetchDataInfo,
                          hw: Long,
@@ -91,7 +92,7 @@ object LogReadResult {
 
 case class BecomeLeaderOrFollowerResult(responseMap: collection.Map[TopicPartition, Short], errorCode: Short) {
 
-    override def toString = {
+    override def toString: String = {
         "update results: [%s], global error: [%d]".format(responseMap, errorCode)
     }
 }
@@ -102,6 +103,19 @@ object ReplicaManager {
     val IsrChangePropagationInterval = 60000L
 }
 
+/**
+ * 管理一个 broker 上的 partition 信息
+ *
+ * @param config
+ * @param metrics
+ * @param time
+ * @param zkUtils
+ * @param scheduler
+ * @param logManager
+ * @param isShuttingDown
+ * @param quotaManager
+ * @param threadNamePrefix
+ */
 class ReplicaManager(val config: KafkaConfig,
                      metrics: Metrics,
                      time: Time,
@@ -111,54 +125,75 @@ class ReplicaManager(val config: KafkaConfig,
                      val isShuttingDown: AtomicBoolean,
                      quotaManager: ReplicationQuotaManager,
                      threadNamePrefix: Option[String] = None) extends Logging with KafkaMetricsGroup {
-    /* epoch of the controller that last changed the leader */
+
+    /**
+     * epoch of the controller that last changed the leader
+     *
+     * 记录 KafkaController 的年代信息，当重新选择 Controller Leader 时该字段会递增，
+     * 当有来自 KafkaController 的请求时，会校验年代信息，防止处理来自老的 KafkaController 的请求
+     */
     @volatile var controllerEpoch: Int = KafkaController.InitialControllerEpoch - 1
+
+    /** 本地 broker ID */
     private val localBrokerId = config.brokerId
+
+    /** 保存了当前 broker 分配的所有分区信息 */
     private val allPartitions = new Pool[TopicPartition, Partition](valueFactory = Some(tp => new Partition(tp.topic, tp.partition, time, this)))
     private val replicaStateChangeLock = new Object
+
+    /** 管理多个向 leader 副本发送 FetchRequest 请求的 ReplicaFetcherThread */
     val replicaFetcherManager = new ReplicaFetcherManager(config, this, metrics, time, threadNamePrefix, quotaManager)
+
+    /** */
     private val highWatermarkCheckPointThreadStarted = new AtomicBoolean(false)
-    val highWatermarkCheckpoints = config.logDirs.map(dir => (new File(dir).getAbsolutePath, new OffsetCheckpoint(new File(dir, ReplicaManager.HighWatermarkFilename)))).toMap
+
+    /** 缓存 log 目录与 OffsetCheckpoint 之间的对应关系 */
+    val highWatermarkCheckpoints: Predef.Map[String, OffsetCheckpoint] = config.logDirs.map(
+        dir => (new File(dir).getAbsolutePath, new OffsetCheckpoint(new File(dir, ReplicaManager.HighWatermarkFilename)))).toMap
     private var hwThreadInitialized = false
     this.logIdent = "[Replica Manager on Broker " + localBrokerId + "]: "
-    val stateChangeLogger = KafkaController.stateChangeLogger
+    val stateChangeLogger: KafkaController.StateChangeLogger = KafkaController.stateChangeLogger
+
+    /** 记录 ISR 集合发生变化的分区信息 */
     private val isrChangeSet: mutable.Set[TopicPartition] = new mutable.HashSet[TopicPartition]()
     private val lastIsrChangeMs = new AtomicLong(System.currentTimeMillis())
     private val lastIsrPropagationMs = new AtomicLong(System.currentTimeMillis())
 
-    val delayedProducePurgatory = DelayedOperationPurgatory[DelayedProduce](
+    /** 管理 DelayedProduce 的炼狱 */
+    val delayedProducePurgatory: DelayedOperationPurgatory[DelayedProduce] = DelayedOperationPurgatory[DelayedProduce](
         purgatoryName = "Produce", localBrokerId, config.producerPurgatoryPurgeIntervalRequests)
-    val delayedFetchPurgatory = DelayedOperationPurgatory[DelayedFetch](
+    /** 管理 DelayedFetch 的炼狱 */
+    val delayedFetchPurgatory: DelayedOperationPurgatory[DelayedFetch] = DelayedOperationPurgatory[DelayedFetch](
         purgatoryName = "Fetch", localBrokerId, config.fetchPurgatoryPurgeIntervalRequests)
 
-    val leaderCount = newGauge(
+    val leaderCount: Gauge[Int] = newGauge(
         "LeaderCount",
         new Gauge[Int] {
-            def value = {
-                getLeaderPartitions().size
+            def value: Int = {
+                getLeaderPartitions.size
             }
         }
     )
-    val partitionCount = newGauge(
+    val partitionCount: Gauge[Int] = newGauge(
         "PartitionCount",
         new Gauge[Int] {
-            def value = allPartitions.size
+            def value: Int = allPartitions.size
         }
     )
-    val underReplicatedPartitions = newGauge(
+    val underReplicatedPartitions: Gauge[Int] = newGauge(
         "UnderReplicatedPartitions",
         new Gauge[Int] {
-            def value = underReplicatedPartitionCount()
+            def value: Int = underReplicatedPartitionCount()
         }
     )
-    val isrExpandRate = newMeter("IsrExpandsPerSec", "expands", TimeUnit.SECONDS)
-    val isrShrinkRate = newMeter("IsrShrinksPerSec", "shrinks", TimeUnit.SECONDS)
+    val isrExpandRate: Meter = newMeter("IsrExpandsPerSec", "expands", TimeUnit.SECONDS)
+    val isrShrinkRate: Meter = newMeter("IsrShrinksPerSec", "shrinks", TimeUnit.SECONDS)
 
     def underReplicatedPartitionCount(): Int = {
-        getLeaderPartitions().count(_.isUnderReplicated)
+        getLeaderPartitions.count(_.isUnderReplicated)
     }
 
-    def startHighWaterMarksCheckPointThread() = {
+    def startHighWaterMarksCheckPointThread(): Unit = {
         if (highWatermarkCheckPointThreadStarted.compareAndSet(false, true))
             scheduler.schedule("highwatermark-checkpoint", checkpointHighWatermarks, period = config.replicaHighWatermarkCheckpointIntervalMs, unit = TimeUnit.MILLISECONDS)
     }
@@ -261,7 +296,7 @@ class ReplicaManager(val config: KafkaConfig,
                 // First stop fetchers for all partitions, then stop the corresponding replicas
                 replicaFetcherManager.removeFetcherForPartitions(partitions)
                 for (topicPartition <- partitions) {
-                    val errorCode = stopReplica(topicPartition, stopReplicaRequest.deletePartitions)
+                    val errorCode = stopReplica(topicPartition, stopReplicaRequest.deletePartitions())
                     responseMap.put(topicPartition, errorCode)
                 }
                 (responseMap, Errors.NONE.code)
@@ -524,15 +559,15 @@ class ReplicaManager(val config: KafkaConfig,
 
                 // decide whether to only fetch from leader
                 val localReplica = if (fetchOnlyFromLeader)
-                    getLeaderReplicaIfLocal(tp)
-                else
-                    getReplicaOrException(tp)
+                                       getLeaderReplicaIfLocal(tp)
+                                   else
+                                       getReplicaOrException(tp)
 
                 // decide whether to only fetch committed data (i.e. messages below high watermark)
                 val maxOffsetOpt = if (readOnlyCommitted)
-                    Some(localReplica.highWatermark.messageOffset)
-                else
-                    None
+                                       Some(localReplica.highWatermark.messageOffset)
+                                   else
+                                       None
 
                 /* Read the LogOffsetMetadata prior to performing the read from the log.
                  * We use the LogOffsetMetadata to determine if a particular replica is in-sync or not.
@@ -556,7 +591,7 @@ class ReplicaManager(val config: KafkaConfig,
                         // For FetchRequest version 3, we replace incomplete message sets with an empty one as consumers can make
                         // progress in such cases and don't need to report a `RecordTooLargeException`
                         else if (!hardMaxBytesLimit && fetch.firstEntryIncomplete)
-                            FetchDataInfo(fetch.fetchOffsetMetadata, MemoryRecords.EMPTY)
+                                 FetchDataInfo(fetch.fetchOffsetMetadata, MemoryRecords.EMPTY)
                         else fetch
 
                     case None =>
@@ -642,20 +677,31 @@ class ReplicaManager(val config: KafkaConfig,
         }
     }
 
-    def becomeLeaderOrFollower(correlationId: Int, leaderAndISRRequest: LeaderAndIsrRequest,
+    /**
+     *
+     * @param correlationId
+     * @param leaderAndISRRequest
+     * @param metadataCache
+     * @param onLeadershipChange
+     * @return
+     */
+    def becomeLeaderOrFollower(correlationId: Int,
+                               leaderAndISRRequest: LeaderAndIsrRequest,
                                metadataCache: MetadataCache,
                                onLeadershipChange: (Iterable[Partition], Iterable[Partition]) => Unit): BecomeLeaderOrFollowerResult = {
-        leaderAndISRRequest.partitionStates.asScala.foreach { case (topicPartition, stateInfo) =>
-            stateChangeLogger.trace("Broker %d received LeaderAndIsr request %s correlation id %d from controller %d epoch %d for partition [%s,%d]"
-                    .format(localBrokerId, stateInfo, correlationId,
-                        leaderAndISRRequest.controllerId, leaderAndISRRequest.controllerEpoch, topicPartition.topic, topicPartition.partition))
+        leaderAndISRRequest.partitionStates.asScala.foreach {
+            case (topicPartition, stateInfo) =>
+                stateChangeLogger.trace("Broker %d received LeaderAndIsr request %s correlation id %d from controller %d epoch %d for partition [%s,%d]"
+                        .format(localBrokerId, stateInfo, correlationId,
+                            leaderAndISRRequest.controllerId, leaderAndISRRequest.controllerEpoch, topicPartition.topic, topicPartition.partition))
         }
         replicaStateChangeLock synchronized {
+            // 记录每个分区角色切换的状态码
             val responseMap = new mutable.HashMap[TopicPartition, Short]
+            // 校验 KafkaController 年代信息，忽略来自已经过期的 KafkaController 的请求
             if (leaderAndISRRequest.controllerEpoch < controllerEpoch) {
                 stateChangeLogger.warn(("Broker %d ignoring LeaderAndIsr request from controller %d with correlation id %d since " +
-                        "its controller epoch %d is old. Latest known controller epoch is %d").format(localBrokerId, leaderAndISRRequest.controllerId,
-                    correlationId, leaderAndISRRequest.controllerEpoch, controllerEpoch))
+                        "its controller epoch %d is old. Latest known controller epoch is %d").format(localBrokerId, leaderAndISRRequest.controllerId, correlationId, leaderAndISRRequest.controllerEpoch, controllerEpoch))
                 BecomeLeaderOrFollowerResult(responseMap, Errors.STALE_CONTROLLER_EPOCH.code)
             } else {
                 val controllerId = leaderAndISRRequest.controllerId
@@ -694,13 +740,13 @@ class ReplicaManager(val config: KafkaConfig,
                 val partitionsToBeFollower = partitionState -- partitionsTobeLeader.keys
 
                 val partitionsBecomeLeader = if (partitionsTobeLeader.nonEmpty)
-                    makeLeaders(controllerId, controllerEpoch, partitionsTobeLeader, correlationId, responseMap)
-                else
-                    Set.empty[Partition]
+                                                 makeLeaders(controllerId, controllerEpoch, partitionsTobeLeader, correlationId, responseMap)
+                                             else
+                                                 Set.empty[Partition]
                 val partitionsBecomeFollower = if (partitionsToBeFollower.nonEmpty)
-                    makeFollowers(controllerId, controllerEpoch, partitionsToBeFollower, correlationId, responseMap, metadataCache)
-                else
-                    Set.empty[Partition]
+                                                   makeFollowers(controllerId, controllerEpoch, partitionsToBeFollower, correlationId, responseMap, metadataCache)
+                                               else
+                                                   Set.empty[Partition]
 
                 // we initialize highwatermark thread after the first leaderisrrequest. This ensures that all the partitions
                 // have been completely populated before starting the checkpointing there by avoiding weird race conditions
@@ -716,7 +762,7 @@ class ReplicaManager(val config: KafkaConfig,
         }
     }
 
-    /*
+    /**
      * Make the current broker to become leader for a given set of partitions by:
      *
      * 1. Stop fetchers for these partitions
@@ -727,7 +773,7 @@ class ReplicaManager(val config: KafkaConfig,
      * the error message will be set on each partition since we do not know which partition caused it. Otherwise,
      * return the set of partitions that are made leader due to this method
      *
-     *  TODO: the above may need to be fixed later
+     * TODO: the above may need to be fixed later
      */
     private def makeLeaders(controllerId: Int,
                             epoch: Int,
@@ -782,7 +828,7 @@ class ReplicaManager(val config: KafkaConfig,
         partitionsToMakeLeaders
     }
 
-    /*
+    /**
      * Make the current broker to become follower for a given set of partitions by:
      *
      * 1. Remove these partitions from the leader partitions set.
@@ -927,7 +973,7 @@ class ReplicaManager(val config: KafkaConfig,
         }
     }
 
-    private def getLeaderPartitions(): List[Partition] = {
+    private def getLeaderPartitions: List[Partition] = {
         allPartitions.values.filter(_.leaderReplicaIfLocal.isDefined).toList
     }
 

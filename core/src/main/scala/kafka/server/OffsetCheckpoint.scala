@@ -34,6 +34,8 @@ object OffsetCheckpoint {
 
 /**
  * This class saves out a map of topic/partition=>offsets to a file
+ *
+ * 记录 replication-offset-checkpoint 文件，该文件记录了 data 目录下每个 Partition 的 HW
  */
 class OffsetCheckpoint(val file: File) extends Logging {
 

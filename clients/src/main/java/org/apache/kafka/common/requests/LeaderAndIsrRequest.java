@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -33,7 +33,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * Controller Leader 会依据分区的 leader 副本和 follower 副本的状态向对应的 broker 节点发送 LeaderAndIsrRequest 请求，
+ * 用于指导副本的角色转换，即让哪些副本成为 leader，哪些副本成为 follower
+ */
 public class LeaderAndIsrRequest extends AbstractRequest {
+
     private static final String CONTROLLER_ID_KEY_NAME = "controller_id";
     private static final String CONTROLLER_EPOCH_KEY_NAME = "controller_epoch";
     private static final String PARTITION_STATES_KEY_NAME = "partition_states";
@@ -78,22 +83,23 @@ public class LeaderAndIsrRequest extends AbstractRequest {
         public String toString() {
             StringBuilder bld = new StringBuilder();
             bld.append("(type=LeaderAndIsRequest")
-                .append(", controllerId=").append(controllerId)
-                .append(", controllerEpoch=").append(controllerEpoch)
-                .append(", partitionStates=").append(Utils.mkString(partitionStates))
-                .append(", liveLeaders=(").append(Utils.join(liveLeaders, ", ")).append(")")
-                .append(")");
+                    .append(", controllerId=").append(controllerId)
+                    .append(", controllerEpoch=").append(controllerEpoch)
+                    .append(", partitionStates=").append(Utils.mkString(partitionStates))
+                    .append(", liveLeaders=(").append(Utils.join(liveLeaders, ", ")).append(")")
+                    .append(")");
             return bld.toString();
         }
     }
 
     private final int controllerId;
     private final int controllerEpoch;
+    /** 记录每个分区 leader 副本对应的 PartitionState 信息 */
     private final Map<TopicPartition, PartitionState> partitionStates;
     private final Set<Node> liveLeaders;
 
     private LeaderAndIsrRequest(int controllerId, int controllerEpoch, Map<TopicPartition, PartitionState> partitionStates,
-                               Set<Node> liveLeaders, short version) {
+                                Set<Node> liveLeaders, short version) {
         super(new Struct(ProtoUtils.requestSchema(ApiKeys.LEADER_AND_ISR.id, version)),
                 version);
         struct.set(CONTROLLER_ID_KEY_NAME, controllerId);

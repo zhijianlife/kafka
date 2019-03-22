@@ -43,6 +43,7 @@ public class LeaderAndIsrResponse extends AbstractResponse {
      */
     private final short errorCode;
 
+    /** 记录每个分区的副本在当前 broker 上的角色切换结果 */
     private final Map<TopicPartition, Short> responses;
 
     public LeaderAndIsrResponse(Map<TopicPartition, Short> responses) {

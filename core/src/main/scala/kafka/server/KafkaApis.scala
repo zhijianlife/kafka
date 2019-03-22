@@ -142,6 +142,11 @@ class KafkaApis(val requestChannel: RequestChannel,
             request.apiLocalCompleteTimeMs = time.milliseconds
     }
 
+    /**
+     * 处理 LeaderAndIsrRequest 请求
+     *
+     * @param request
+     */
     def handleLeaderAndIsrRequest(request: RequestChannel.Request) {
         // ensureTopicExists is only for client facing requests
         // We can't have the ensureTopicExists check here since the controller sends it as an advisory to all brokers so they

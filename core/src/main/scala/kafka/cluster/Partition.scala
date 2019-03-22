@@ -163,6 +163,11 @@ class Partition(val topic: String, // 分区所属的主题
 
     def getReplica(replicaId: Int = localBrokerId): Option[Replica] = Option(assignedReplicaMap.get(replicaId))
 
+    /**
+     * 获取 leader 副本对应的 Replica 对象
+     *
+     * @return
+     */
     def leaderReplicaIfLocal: Option[Replica] =
         leaderReplicaIdOpt.filter(_ == localBrokerId).flatMap(getReplica)
 
@@ -176,6 +181,9 @@ class Partition(val topic: String, // 分区所属的主题
         assignedReplicaMap.remove(replicaId)
     }
 
+    /**
+     * 删除对应分区在当前 broker 上的 Log 文件
+     */
     def delete() {
         // need to hold the lock to prevent appendMessagesToLeader() from hitting I/O exceptions due to log being deleted
         inWriteLock(leaderIsrUpdateLock) {
@@ -335,34 +343,43 @@ class Partition(val topic: String, // 分区所属的主题
      * whether a replica is in-sync, we only check HW.
      *
      * This function can be triggered when a replica's LEO has incremented
+     *
+     * 扩张 ISR 集合
      */
     def maybeExpandIsr(replicaId: Int, logReadResult: LogReadResult) {
         val leaderHWIncremented = inWriteLock(leaderIsrUpdateLock) {
             // check if this replica needs to be added to the ISR
             leaderReplicaIfLocal match {
+                // leader 副本，只有 leader 副本才会管理 ISR 集合
                 case Some(leaderReplica) =>
+                    // 获取 follower 对应的 Replica 对象
                     val replica = getReplica(replicaId).get
+                    // 获取对应的 HW
                     val leaderHW = leaderReplica.highWatermark
-                    if (!inSyncReplicas.contains(replica) &&
-                            assignedReplicas.map(_.brokerId).contains(replicaId) &&
-                            replica.logEndOffset.offsetDiff(leaderHW) >= 0) {
+                    if (!inSyncReplicas.contains(replica) // follower 副本不在 ISR 集合中
+                            && assignedReplicas.map(_.brokerId).contains(replicaId) // AR 集合中包含该 follower 副本
+                            && replica.logEndOffset.offsetDiff(leaderHW) >= 0) { // follower 副本的 LEO 已经追赶上 leader 的 HW
+                        // 将 follower 副本添加到 ISR 集合中
                         val newInSyncReplicas = inSyncReplicas + replica
                         info(s"Expanding ISR for partition $topicPartition from ${inSyncReplicas.map(_.brokerId).mkString(",")} " +
                                 s"to ${newInSyncReplicas.map(_.brokerId).mkString(",")}")
-                        // update ISR in ZK and cache
+                        // 将新的 ISR 集合信息记录到 ZK，并更新 Partition.inSyncReplicas 字段
                         updateIsr(newInSyncReplicas)
                         replicaManager.isrExpandRate.mark()
                     }
 
                     // check if the HW of the partition can now be incremented
                     // since the replica may already be in the ISR and its LEO has just incremented
+                    // 尝试更新 HW
                     maybeIncrementLeaderHW(leaderReplica, logReadResult.fetchTimeMs)
 
-                case None => false // nothing to do if no longer leader
+                // 如果不是 leader 副本，啥也不干
+                case None => false
             }
         }
 
         // some delayed operations may be unblocked after HW changed
+        // 尝试执行延时任务
         if (leaderHWIncremented)
             tryCompleteDelayedRequests()
     }
@@ -374,14 +391,17 @@ class Partition(val topic: String, // 分区所属的主题
      * Note that this method will only be called if requiredAcks = -1 and we are waiting for all replicas in ISR to be
      * fully caught up to the (local) leader's offset corresponding to this produce request before we acknowledge the
      * produce request.
+     *
+     * 检测参数 offset 对应的消息是否已经被 ISR 集合中所有的 follower 副本同步
      */
     def checkEnoughReplicasReachOffset(requiredOffset: Long): (Boolean, Errors) = {
+        // 获取 leader 副本对应的 Replica 对象
         leaderReplicaIfLocal match {
             case Some(leaderReplica) =>
                 // keep the current immutable replica list reference
                 val curInSyncReplicas = inSyncReplicas
 
-                def numAcks = curInSyncReplicas.count { r =>
+                def numAcks: Int = curInSyncReplicas.count { r =>
                     if (!r.isLocal)
                         if (r.logEndOffset.messageOffset >= requiredOffset) {
                             trace(s"Replica ${r.brokerId} of $topic-$partitionId received offset $requiredOffset")
@@ -397,6 +417,7 @@ class Partition(val topic: String, // 分区所属的主题
 
                 val minIsr = leaderReplica.log.get.config.minInSyncReplicas
 
+                // 比较 HW 与消息的 offset
                 if (leaderReplica.highWatermark.messageOffset >= requiredOffset) {
                     /*
                      * The topic may be configured not to accept messages if there are not enough replicas in ISR
@@ -407,7 +428,7 @@ class Partition(val topic: String, // 分区所属的主题
                     else
                         (true, Errors.NOT_ENOUGH_REPLICAS_AFTER_APPEND)
                 } else
-                    (false, Errors.NONE)
+                      (false, Errors.NONE)
             case None =>
                 (false, Errors.NOT_LEADER_FOR_PARTITION)
         }
@@ -463,32 +484,44 @@ class Partition(val topic: String, // 分区所属的主题
         replicaManager.tryCompleteDelayedProduce(requestKey)
     }
 
+    /**
+     * 在分布式系统中，由于网路的原因，可能导致 ISR 集合中的部分 follower 副本无法与 leader 副本进行同步，
+     * 此时如果生产者请求时指定 acks = -1，那么需要长时间等待。而 maybeShrinkIsr 就是用来对 ISR 集合执行缩减操作
+     *
+     * @param replicaMaxLagTimeMs
+     */
     def maybeShrinkIsr(replicaMaxLagTimeMs: Long) {
         val leaderHWIncremented = inWriteLock(leaderIsrUpdateLock) {
+            // 获取 leader 副本对应的 Replica 对象
             leaderReplicaIfLocal match {
+                // 如果是 leader 副本，ISR 集合是由 leader 副本进行管理的
                 case Some(leaderReplica) =>
+                    // 检测 follower 副本的 lastCaughtUpTimeMs 字段，找出已经滞后的 follower 副本集合
                     val outOfSyncReplicas = getOutOfSyncReplicas(leaderReplica, replicaMaxLagTimeMs)
                     if (outOfSyncReplicas.nonEmpty) {
+                        // 将滞后的 follower 副本集合中 ISR 集合中剔除
                         val newInSyncReplicas = inSyncReplicas -- outOfSyncReplicas
                         assert(newInSyncReplicas.nonEmpty)
                         info("Shrinking ISR for partition [%s,%d] from %s to %s".format(topic, partitionId,
                             inSyncReplicas.map(_.brokerId).mkString(","), newInSyncReplicas.map(_.brokerId).mkString(",")))
-                        // update ISR in zk and in cache
+                        // 将新的 ISR 集合信息上报给 ZK，同时更新 Partition.inSyncReplicas 字段
                         updateIsr(newInSyncReplicas)
                         // we may need to increment high watermark since ISR could be down to 1
-
                         replicaManager.isrShrinkRate.mark()
+                        // 更新 leader 的 HW
                         maybeIncrementLeaderHW(leaderReplica)
                     } else {
                         false
                     }
 
-                case None => false // do nothing if no longer leader
+                // 如果不是 leader 副本，则啥也不做
+                case None => false
             }
         }
 
         // some delayed operations may be unblocked after HW changed
         if (leaderHWIncremented)
+        // 尝试执行延时任务
             tryCompleteDelayedRequests()
     }
 
@@ -513,29 +546,47 @@ class Partition(val topic: String, // 分区所属的主题
         laggingReplicas
     }
 
+    /**
+     * 提供向 leader 副本对应的 Log 追加消息的功能
+     *
+     * @param records
+     * @param requiredAcks
+     * @return
+     */
     def appendRecordsToLeader(records: MemoryRecords, requiredAcks: Int = 0): LogAppendInfo = {
         val (info, leaderHWIncremented) = inReadLock(leaderIsrUpdateLock) {
+            // 获取 leader 副本对应的 Replica 对象
             leaderReplicaIfLocal match {
+                // 如果是 leader 副本
                 case Some(leaderReplica) =>
                     val log = leaderReplica.log.get
+                    // 对应 min.insync.replicas 配置，表示 ISR 集合的最小值
                     val minIsr = log.config.minInSyncReplicas
                     val inSyncSize = inSyncReplicas.size
 
-                    // Avoid writing to leader if there are not enough insync replicas to make it safe
+                    /**
+                     * Avoid writing to leader if there are not enough insync replicas to make it safe
+                     *
+                     * 如果当前 ISR 集合中的副本数小于允许的最小值，且 acks = -1
+                     */
                     if (inSyncSize < minIsr && requiredAcks == -1) {
-                        throw new NotEnoughReplicasException("Number of insync replicas for partition %s is [%d], below required minimum [%s]"
-                                .format(topicPartition, inSyncSize, minIsr))
+                        throw new NotEnoughReplicasException(
+                            "Number of insync replicas for partition %s is [%d], below required minimum [%s]".format(topicPartition, inSyncSize, minIsr))
                     }
 
+                    // 将消息写入对应的 Log
                     val info = log.append(records)
                     // probably unblock some follower fetch requests since log end offset has been updated
+                    // 尝试执行对应的 DelayedFetch
                     replicaManager.tryCompleteDelayedFetch(TopicPartitionOperationKey(this.topic, this.partitionId))
                     // we may need to increment high watermark since ISR could be down to 1
+                    // 尝试执行 leader 的 HW
                     (info, maybeIncrementLeaderHW(leaderReplica))
 
+                // 如果不是 leader，则抛出异常，因为只有 leader 可以追加消息
                 case None =>
-                    throw new NotLeaderForPartitionException("Leader not local for partition %s on broker %d"
-                            .format(topicPartition, localBrokerId))
+                    throw new NotLeaderForPartitionException(
+                        "Leader not local for partition %s on broker %d".format(topicPartition, localBrokerId))
             }
         }
 
@@ -548,8 +599,8 @@ class Partition(val topic: String, // 分区所属的主题
 
     private def updateIsr(newIsr: Set[Replica]) {
         val newLeaderAndIsr = new LeaderAndIsr(localBrokerId, leaderEpoch, newIsr.map(r => r.brokerId).toList, zkVersion)
-        val (updateSucceeded, newVersion) = ReplicationUtils.updateLeaderAndIsr(zkUtils, topic, partitionId,
-            newLeaderAndIsr, controllerEpoch, zkVersion)
+        val (updateSucceeded, newVersion) = ReplicationUtils.updateLeaderAndIsr(
+            zkUtils, topic, partitionId, newLeaderAndIsr, controllerEpoch, zkVersion)
 
         if (updateSucceeded) {
             replicaManager.recordIsrChange(topicPartition)
