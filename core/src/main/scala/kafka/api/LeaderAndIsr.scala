@@ -29,15 +29,22 @@ object LeaderAndIsr {
     val LeaderDuringDelete: Int = -2
 }
 
-case class LeaderAndIsr(var leader: Int, var leaderEpoch: Int, var isr: List[Int], var zkVersion: Int) {
-    def this(leader: Int, isr: List[Int]) = this(leader, LeaderAndIsr.initialLeaderEpoch, isr, LeaderAndIsr.initialZKVersion)
+case class LeaderAndIsr(var leader: Int, // leader 副本 ID
+                        var leaderEpoch: Int,
+                        var isr: List[Int], // ISR 集合
+                        var zkVersion: Int) {
+
+    def this(leader: Int, isr: List[Int]) =
+        this(leader, LeaderAndIsr.initialLeaderEpoch, isr, LeaderAndIsr.initialZKVersion)
 
     override def toString: String = {
         Json.encode(Map("leader" -> leader, "leader_epoch" -> leaderEpoch, "isr" -> isr))
     }
 }
 
-case class PartitionStateInfo(leaderIsrAndControllerEpoch: LeaderIsrAndControllerEpoch, allReplicas: Set[Int]) {
+case class PartitionStateInfo(leaderIsrAndControllerEpoch: LeaderIsrAndControllerEpoch,
+                              allReplicas: Set[Int] // AR 集合
+                             ) {
 
     def replicationFactor: Int = allReplicas.size
 

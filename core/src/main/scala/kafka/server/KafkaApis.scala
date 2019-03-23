@@ -216,6 +216,11 @@ class KafkaApis(val requestChannel: RequestChannel,
         replicaManager.replicaFetcherManager.shutdownIdleFetcherThreads()
     }
 
+    /**
+     * 处理 UpdateMetadataRequest 请求
+     *
+     * @param request
+     */
     def handleUpdateMetadataRequest(request: RequestChannel.Request) {
         val correlationId = request.header.correlationId
         val updateMetadataRequest = request.body.asInstanceOf[UpdateMetadataRequest]
@@ -829,11 +834,24 @@ class KafkaApis(val requestChannel: RequestChannel,
         topicMetadata.headOption.getOrElse(createGroupMetadataTopic())
     }
 
-    private def getTopicMetadata(topics: Set[String], listenerName: ListenerName, errorUnavailableEndpoints: Boolean): Seq[MetadataResponse.TopicMetadata] = {
+    /**
+     * 查询 MetadataCache 获取对应的 topic 信息，如果不存在，则会依据配置和 topic 名称决定是否自动创建未知的 topic
+     *
+     * @param topics
+     * @param listenerName
+     * @param errorUnavailableEndpoints
+     * @return
+     */
+    private def getTopicMetadata(topics: Set[String],
+                                 listenerName: ListenerName,
+                                 errorUnavailableEndpoints: Boolean): Seq[MetadataResponse.TopicMetadata] = {
+        // 查询 MetadataCache
         val topicResponses = metadataCache.getTopicMetadata(topics, listenerName, errorUnavailableEndpoints)
         if (topics.isEmpty || topicResponses.size == topics.size) {
+            // MetadataCache 全部命中
             topicResponses
         } else {
+            // 依据配置决定是否创建未知的 topic
             val nonExistentTopics = topics -- topicResponses.map(_.topic).toSet
             val responsesForNonExistentTopics = nonExistentTopics.map { topic =>
                 if (topic == Topic.GroupMetadataTopicName) {
@@ -851,25 +869,28 @@ class KafkaApis(val requestChannel: RequestChannel,
 
     /**
      * Handle a topic metadata request
+     *
+     * @param request
      */
     def handleTopicMetadataRequest(request: RequestChannel.Request) {
         val metadataRequest = request.body.asInstanceOf[MetadataRequest]
         val requestVersion = request.header.apiVersion()
 
         val topics =
-        // Handle old metadata request logic. Version 0 has no way to specify "no topics".
             if (requestVersion == 0) {
+                // Handle old metadata request logic. Version 0 has no way to specify "no topics".
                 if (metadataRequest.topics() == null || metadataRequest.topics().isEmpty)
-                    metadataCache.getAllTopics()
+                    metadataCache.getAllTopics
                 else
                     metadataRequest.topics.asScala.toSet
             } else {
                 if (metadataRequest.isAllTopics)
-                    metadataCache.getAllTopics()
+                    metadataCache.getAllTopics
                 else
                     metadataRequest.topics.asScala.toSet
             }
 
+        // 权限校验
         var (authorizedTopics, unauthorizedForDescribeTopics) =
             topics.partition(topic => authorize(request.session, Describe, new Resource(auth.Topic, topic)))
 
@@ -905,6 +926,7 @@ class KafkaApis(val requestChannel: RequestChannel,
             if (authorizedTopics.isEmpty)
                 Seq.empty[MetadataResponse.TopicMetadata]
             else
+            // 查询 MetadataCache，得到指定的 topic 信息
                 getTopicMetadata(authorizedTopics, request.listenerName, errorUnavailableEndpoints)
 
         val completeTopicMetadata = topicMetadata ++ unauthorizedForCreateTopicMetadata ++ unauthorizedForDescribeTopicMetadata
@@ -914,6 +936,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         trace("Sending topic metadata %s and brokers %s for correlation id %d to client %s".format(completeTopicMetadata.mkString(","),
             brokers.mkString(","), request.header.correlationId, request.header.clientId))
 
+        // 创建 MetadataResponse
         val responseBody = new MetadataResponse(
             brokers.map(_.getNode(request.listenerName)).asJava,
             clusterId,

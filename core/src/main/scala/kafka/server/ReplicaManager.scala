@@ -193,9 +193,17 @@ class ReplicaManager(val config: KafkaConfig,
         getLeaderPartitions.count(_.isUnderReplicated)
     }
 
+    /**
+     * 启动 highwatermark-checkpoint 定时任务，周期性记录每个 Replica 的 HW，
+     * 并保存到 log 目录的 replication-offset-checkpoint 文件中
+     */
     def startHighWaterMarksCheckPointThread(): Unit = {
+        // 保证启动一次
         if (highWatermarkCheckPointThreadStarted.compareAndSet(false, true))
-            scheduler.schedule("highwatermark-checkpoint", checkpointHighWatermarks, period = config.replicaHighWatermarkCheckpointIntervalMs, unit = TimeUnit.MILLISECONDS)
+            scheduler.schedule("highwatermark-checkpoint",
+                checkpointHighWatermarks,
+                period = config.replicaHighWatermarkCheckpointIntervalMs,
+                unit = TimeUnit.MILLISECONDS)
     }
 
     def recordIsrChange(topicPartition: TopicPartition) {
@@ -215,9 +223,16 @@ class ReplicaManager(val config: KafkaConfig,
     def maybePropagateIsrChanges() {
         val now = System.currentTimeMillis()
         isrChangeSet synchronized {
+            /*
+             * isr-change-propagation 任务会定期将 ISR 发生变化的分区记录到 ZK，KafkaController 对相应路径添加了 Watcher，
+             * 当 Watcher 被触发后会向管理的 broker 发送 UpdateMetadataRequest，下面的 if 筛选是为防止频繁触发 Watcher
+             */
             if (isrChangeSet.nonEmpty &&
-                    (lastIsrChangeMs.get() + ReplicaManager.IsrChangePropagationBlackOut < now ||
-                            lastIsrPropagationMs.get() + ReplicaManager.IsrChangePropagationInterval < now)) {
+                    // 最后一次有 ISR 集合发生变化的时间距离现在已经超过 5 秒
+                    (lastIsrChangeMs.get() + ReplicaManager.IsrChangePropagationBlackOut < now
+                            // 上次写入 ZK 的时间距离现在已经超过 1 分钟
+                            || lastIsrPropagationMs.get() + ReplicaManager.IsrChangePropagationInterval < now)) {
+                // 将 isrChangeSet 写 ZK
                 ReplicationUtils.propagateIsrChanges(zkUtils, isrChangeSet)
                 isrChangeSet.clear()
                 lastIsrPropagationMs.set(now)
@@ -254,7 +269,9 @@ class ReplicaManager(val config: KafkaConfig,
     def startup() {
         // start ISR expiration thread
         // A follower can lag behind leader for up to config.replicaLagTimeMaxMs x 1.5 before it is removed from ISR
+        // 周期性调用 maybeShrinkIsr 检测每个分区是否需要缩减 ISR 集合
         scheduler.schedule("isr-expiration", maybeShrinkIsr, period = config.replicaLagTimeMaxMs / 2, unit = TimeUnit.MILLISECONDS)
+        // 周期性将 ISR 集合发生变化的分区记录到 ZK
         scheduler.schedule("isr-change-propagation", maybePropagateIsrChanges, period = 2500L, unit = TimeUnit.MILLISECONDS)
     }
 
@@ -682,16 +699,19 @@ class ReplicaManager(val config: KafkaConfig,
     def getMagic(topicPartition: TopicPartition): Option[Byte] =
         getReplica(topicPartition).flatMap(_.log.map(_.config.messageFormatVersion.messageFormatVersion))
 
-    def maybeUpdateMetadataCache(correlationId: Int, updateMetadataRequest: UpdateMetadataRequest, metadataCache: MetadataCache): Seq[TopicPartition] = {
+    def maybeUpdateMetadataCache(correlationId: Int,
+                                 updateMetadataRequest: UpdateMetadataRequest,
+                                 metadataCache: MetadataCache): Seq[TopicPartition] = {
         replicaStateChangeLock synchronized {
+            // 校验 controllerEpoch
             if (updateMetadataRequest.controllerEpoch < controllerEpoch) {
                 val stateControllerEpochErrorMessage = ("Broker %d received update metadata request with correlation id %d from an " +
                         "old controller %d with epoch %d. Latest known controller epoch is %d").format(localBrokerId,
-                    correlationId, updateMetadataRequest.controllerId, updateMetadataRequest.controllerEpoch,
-                    controllerEpoch)
+                    correlationId, updateMetadataRequest.controllerId, updateMetadataRequest.controllerEpoch, controllerEpoch)
                 stateChangeLogger.warn(stateControllerEpochErrorMessage)
                 throw new ControllerMovedException(stateControllerEpochErrorMessage)
             } else {
+                // 更新 MetadataCache
                 val deletedPartitions = metadataCache.updateCache(correlationId, updateMetadataRequest)
                 controllerEpoch = updateMetadataRequest.controllerEpoch
                 deletedPartitions
@@ -1054,13 +1074,20 @@ class ReplicaManager(val config: KafkaConfig,
         }
     }
 
-    // Flushes the highwatermark value for all partitions to the highwatermark file
+    /**
+     * Flushes the highwatermark value for all partitions to the highwatermark file
+     */
     def checkpointHighWatermarks() {
+        // 获取全部的 Replica 对象
         val replicas = allPartitions.values.flatMap(_.getReplica(localBrokerId))
+        // 按照副本所在的 log 目录进行分组
         val replicasByDir = replicas.filter(_.log.isDefined).groupBy(_.log.get.dir.getParentFile.getAbsolutePath)
+        // 遍历处理
         for ((dir, reps) <- replicasByDir) {
-            val hwms = reps.map(r => r.partition.topicPartition -> r.highWatermark.messageOffset).toMap
+            // 收集当前 log 目录下全部副本的 HW
+            val hwms: Map[TopicPartition, Long] = reps.map(r => r.partition.topicPartition -> r.highWatermark.messageOffset).toMap
             try {
+                // 更新对应 log 目录下的 replication-offset-checkpoint 文件
                 highWatermarkCheckpoints(dir).write(hwms)
             } catch {
                 case e: IOException =>
@@ -1070,7 +1097,11 @@ class ReplicaManager(val config: KafkaConfig,
         }
     }
 
-    // High watermark do not need to be checkpointed only when under unit tests
+    /**
+     * High watermark do not need to be checkpointed only when under unit tests
+     *
+     * @param checkpointHW
+     */
     def shutdown(checkpointHW: Boolean = true) {
         info("Shutting down")
         replicaFetcherManager.shutdown()

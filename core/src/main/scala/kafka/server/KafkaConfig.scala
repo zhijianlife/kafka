@@ -904,7 +904,7 @@ class KafkaConfig(val props: java.util.Map[_, _], doLog: Boolean) extends Abstra
     val replicaFetchResponseMaxBytes = getInt(KafkaConfig.ReplicaFetchResponseMaxBytesProp)
     val replicaFetchBackoffMs = getInt(KafkaConfig.ReplicaFetchBackoffMsProp)
     val numReplicaFetchers = getInt(KafkaConfig.NumReplicaFetchersProp)
-    val replicaHighWatermarkCheckpointIntervalMs = getLong(KafkaConfig.ReplicaHighWatermarkCheckpointIntervalMsProp)
+    val replicaHighWatermarkCheckpointIntervalMs: lang.Long = getLong(KafkaConfig.ReplicaHighWatermarkCheckpointIntervalMsProp)
     val fetchPurgatoryPurgeIntervalRequests = getInt(KafkaConfig.FetchPurgatoryPurgeIntervalRequestsProp)
     val producerPurgatoryPurgeIntervalRequests = getInt(KafkaConfig.ProducerPurgatoryPurgeIntervalRequestsProp)
     val autoLeaderRebalanceEnable = getBoolean(KafkaConfig.AutoLeaderRebalanceEnableProp)

@@ -65,11 +65,11 @@ public class UpdateMetadataRequest extends AbstractRequest {
         public String toString() {
             StringBuilder bld = new StringBuilder();
             bld.append("(type: UpdateMetadataRequest=").
-                append(", controllerId=").append(controllerId).
-                append(", controllerEpoch=").append(controllerEpoch).
-                append(", partitionStates=").append(Utils.mkString(partitionStates)).
-                append(", liveBrokers=").append(Utils.join(liveBrokers, " ,")).
-                append(")");
+                    append(", controllerId=").append(controllerId).
+                    append(", controllerEpoch=").append(controllerEpoch).
+                    append(", partitionStates=").append(Utils.mkString(partitionStates)).
+                    append(", liveBrokers=").append(Utils.join(liveBrokers, " ,")).
+                    append(")");
             return bld.toString();
         }
     }
@@ -185,8 +185,9 @@ public class UpdateMetadataRequest extends AbstractRequest {
                     endPointData.set(PORT_KEY_NAME, endPoint.port);
                     endPointData.set(HOST_KEY_NAME, endPoint.host);
                     endPointData.set(SECURITY_PROTOCOL_TYPE_KEY_NAME, endPoint.securityProtocol.id);
-                    if (version >= 3)
+                    if (version >= 3) {
                         endPointData.set(LISTENER_NAME_KEY_NAME, endPoint.listenerName.value());
+                    }
                     endPointsData.add(endPointData);
 
                 }
@@ -258,9 +259,11 @@ public class UpdateMetadataRequest extends AbstractRequest {
                     SecurityProtocol securityProtocol = SecurityProtocol.forId(protocolTypeId);
                     String listenerName;
                     if (endPointData.hasField(LISTENER_NAME_KEY_NAME)) // V3
+                    {
                         listenerName = endPointData.getString(LISTENER_NAME_KEY_NAME);
-                    else
+                    } else {
                         listenerName = securityProtocol.name;
+                    }
                     endPoints.add(new EndPoint(host, port, securityProtocol, new ListenerName(listenerName)));
                 }
                 String rack = null;
@@ -279,11 +282,12 @@ public class UpdateMetadataRequest extends AbstractRequest {
     @Override
     public AbstractResponse getErrorResponse(Throwable e) {
         short versionId = version();
-        if (versionId <= 3)
+        if (versionId <= 3) {
             return new UpdateMetadataResponse(Errors.forException(e).code());
-        else
+        } else {
             throw new IllegalArgumentException(String.format("Version %d is not valid. Valid versions for %s are 0 to %d",
                     versionId, this.getClass().getSimpleName(), ProtoUtils.latestVersion(ApiKeys.UPDATE_METADATA_KEY.id)));
+        }
     }
 
     public int controllerId() {
