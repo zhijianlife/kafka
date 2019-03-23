@@ -29,9 +29,16 @@ object LeaderAndIsr {
     val LeaderDuringDelete: Int = -2
 }
 
-case class LeaderAndIsr(var leader: Int, // leader 副本 ID
+/**
+ *
+ * @param leader      leader 副本 ID
+ * @param leaderEpoch leader 的年代信息
+ * @param isr         ISR 集合
+ * @param zkVersion   ZK 的版本信息
+ */
+case class LeaderAndIsr(var leader: Int,
                         var leaderEpoch: Int,
-                        var isr: List[Int], // ISR 集合
+                        var isr: List[Int],
                         var zkVersion: Int) {
 
     def this(leader: Int, isr: List[Int]) =
@@ -42,8 +49,13 @@ case class LeaderAndIsr(var leader: Int, // leader 副本 ID
     }
 }
 
+/**
+ *
+ * @param leaderIsrAndControllerEpoch
+ * @param allReplicas AR 集合
+ */
 case class PartitionStateInfo(leaderIsrAndControllerEpoch: LeaderIsrAndControllerEpoch,
-                              allReplicas: Set[Int] // AR 集合
+                              allReplicas: Set[Int]
                              ) {
 
     def replicationFactor: Int = allReplicas.size
