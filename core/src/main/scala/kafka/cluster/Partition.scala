@@ -316,9 +316,11 @@ class Partition(val topic: String, // 分区所属的主题
     def updateReplicaLogReadResult(replicaId: Int, logReadResult: LogReadResult) {
         getReplica(replicaId) match {
             case Some(replica) =>
+                // 更新 follower 副本的状态
                 replica.updateLogReadResult(logReadResult)
                 // check if we need to expand ISR to include this replica
                 // if it is not in the ISR yet
+                // 检测 ISR 是需要扩张，并同步到 ZK
                 maybeExpandIsr(replicaId, logReadResult)
 
                 debug("Recorded replica %d log end offset (LEO) position %d for partition %s."

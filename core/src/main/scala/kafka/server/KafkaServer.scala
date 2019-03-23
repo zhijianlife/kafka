@@ -410,7 +410,7 @@ class KafkaServer(val config: KafkaConfig,
 
                     // Get the current controller info. This is to ensure we use the most recent info to issue the
                     // controlled shutdown request
-                    val controllerId = zkUtils.getController()
+                    val controllerId = zkUtils.getController
                     zkUtils.getBrokerInfo(controllerId) match {
                         case Some(broker) =>
                             // if this is the first attempt, if the controller has changed or if an exception was thrown in a previous
@@ -483,7 +483,7 @@ class KafkaServer(val config: KafkaConfig,
 
                     // Get the current controller info. This is to ensure we use the most recent info to issue the
                     // controlled shutdown request
-                    val controllerId = zkUtils.getController()
+                    val controllerId = zkUtils.getController
                     zkUtils.getBrokerInfo(controllerId) match {
                         case Some(broker) =>
                             if (channel == null || prevController == null || !prevController.equals(broker)) {

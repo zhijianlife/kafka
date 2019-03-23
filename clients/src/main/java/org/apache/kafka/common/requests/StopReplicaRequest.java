@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.Set;
 
 public class StopReplicaRequest extends AbstractRequest {
+
     private static final String CONTROLLER_ID_KEY_NAME = "controller_id";
     private static final String CONTROLLER_EPOCH_KEY_NAME = "controller_epoch";
     private static final String DELETE_PARTITIONS_KEY_NAME = "delete_partitions";
@@ -42,8 +43,7 @@ public class StopReplicaRequest extends AbstractRequest {
         private final boolean deletePartitions;
         private final Set<TopicPartition> partitions;
 
-        public Builder(int controllerId, int controllerEpoch, boolean deletePartitions,
-                       Set<TopicPartition> partitions) {
+        public Builder(int controllerId, int controllerEpoch, boolean deletePartitions, Set<TopicPartition> partitions) {
             super(ApiKeys.STOP_REPLICA);
             this.controllerId = controllerId;
             this.controllerEpoch = controllerEpoch;
@@ -53,26 +53,27 @@ public class StopReplicaRequest extends AbstractRequest {
 
         @Override
         public StopReplicaRequest build() {
-            return new StopReplicaRequest(controllerId, controllerEpoch,
-                    deletePartitions, partitions, version());
+            return new StopReplicaRequest(controllerId, controllerEpoch, deletePartitions, partitions, version());
         }
 
         @Override
         public String toString() {
             StringBuilder bld = new StringBuilder();
             bld.append("(type=StopReplicaRequest").
-                append(", controllerId=").append(controllerId).
-                append(", controllerEpoch=").append(controllerEpoch).
-                append(", deletePartitions=").append(deletePartitions).
-                append(", partitions=").append(Utils.join(partitions, ",")).
-                append(")");
+                    append(", controllerId=").append(controllerId).
+                    append(", controllerEpoch=").append(controllerEpoch).
+                    append(", deletePartitions=").append(deletePartitions).
+                    append(", partitions=").append(Utils.join(partitions, ",")).
+                    append(")");
             return bld.toString();
         }
     }
 
     private final int controllerId;
     private final int controllerEpoch;
+    /** 标记是否需要删除副本及其 Log */
     private final boolean deletePartitions;
+    /** 记录待关闭的分区信息 */
     private final Set<TopicPartition> partitions;
 
     private StopReplicaRequest(int controllerId, int controllerEpoch, boolean deletePartitions,

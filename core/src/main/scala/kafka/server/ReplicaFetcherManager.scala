@@ -21,6 +21,16 @@ import kafka.cluster.BrokerEndPoint
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.utils.Time
 
+/**
+ * 实现 follower 副本与 leader 副本之间的同步工作
+ *
+ * @param brokerConfig
+ * @param replicaMgr
+ * @param metrics
+ * @param time
+ * @param threadNamePrefix
+ * @param quotaManager
+ */
 class ReplicaFetcherManager(brokerConfig: KafkaConfig,
                             replicaMgr: ReplicaManager,
                             metrics: Metrics, time: Time,
@@ -37,8 +47,7 @@ class ReplicaFetcherManager(brokerConfig: KafkaConfig,
             case Some(p) =>
                 "%s:ReplicaFetcherThread-%d-%d".format(p, fetcherId, sourceBroker.id)
         }
-        new ReplicaFetcherThread(threadName, fetcherId, sourceBroker, brokerConfig,
-            replicaMgr, metrics, time, quotaManager)
+        new ReplicaFetcherThread(threadName, fetcherId, sourceBroker, brokerConfig, replicaMgr, metrics, time, quotaManager)
     }
 
     def shutdown() {
