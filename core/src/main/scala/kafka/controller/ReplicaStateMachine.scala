@@ -17,6 +17,7 @@
 
 package kafka.controller
 
+import java.util
 import java.util.concurrent.atomic.AtomicBoolean
 
 import kafka.common.{StateChangeFailedException, TopicAndPartition}
@@ -44,13 +45,52 @@ import scala.collection._
  * 7. NonExistentReplica: If a replica is deleted successfully, it is moved to this state. Valid previous state is
  * ReplicaDeletionSuccessful
  *
- * 用于管理集群所有副本状态的状态机
+ * 用于管理集群所有副本状态的状态机：
+ *
+ * - NonExistentReplica -> NewReplica:
+ *
+ * controller 向此副本所在的 broker 发送 LeaderAndIsrRequest 请求，并向集群中所有可用的 broker 发送 UpdateMetadataRequest 请求
+ *
+ * - NewReplica -> OnlineReplica:
+ *
+ * controller 将 NewReplica 加入到 AR 集合
+ *
+ * - OnlineReplica/OfflineReplica -> OnlineReplica:
+ *
+ * controller 向副本所在的 broker 发送 LeaderAndIsrRequest 请求，并向集群中所有可用的 broker 发送 UpdateMetadataRequest 请求
+ *
+ * - NewReplica/OnlineReplica/OfflineReplica/ReplicaDeletionIneligible -> OfflineReplica:
+ *
+ * controller 向副本所在的 broker 发送 StopReplicaRequest 请求，之后会从 ISR 集合中清除副本，
+ * 最后向其他可用副本所在的 broker 发送 LeaderAndIsrRequest 请求，并向集群中所有可用的 broker 发送 UpdateMetadataRequest 请求
+ *
+ * - OfflineReplica -> ReplicaDeletionStarted:
+ *
+ * controller 向副本所在的 broker 发送 StopReplicaRequest 请求
+ *
+ * - ReplicaDeletionStarted -> ReplicaDeletionSuccessful:
+ *
+ * 只做状态切换，不做其他操作
+ *
+ * - ReplicaDeletionStarted -> ReplicaDeletionIneligible:
+ *
+ * 只做状态切换，不做其他操作
+ *
+ * - ReplicaDeletionSuccessful -> NonExistentReplica
+ *
+ * controller 从 AR 集合中删除副本
+ *
  */
 class ReplicaStateMachine(controller: KafkaController) extends Logging {
+
     private val controllerContext = controller.controllerContext
     private val controllerId = controller.config.brokerId
     private val zkUtils = controllerContext.zkUtils
+
+    /** 记录每个副本对应的 ReplicaState 状态 */
     private val replicaState: mutable.Map[PartitionAndReplica, ReplicaState] = mutable.Map.empty
+
+    /** ZK 监听器，用于监听 broker 的变化 */
     private val brokerChangeListener = new BrokerChangeListener(controller)
     private val brokerRequestBatch = new ControllerBrokerRequestBatch(controller)
     private val hasStarted = new AtomicBoolean(false)
@@ -64,11 +104,11 @@ class ReplicaStateMachine(controller: KafkaController) extends Logging {
      * Then triggers the OnlineReplica state change for all replicas.
      */
     def startup() {
-        // initialize replica state
+        // 初始化 replicaState 集合
         initializeReplicaState()
-        // set started flag
+        // 设置启动标记
         hasStarted.set(true)
-        // move all Online replicas to Online
+        // 尝试将所有可用副本转换成 OnlineReplica 状态
         handleStateChanges(controllerContext.allLiveReplicas(), OnlineReplica)
 
         info("Started replica state machine with initial state -> " + replicaState.toString())
@@ -313,30 +353,33 @@ class ReplicaStateMachine(controller: KafkaController) extends Logging {
                     ". Instead it is in %s state".format(replicaState(partitionAndReplica)))
     }
 
-    private def registerBrokerChangeListener() = {
+    private def registerBrokerChangeListener(): util.List[String] = {
         zkUtils.zkClient.subscribeChildChanges(ZkUtils.BrokerIdsPath, brokerChangeListener)
     }
 
-    private def deregisterBrokerChangeListener() = {
+    private def deregisterBrokerChangeListener(): Unit = {
         zkUtils.zkClient.unsubscribeChildChanges(ZkUtils.BrokerIdsPath, brokerChangeListener)
     }
 
     /**
-     * Invoked on startup of the replica's state machine to set the initial state for replicas of all existing partitions
-     * in zookeeper
+     * Invoked on startup of the replica's state machine to
+     * set the initial state for replicas of all existing partitions in zookeeper
      */
     private def initializeReplicaState() {
         for ((topicPartition, assignedReplicas) <- controllerContext.partitionReplicaAssignment) {
             val topic = topicPartition.topic
             val partition = topicPartition.partition
+            // 遍历每个分区的 AR 集合
             assignedReplicas.foreach { replicaId =>
                 val partitionAndReplica = PartitionAndReplica(topic, partition, replicaId)
                 if (controllerContext.liveBrokerIds.contains(replicaId))
+                // 将可用的副本初始化为 OnlineReplica 状态
                     replicaState.put(partitionAndReplica, OnlineReplica)
                 else
                 // mark replicas on dead brokers as failed for topic deletion, if they belong to a topic to be deleted.
                 // This is required during controller failover since during controller failover a broker can go down,
                 // so the replicas on that broker should be moved to ReplicaDeletionIneligible to be on the safer side.
+                // 将不可用的副本初始化为 ReplicaDeletionIneligible 状态
                     replicaState.put(partitionAndReplica, ReplicaDeletionIneligible)
             }
         }
@@ -388,34 +431,58 @@ class ReplicaStateMachine(controller: KafkaController) extends Logging {
 
 }
 
+/**
+ * 副本状态
+ */
 sealed trait ReplicaState {
     def state: Byte
 }
 
+/**
+ * 创建新的 topic 或进行副本重新分配时，新创建的副本对应的状态，处于此状态的副本只能成为 follower 副本
+ */
 case object NewReplica extends ReplicaState {
     val state: Byte = 1
 }
 
+/**
+ * 副本开始正常工作时的状态，处于此状态的副本可以成为 leader 副本，也可以成为 follower 副本
+ */
 case object OnlineReplica extends ReplicaState {
     val state: Byte = 2
 }
 
+/**
+ * 副本所有的 broker 下线后，对应该状态
+ */
 case object OfflineReplica extends ReplicaState {
     val state: Byte = 3
 }
 
+/**
+ * 刚开始删除副本时，会先将副本转换为此状态，然后开始删除操作
+ */
 case object ReplicaDeletionStarted extends ReplicaState {
     val state: Byte = 4
 }
 
+/**
+ * 副本删除成功之后，处于此状态
+ */
 case object ReplicaDeletionSuccessful extends ReplicaState {
     val state: Byte = 5
 }
 
+/**
+ * 如果副本删除操作失败，处于此状态
+ */
 case object ReplicaDeletionIneligible extends ReplicaState {
     val state: Byte = 6
 }
 
+/**
+ * 副本被删除成功之后，最终转换为此状态
+ */
 case object NonExistentReplica extends ReplicaState {
     val state: Byte = 7
 }

@@ -1535,6 +1535,7 @@ case class PartitionAndReplica(topic: String, partition: Int, replica: Int) {
 
 case class LeaderIsrAndControllerEpoch(leaderAndIsr: LeaderAndIsr,
                                        controllerEpoch: Int) {
+
     override def toString: String = {
         val leaderAndIsrInfo = new StringBuilder
         leaderAndIsrInfo.append("(Leader:" + leaderAndIsr.leader)

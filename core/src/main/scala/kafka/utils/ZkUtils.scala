@@ -429,8 +429,11 @@ class ZkUtils(val zkClient: ZkClient,
     }
 
     def leaderAndIsrZkData(leaderAndIsr: LeaderAndIsr, controllerEpoch: Int): String = {
-        Json.encode(Map("version" -> 1, "leader" -> leaderAndIsr.leader, "leader_epoch" -> leaderAndIsr.leaderEpoch,
-            "controller_epoch" -> controllerEpoch, "isr" -> leaderAndIsr.isr))
+        Json.encode(Map("version" -> 1,
+            "leader" -> leaderAndIsr.leader,
+            "leader_epoch" -> leaderAndIsr.leaderEpoch,
+            "controller_epoch" -> controllerEpoch,
+            "isr" -> leaderAndIsr.isr))
     }
 
     /**
