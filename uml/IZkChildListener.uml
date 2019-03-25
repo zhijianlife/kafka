@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Diagram>
+  <ID>JAVA</ID>
+  <OriginalElement>org.I0Itec.zkclient.IZkChildListener</OriginalElement>
+  <nodes>
+    <node x="1210.0" y="95.0">kafka.consumer.ZookeeperConsumerConnector.ZKRebalancerListener</node>
+    <node x="224.00000000000006" y="95.0">kafka.controller.PartitionStateMachine.TopicChangeListener</node>
+    <node x="0.0" y="95.0">kafka.controller.PartitionStateMachine.DeleteTopicsListener</node>
+    <node x="606.5" y="0.0">org.I0Itec.zkclient.IZkChildListener</node>
+    <node x="687.0" y="95.0">kafka.controller.IsrChangeNotificationListener</node>
+    <node x="451.00000000000006" y="95.0">kafka.controller.ReplicaStateMachine.BrokerChangeListener</node>
+    <node x="981.0" y="95.0">kafka.consumer.ZookeeperTopicEventWatcher.ZkTopicEventListener</node>
+  </nodes>
+  <notes />
+  <edges>
+    <edge source="kafka.controller.PartitionStateMachine.TopicChangeListener" target="org.I0Itec.zkclient.IZkChildListener">
+      <point x="0.0" y="-17.5" />
+      <point x="327.50000000000006" y="65.0" />
+      <point x="649.0" y="65.0" />
+      <point x="-42.5" y="17.5" />
+    </edge>
+    <edge source="kafka.consumer.ZookeeperTopicEventWatcher.ZkTopicEventListener" target="org.I0Itec.zkclient.IZkChildListener">
+      <point x="0.0" y="-17.5" />
+      <point x="1085.5" y="65.0" />
+      <point x="734.0" y="65.0" />
+      <point x="42.5" y="17.5" />
+    </edge>
+    <edge source="kafka.controller.IsrChangeNotificationListener" target="org.I0Itec.zkclient.IZkChildListener">
+      <point x="0.0" y="-17.5" />
+      <point x="824.0" y="75.0" />
+      <point x="705.6666666666667" y="75.0" />
+      <point x="14.166666666666629" y="17.5" />
+    </edge>
+    <edge source="kafka.controller.PartitionStateMachine.DeleteTopicsListener" target="org.I0Itec.zkclient.IZkChildListener">
+      <point x="0.0" y="-17.5" />
+      <point x="102.0" y="55.0" />
+      <point x="620.6666666666667" y="55.0" />
+      <point x="-70.83333333333337" y="17.5" />
+    </edge>
+    <edge source="kafka.consumer.ZookeeperConsumerConnector.ZKRebalancerListener" target="org.I0Itec.zkclient.IZkChildListener">
+      <point x="0.0" y="-17.5" />
+      <point x="1315.5" y="55.0" />
+      <point x="762.3333333333333" y="55.0" />
+      <point x="70.83333333333326" y="17.5" />
+    </edge>
+    <edge source="kafka.controller.ReplicaStateMachine.BrokerChangeListener" target="org.I0Itec.zkclient.IZkChildListener">
+      <point x="0.0" y="-17.5" />
+      <point x="559.0" y="75.0" />
+      <point x="677.3333333333335" y="75.0" />
+      <point x="-14.166666666666629" y="17.5" />
+    </edge>
+  </edges>
+  <settings layout="Hierarchic Group" zoom="1.0" x="710.5" y="65.0" />
+  <SelectedNodes />
+  <Categories>
+    <Category>Inner Classes</Category>
+  </Categories>
+  <SCOPE>All</SCOPE>
+  <VISIBILITY>private</VISIBILITY>
+</Diagram>
+
