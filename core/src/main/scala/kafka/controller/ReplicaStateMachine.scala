@@ -407,6 +407,10 @@ class ReplicaStateMachine(controller: KafkaController) extends Logging {
 
     /**
      * This is the zookeeper listener that triggers all the state transitions for a replica
+     *
+     * 监听 ZK 的 /broker/ids 路径，主要负责处理 broker 节点的上线和下线，
+     * broker 上线时会在 ZK 路径下创建对应的临时节点，下线时会删除对应节点
+     *
      */
     class BrokerChangeListener(protected val controller: KafkaController) extends ControllerZkChildListener {
 
@@ -418,23 +422,31 @@ class ReplicaStateMachine(controller: KafkaController) extends Logging {
                 if (hasStarted.get) {
                     ControllerStats.leaderElectionTimer.time {
                         try {
+                            // 从 ZK 获取 broker 节点列表
                             val curBrokers = currentBrokerList.map(_.toInt).toSet.flatMap(zkUtils.getBrokerInfo)
                             val curBrokerIds = curBrokers.map(_.id)
                             val liveOrShuttingDownBrokerIds = controllerContext.liveOrShuttingDownBrokerIds
+                            // 过滤得到新增的 broker 列表
                             val newBrokerIds = curBrokerIds -- liveOrShuttingDownBrokerIds
+                            // 过滤得到故障的 broker 列表
                             val deadBrokerIds = liveOrShuttingDownBrokerIds -- curBrokerIds
                             val newBrokers = curBrokers.filter(broker => newBrokerIds(broker.id))
+                            // 更新 controller 上下文
                             controllerContext.liveBrokers = curBrokers
                             val newBrokerIdsSorted = newBrokerIds.toSeq.sorted
                             val deadBrokerIdsSorted = deadBrokerIds.toSeq.sorted
                             val liveBrokerIdsSorted = curBrokerIds.toSeq.sorted
                             info("Newly added brokers: %s, deleted brokers: %s, all live brokers: %s"
                                     .format(newBrokerIdsSorted.mkString(","), deadBrokerIdsSorted.mkString(","), liveBrokerIdsSorted.mkString(",")))
+                            // 创建 controller 与新增的 broker 的网络连接
                             newBrokers.foreach(controllerContext.controllerChannelManager.addBroker)
+                            // 关闭 controller 与故障的 broker 的网络连接
                             deadBrokerIds.foreach(controllerContext.controllerChannelManager.removeBroker)
                             if (newBrokerIds.nonEmpty)
+                            // 处理新增的 broker 节点
                                 controller.onBrokerStartup(newBrokerIdsSorted)
                             if (deadBrokerIds.nonEmpty)
+                            // 下线故障的 broker 节点
                                 controller.onBrokerFailure(deadBrokerIdsSorted)
                         } catch {
                             case e: Throwable => error("Error while handling broker changes", e)
