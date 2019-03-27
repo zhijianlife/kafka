@@ -31,45 +31,63 @@ import org.apache.kafka.common.utils.Time
  * leader is dead, this class will handle automatic re-election and if it succeeds, it invokes the leader state change
  * callback
  *
- * 用于执行 controller leader 选举
+ * 用于执行 controller leader 故障转移
  */
 class ZookeeperLeaderElector(controllerContext: ControllerContext,
                              electionPath: String,
-                             onBecomingLeader: () => Unit,
+                             onBecomingLeader: () => Unit, // KafkaController.onControllerFailover
                              onResigningAsLeader: () => Unit,
                              brokerId: Int,
                              time: Time)
         extends LeaderElector with Logging {
-    var leaderId = -1
+
+    /** 当前 controller leader 的 ID */
+    var leaderId: Int = -1
+
     // create the election path in ZK, if one does not exist
-    val index = electionPath.lastIndexOf("/")
+    val index: Int = electionPath.lastIndexOf("/")
     if (index > 0)
         controllerContext.zkUtils.makeSurePersistentPathExists(electionPath.substring(0, index))
+
+    /** 监听 ZK 的 /controller 节点的数据变化 */
     val leaderChangeListener = new LeaderChangeListener
 
     def startup {
         inLock(controllerContext.controllerLock) {
+            // 注册 ZK 监听器，监听 /controller 路径
             controllerContext.zkUtils.zkClient.subscribeDataChanges(electionPath, leaderChangeListener)
+            // 执行 leader 选举
             elect
         }
     }
 
-    def getControllerID(): Int = {
+    def getControllerID: Int = {
         controllerContext.zkUtils.readDataMaybeNull(electionPath)._1 match {
             case Some(controller) => KafkaController.parseControllerId(controller)
             case None => -1
         }
     }
 
+    /**
+     * 触发 leader 选举的场景有：
+     * 1. controller 第一次启动的时候
+     * 2. 监听到路径 /controller 节点中的数据被删除
+     * 3. ZK 连接过期并重新建立连接之后
+     *
+     * @return
+     */
     def elect: Boolean = {
         val timestamp = time.milliseconds.toString
         val electString = Json.encode(Map("version" -> 1, "brokerid" -> brokerId, "timestamp" -> timestamp))
 
+        // 获取 ZK 中记录的 controller leader 的 ID
         leaderId = getControllerID
         /*
          * We can get here during the initial startup and the handleDeleted ZK callback. Because of the potential race condition,
          * it's possible that the controller has already been elected when we get here. This check will prevent the following
          * createEphemeralPath method from getting into an infinite loop if this broker is already the controller.
+         *
+         * 已经存在 controller leader，放弃选举
          */
         if (leaderId != -1) {
             debug("Broker %d has been elected as leader, so stopping the election process.".format(leaderId))
@@ -77,12 +95,14 @@ class ZookeeperLeaderElector(controllerContext: ControllerContext,
         }
 
         try {
+            // 尝试创建临时节点，如果临时节点已经存在，则抛出异常
             val zkCheckedEphemeral = new ZKCheckedEphemeral(electionPath,
                 electString,
                 controllerContext.zkUtils.zkConnection.getZookeeper,
-                JaasUtils.isZkSecurityEnabled())
+                JaasUtils.isZkSecurityEnabled)
             zkCheckedEphemeral.create()
             info(brokerId + " successfully elected as leader")
+            // 创建成功，更新 leader 节点
             leaderId = brokerId
             onBecomingLeader()
         } catch {
@@ -97,18 +117,20 @@ class ZookeeperLeaderElector(controllerContext: ControllerContext,
 
             case e2: Throwable =>
                 error("Error while electing or becoming leader on broker %d".format(brokerId), e2)
+                // 重置 leaderId，并删除 /controller 节点
                 resign()
         }
+        // 检测当前 broker 是否成为 leader
         amILeader
     }
 
-    def close = {
+    def close: Unit = {
         leaderId = -1
     }
 
     def amILeader: Boolean = leaderId == brokerId
 
-    def resign() = {
+    def resign(): Boolean = {
         leaderId = -1
         controllerContext.zkUtils.deletePath(electionPath)
     }
@@ -127,12 +149,14 @@ class ZookeeperLeaderElector(controllerContext: ControllerContext,
         def handleDataChange(dataPath: String, data: Object) {
             val shouldResign = inLock(controllerContext.controllerLock) {
                 val amILeaderBeforeDataChange = amILeader
+                // 记录新的 controller leader 的 ID
                 leaderId = KafkaController.parseControllerId(data.toString)
                 info("New leader is %d".format(leaderId))
                 // The old leader needs to resign leadership if it is no longer the leader
                 amILeaderBeforeDataChange && !amILeader
             }
 
+            // 如果当前 broker 由 leader 变为 follower，则需要执行相应的清理工作
             if (shouldResign)
                 onResigningAsLeader()
         }
@@ -146,14 +170,14 @@ class ZookeeperLeaderElector(controllerContext: ControllerContext,
         @throws[Exception]
         def handleDataDeleted(dataPath: String) {
             val shouldResign = inLock(controllerContext.controllerLock) {
-                debug("%s leader change listener fired for path %s to handle data deleted: trying to elect as a leader"
-                        .format(brokerId, dataPath))
+                debug("%s leader change listener fired for path %s to handle data deleted: trying to elect as a leader".format(brokerId, dataPath))
                 amILeader
             }
 
             if (shouldResign)
                 onResigningAsLeader()
 
+            // 尝试执行信息的 controller leader 选举
             inLock(controllerContext.controllerLock) {
                 elect
             }
