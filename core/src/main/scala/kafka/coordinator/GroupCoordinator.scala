@@ -35,8 +35,17 @@ import scala.collection.{Map, Seq, immutable}
 /**
  * GroupCoordinator handles general group membership and offset management.
  *
- * Each Kafka server instantiates a coordinator which is responsible for a set of
- * groups. Groups are assigned to coordinators based on their group names.
+ * Each Kafka server instantiates a coordinator which is responsible for a set of groups.
+ * Groups are assigned to coordinators based on their group names.
+ *
+ * 每一个 broker 上都会实例化一个 GroupCoordinator 对象，每个 GroupCoordinator 只负责管理消费者 group 的一个子集。
+ *
+ * GroupCoordinator 的主要功能有：
+ *
+ * 1. 负责处理 JoinGroupRequest 和 SyncGroupRequest 请求完成分区的分配工作
+ * 2. 通过 GroupMetadataManager 和内部 topic 维护消费的 offset 信息，即使出现消费者宕机也可以找回之前提交的 offset
+ * 3. 记录消费者 group 相关信息，即使 broker 宕机导致 group 由新的 GroupCoordinator 进行管理，新的 GroupCoordinator 也知道 group 中每个消费者负责处理哪个分区等信息
+ * 4. 通过心跳机制检测消费者的运行状态
  */
 class GroupCoordinator(val brokerId: Int,
                        val groupConfig: GroupConfig,
@@ -474,7 +483,7 @@ class GroupCoordinator(val brokerId: Int,
         if (!isActive.get) {
             (Errors.GROUP_COORDINATOR_NOT_AVAILABLE, List[GroupOverview]())
         } else {
-            val errorCode = if (groupManager.isLoading()) Errors.GROUP_LOAD_IN_PROGRESS else Errors.NONE
+            val errorCode = if (groupManager.isLoading) Errors.GROUP_LOAD_IN_PROGRESS else Errors.NONE
             (errorCode, groupManager.currentGroups.map(_.overview).toList)
         }
     }
@@ -542,6 +551,11 @@ class GroupCoordinator(val brokerId: Int,
         groupManager.loadGroupsForPartition(offsetTopicPartitionId, onGroupLoaded)
     }
 
+    /**
+     * 当 broker 成为 offset topic 分区的 follower 副本时会回调该方法执行清理工作
+     *
+     * @param offsetTopicPartitionId
+     */
     def handleGroupEmigration(offsetTopicPartitionId: Int) {
         groupManager.removeGroupsForPartition(offsetTopicPartitionId, onGroupUnloaded)
     }
@@ -615,7 +629,7 @@ class GroupCoordinator(val brokerId: Int,
                                       protocolType: String,
                                       protocols: List[(String, Array[Byte])],
                                       group: GroupMetadata,
-                                      callback: JoinCallback) = {
+                                      callback: JoinCallback): MemberMetadata = {
         // use the client-id with a random id suffix as the member-id
         val memberId = clientId + "-" + group.generateMemberIdSuffix
         val member = new MemberMetadata(memberId, group.groupId, clientId, clientHost, rebalanceTimeoutMs,
@@ -666,7 +680,7 @@ class GroupCoordinator(val brokerId: Int,
         }
     }
 
-    def tryCompleteJoin(group: GroupMetadata, forceComplete: () => Boolean) = {
+    def tryCompleteJoin(group: GroupMetadata, forceComplete: () => Boolean): Boolean = {
         group synchronized {
             if (group.notYetRejoinedMembers.isEmpty)
                 forceComplete()
@@ -730,7 +744,7 @@ class GroupCoordinator(val brokerId: Int,
         delayedStore.foreach(groupManager.store)
     }
 
-    def tryCompleteHeartbeat(group: GroupMetadata, member: MemberMetadata, heartbeatDeadline: Long, forceComplete: () => Boolean) = {
+    def tryCompleteHeartbeat(group: GroupMetadata, member: MemberMetadata, heartbeatDeadline: Long, forceComplete: () => Boolean): Boolean = {
         group synchronized {
             if (shouldKeepMemberAlive(member, heartbeatDeadline) || member.isLeaving)
                 forceComplete()
@@ -751,14 +765,14 @@ class GroupCoordinator(val brokerId: Int,
 
     def partitionFor(group: String): Int = groupManager.partitionFor(group)
 
-    private def shouldKeepMemberAlive(member: MemberMetadata, heartbeatDeadline: Long) =
+    private def shouldKeepMemberAlive(member: MemberMetadata, heartbeatDeadline: Long): Boolean =
         member.awaitingJoinCallback != null ||
                 member.awaitingSyncCallback != null ||
                 member.latestHeartbeat + member.sessionTimeoutMs > heartbeatDeadline
 
-    private def isCoordinatorForGroup(groupId: String) = groupManager.isGroupLocal(groupId)
+    private def isCoordinatorForGroup(groupId: String): Boolean = groupManager.isGroupLocal(groupId)
 
-    private def isCoordinatorLoadingInProgress(groupId: String) = groupManager.isGroupLoading(groupId)
+    private def isCoordinatorLoadingInProgress(groupId: String): Boolean = groupManager.isGroupLoading(groupId)
 }
 
 object GroupCoordinator {
@@ -767,7 +781,7 @@ object GroupCoordinator {
     val NoProtocolType = ""
     val NoProtocol = ""
     val NoLeader = ""
-    val NoMembers = List[MemberSummary]()
+    val NoMembers: List[MemberSummary] = List[MemberSummary]()
     val EmptyGroup = GroupSummary(NoState, NoProtocolType, NoProtocol, NoMembers)
     val DeadGroup = GroupSummary(Dead.toString, NoProtocolType, NoProtocol, NoMembers)
 

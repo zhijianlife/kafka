@@ -312,7 +312,7 @@ class KafkaServer(val config: KafkaConfig,
         }
 
         val secureAclsEnabled = config.zkEnableSecureAcls
-        val isZkSecurityEnabled = JaasUtils.isZkSecurityEnabled()
+        val isZkSecurityEnabled = JaasUtils.isZkSecurityEnabled
 
         if (secureAclsEnabled && !isZkSecurityEnabled)
             throw new java.lang.SecurityException(s"${KafkaConfig.ZkEnableSecureAclsProp} is true, but the verification of the JAAS login file failed.")

@@ -155,6 +155,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         val leaderAndIsrRequest = request.body.asInstanceOf[LeaderAndIsrRequest]
 
         try {
+            // 完成 GroupCoordinator 的迁移操作
             def onLeadershipChange(updatedLeaders: Iterable[Partition], updatedFollowers: Iterable[Partition]) {
                 // for each new leader or follower, call coordinator to handle consumer group migration.
                 // this callback is invoked under the replica state change lock to ensure proper order of
@@ -1021,6 +1022,12 @@ class KafkaApis(val requestChannel: RequestChannel,
         requestChannel.sendResponse(new Response(request, offsetFetchResponse))
     }
 
+    /**
+     * 处理 GroupCoordinatorRequest 请求，
+     * 消费者与 GroupCoordinator 交互之前会发送 GroupCoordinatorRequest 请求到负载最小的 broker
+     *
+     * @param request
+     */
     def handleGroupCoordinatorRequest(request: RequestChannel.Request) {
         val groupCoordinatorRequest = request.body.asInstanceOf[GroupCoordinatorRequest]
 
@@ -1028,19 +1035,23 @@ class KafkaApis(val requestChannel: RequestChannel,
             val responseBody = new GroupCoordinatorResponse(Errors.GROUP_AUTHORIZATION_FAILED.code, Node.noNode)
             requestChannel.sendResponse(new RequestChannel.Response(request, responseBody))
         } else {
+            // 获取 groupId 对应的 offset topic 对应的分区 ID
             val partition = coordinator.partitionFor(groupCoordinatorRequest.groupId)
 
             // get metadata (and create the topic if necessary)
+            // 从 MetadataCache 中获取 offset topic  的相关信息，如果 offset topic 未创建则进行创建
             val offsetsTopicMetadata = getOrCreateGroupMetadataTopic(request.listenerName)
 
             val responseBody = if (offsetsTopicMetadata.error != Errors.NONE) {
                 new GroupCoordinatorResponse(Errors.GROUP_COORDINATOR_NOT_AVAILABLE.code, Node.noNode)
             } else {
+                // 通过 offset topic 的分区 ID 获取分区 leader 所在的节点
                 val coordinatorEndpoint = offsetsTopicMetadata.partitionMetadata().asScala
                         .find(_.partition == partition)
                         .map(_.leader())
 
                 coordinatorEndpoint match {
+                    // 创建 GroupCoordinatorResponse 对象
                     case Some(endpoint) if !endpoint.isEmpty =>
                         new GroupCoordinatorResponse(Errors.NONE.code, endpoint)
                     case _ =>
@@ -1050,6 +1061,7 @@ class KafkaApis(val requestChannel: RequestChannel,
 
             trace("Sending consumer metadata %s for correlation id %d to client %s."
                     .format(responseBody, request.header.correlationId, request.header.clientId))
+            // 将响应对象加入到 channel 中，等待发送
             requestChannel.sendResponse(new RequestChannel.Response(request, responseBody))
         }
     }
