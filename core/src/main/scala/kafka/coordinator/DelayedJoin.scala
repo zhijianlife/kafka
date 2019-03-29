@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -28,17 +28,22 @@ import kafka.server.DelayedOperation
  * When the operation has expired, any known members that have not requested to re-join
  * the group are marked as failed, and complete this operation to proceed rebalance with
  * the rest of the group.
+ *
+ * 等待消费者 group 中所有的消费者发送 JoinGroupRequest 请求申请加入
  */
 private[coordinator] class DelayedJoin(coordinator: GroupCoordinator,
                                        group: GroupMetadata,
-                                       rebalanceTimeout: Long)
-  extends DelayedOperation(rebalanceTimeout) {
+                                       rebalanceTimeout: Long // 指定 DelayedJoin 的到期时长，对应 GroupMetadata 中所有 member 设置的超时时间最大值
+                                      )
+        extends DelayedOperation(rebalanceTimeout) {
 
-  // overridden since tryComplete already synchronizes on the group. This makes it safe to
-  // call purgatory operations while holding the group lock.
-  override def safeTryComplete(): Boolean = tryComplete()
+    // overridden since tryComplete already synchronizes on the group. This makes it safe to
+    // call purgatory operations while holding the group lock.
+    override def safeTryComplete(): Boolean = tryComplete()
 
-  override def tryComplete(): Boolean = coordinator.tryCompleteJoin(group, forceComplete)
-  override def onExpiration() = coordinator.onExpireJoin()
-  override def onComplete() = coordinator.onCompleteJoin(group)
+    override def tryComplete(): Boolean = coordinator.tryCompleteJoin(group, forceComplete)
+
+    override def onExpiration(): Unit = coordinator.onExpireJoin()
+
+    override def onComplete(): Unit = coordinator.onCompleteJoin(group)
 }

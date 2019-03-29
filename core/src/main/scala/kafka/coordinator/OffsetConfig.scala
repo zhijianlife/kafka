@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,24 +17,25 @@
 
 package kafka.coordinator
 
-import kafka.message.{NoCompressionCodec, CompressionCodec}
+import kafka.message.{CompressionCodec, NoCompressionCodec}
 
 /**
  * Configuration settings for in-built offset management
- * @param maxMetadataSize The maximum allowed metadata for any offset commit.
- * @param loadBufferSize Batch size for reading from the offsets segments when loading offsets into the cache.
- * @param offsetsRetentionMs Offsets older than this retention period will be discarded.
+ *
+ * @param maxMetadataSize                 The maximum allowed metadata for any offset commit.
+ * @param loadBufferSize                  Batch size for reading from the offsets segments when loading offsets into the cache.
+ * @param offsetsRetentionMs              Offsets older than this retention period will be discarded.
  * @param offsetsRetentionCheckIntervalMs Frequency at which to check for expired offsets.
- * @param offsetsTopicNumPartitions The number of partitions for the offset commit topic (should not change after deployment).
- * @param offsetsTopicSegmentBytes The offsets topic segment bytes should be kept relatively small to facilitate faster
- *                                 log compaction and faster offset loads
- * @param offsetsTopicReplicationFactor The replication factor for the offset commit topic (set higher to ensure availability).
- * @param offsetsTopicCompressionCodec Compression codec for the offsets topic - compression should be turned on in
- *                                     order to achieve "atomic" commits.
- * @param offsetCommitTimeoutMs The offset commit will be delayed until all replicas for the offsets topic receive the
- *                              commit or this timeout is reached. (Similar to the producer request timeout.)
- * @param offsetCommitRequiredAcks The required acks before the commit can be accepted. In general, the default (-1)
- *                                 should not be overridden.
+ * @param offsetsTopicNumPartitions       The number of partitions for the offset commit topic (should not change after deployment).
+ * @param offsetsTopicSegmentBytes        The offsets topic segment bytes should be kept relatively small to facilitate faster
+ *                                        log compaction and faster offset loads
+ * @param offsetsTopicReplicationFactor   The replication factor for the offset commit topic (set higher to ensure availability).
+ * @param offsetsTopicCompressionCodec    Compression codec for the offsets topic - compression should be turned on in
+ *                                        order to achieve "atomic" commits.
+ * @param offsetCommitTimeoutMs           The offset commit will be delayed until all replicas for the offsets topic receive the
+ *                                        commit or this timeout is reached. (Similar to the producer request timeout.)
+ * @param offsetCommitRequiredAcks        The required acks before the commit can be accepted. In general, the default (-1)
+ *                                        should not be overridden.
  */
 case class OffsetConfig(maxMetadataSize: Int = OffsetConfig.DefaultMaxMetadataSize,
                         loadBufferSize: Int = OffsetConfig.DefaultLoadBufferSize,
@@ -48,14 +49,14 @@ case class OffsetConfig(maxMetadataSize: Int = OffsetConfig.DefaultMaxMetadataSi
                         offsetCommitRequiredAcks: Short = OffsetConfig.DefaultOffsetCommitRequiredAcks)
 
 object OffsetConfig {
-  val DefaultMaxMetadataSize = 4096
-  val DefaultLoadBufferSize = 5*1024*1024
-  val DefaultOffsetRetentionMs = 24*60*60*1000L
-  val DefaultOffsetsRetentionCheckIntervalMs = 600000L
-  val DefaultOffsetsTopicNumPartitions = 50
-  val DefaultOffsetsTopicSegmentBytes = 100*1024*1024
-  val DefaultOffsetsTopicReplicationFactor = 3.toShort
-  val DefaultOffsetsTopicCompressionCodec = NoCompressionCodec
-  val DefaultOffsetCommitTimeoutMs = 5000
-  val DefaultOffsetCommitRequiredAcks = (-1).toShort
+    val DefaultMaxMetadataSize = 4096
+    val DefaultLoadBufferSize: Int = 5 * 1024 * 1024
+    val DefaultOffsetRetentionMs: Long = 24 * 60 * 60 * 1000L
+    val DefaultOffsetsRetentionCheckIntervalMs = 600000L
+    val DefaultOffsetsTopicNumPartitions = 50
+    val DefaultOffsetsTopicSegmentBytes: Int = 100 * 1024 * 1024
+    val DefaultOffsetsTopicReplicationFactor: Short = 3.toShort
+    val DefaultOffsetsTopicCompressionCodec: NoCompressionCodec.type = NoCompressionCodec
+    val DefaultOffsetCommitTimeoutMs = 5000
+    val DefaultOffsetCommitRequiredAcks: Short = (-1).toShort
 }

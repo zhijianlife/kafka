@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,42 +17,41 @@
 
 package kafka.server
 
-import kafka.common.TopicAndPartition
 import org.apache.kafka.common.TopicPartition
 
 /**
  * Keys used for delayed operation metrics recording
  */
 trait DelayedOperationKey {
-  def keyLabel: String
+    def keyLabel: String
 }
 
 object DelayedOperationKey {
-  val globalLabel = "All"
+    val globalLabel = "All"
 }
 
 /* used by delayed-produce and delayed-fetch operations */
 case class TopicPartitionOperationKey(topic: String, partition: Int) extends DelayedOperationKey {
 
-  def this(topicPartition: TopicPartition) = this(topicPartition.topic, topicPartition.partition)
+    def this(topicPartition: TopicPartition) = this(topicPartition.topic, topicPartition.partition)
 
-  override def keyLabel = "%s-%d".format(topic, partition)
+    override def keyLabel: String = "%s-%d".format(topic, partition)
 }
 
 /* used by delayed-join-group operations */
 case class MemberKey(groupId: String, consumerId: String) extends DelayedOperationKey {
 
-  override def keyLabel = "%s-%s".format(groupId, consumerId)
+    override def keyLabel: String = "%s-%s".format(groupId, consumerId)
 }
 
 /* used by delayed-rebalance operations */
 case class GroupKey(groupId: String) extends DelayedOperationKey {
 
-  override def keyLabel = groupId
+    override def keyLabel: String = groupId
 }
 
 /* used by delayed-topic operations */
 case class TopicKey(topic: String) extends DelayedOperationKey {
 
-  override def keyLabel = topic
+    override def keyLabel: String = topic
 }

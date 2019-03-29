@@ -260,13 +260,14 @@ class KafkaApis(val requestChannel: RequestChannel,
     }
 
     /**
-     * Handle an offset commit request
+     * 处理 OffsetCommitRequest 请求
      */
     def handleOffsetCommitRequest(request: RequestChannel.Request) {
         val header = request.header
         val offsetCommitRequest = request.body.asInstanceOf[OffsetCommitRequest]
 
         // reject the request if not authorized to the group
+        // 权限验证
         if (!authorize(request.session, Read, new Resource(Group, offsetCommitRequest.groupId))) {
             val errorCode = new JShort(Errors.GROUP_AUTHORIZATION_FAILED.code)
             val results = offsetCommitRequest.offsetData.keySet.asScala.map { topicPartition =>
@@ -275,15 +276,15 @@ class KafkaApis(val requestChannel: RequestChannel,
             val response = new OffsetCommitResponse(results.asJava)
             requestChannel.sendResponse(new RequestChannel.Response(request, response))
         } else {
+            // 过滤当前 MetadataCache 中未知的 topic 对应的 offset 信息
             val (existingAndAuthorizedForDescribeTopics, nonExistingOrUnauthorizedForDescribeTopics) = offsetCommitRequest.offsetData.asScala.toMap.partition {
-                case (topicPartition, _) => {
+                case (topicPartition, _) =>
                     val authorizedForDescribe = authorize(request.session, Describe, new Resource(auth.Topic, topicPartition.topic))
                     val exists = metadataCache.contains(topicPartition.topic)
                     if (!authorizedForDescribe && exists)
                         debug(s"Offset commit request with correlation id ${header.correlationId} from client ${header.clientId} " +
                                 s"on partition $topicPartition failing due to user not having DESCRIBE authorization, but returning UNKNOWN_TOPIC_OR_PARTITION")
                     authorizedForDescribe && exists
-                }
             }
 
             val (authorizedTopics, unauthorizedForReadTopics) = existingAndAuthorizedForDescribeTopics.partition {
@@ -291,6 +292,7 @@ class KafkaApis(val requestChannel: RequestChannel,
             }
 
             // the callback for sending an offset commit response
+            // 定义回调函数，负责创建 OffsetCommitResponse 对象，并放入 channel 中等待发送
             def sendResponseCallback(commitStatus: immutable.Map[TopicPartition, Short]) {
                 val combinedCommitStatus = commitStatus.mapValues(new JShort(_)) ++
                         unauthorizedForReadTopics.mapValues(_ => new JShort(Errors.TOPIC_AUTHORIZATION_FAILED.code)) ++
@@ -307,9 +309,15 @@ class KafkaApis(val requestChannel: RequestChannel,
                 requestChannel.sendResponse(new RequestChannel.Response(request, response))
             }
 
+            // 没有可用的 offset 信息，直接调用 sendResponseCallback 方法返回
             if (authorizedTopics.isEmpty)
                 sendResponseCallback(Map.empty)
             else if (header.apiVersion == 0) {
+                /*
+                 * 依据 api 版本号分别处理：
+                 * - 如果版本号为 0，则 offset 信息应该存储在 ZK 中
+                 * - 如果版本号不为 0，则是新的版本号，offset 存储在 offset topic 中
+                 */
                 // for version 0 always store offsets to ZK
                 val responseInfo = authorizedTopics.map {
                     case (topicPartition, partitionData) =>
@@ -331,12 +339,13 @@ class KafkaApis(val requestChannel: RequestChannel,
 
                 // compute the retention time based on the request version:
                 // if it is v1 or not specified by user, we can use the default retention
+                // 依据版本号决定 offset 的消息超时时长
                 val offsetRetention =
                 if (header.apiVersion <= 1 ||
                         offsetCommitRequest.retentionTime == OffsetCommitRequest.DEFAULT_RETENTION_TIME)
                     coordinator.offsetConfig.offsetsRetentionMs
                 else
-                    offsetCommitRequest.retentionTime
+                    offsetCommitRequest.retentionTime // 请求中指定了超时时长
 
                 // commit timestamp is always set to now.
                 // "default" expiration timestamp is now + retention (and retention may be overridden if v2)
@@ -344,10 +353,12 @@ class KafkaApis(val requestChannel: RequestChannel,
                 //   - If v1 and no explicit commit timestamp is provided we use default expiration timestamp.
                 //   - If v1 and explicit commit timestamp is provided we calculate retention from that explicit commit timestamp
                 //   - If v2 we use the default expiration timestamp
+                // 依据配置的保留时间、或每个分区指定的保留时间，计算出 offset 的过期清理的时间
                 val currentTimestamp = time.milliseconds
                 val defaultExpireTimestamp = offsetRetention + currentTimestamp
                 val partitionData = authorizedTopics.mapValues { partitionData =>
                     val metadata = if (partitionData.metadata == null) OffsetMetadata.NoMetadata else partitionData.metadata
+                    // 创建 OffsetAndMetadata 对象
                     new OffsetAndMetadata(
                         offsetMetadata = OffsetMetadata(partitionData.offset, metadata),
                         commitTimestamp = currentTimestamp,
@@ -361,6 +372,7 @@ class KafkaApis(val requestChannel: RequestChannel,
                 }
 
                 // call coordinator to handle commit offset
+                // 委托给 GroupCoordinator.handleCommitOffsets 进行处理
                 coordinator.handleCommitOffsets(
                     offsetCommitRequest.groupId,
                     offsetCommitRequest.memberId,
@@ -950,12 +962,14 @@ class KafkaApis(val requestChannel: RequestChannel,
 
     /**
      * Handle an offset fetch request
+     *
+     * 请求获取最近一次提交的 offset
      */
     def handleOffsetFetchRequest(request: RequestChannel.Request) {
         val header = request.header
         val offsetFetchRequest = request.body.asInstanceOf[OffsetFetchRequest]
 
-        def authorizeTopicDescribe(partition: TopicPartition) =
+        def authorizeTopicDescribe(partition: TopicPartition): Boolean =
             authorize(request.session, Describe, new Resource(auth.Topic, partition.topic))
 
         val offsetFetchResponse =
@@ -963,9 +977,14 @@ class KafkaApis(val requestChannel: RequestChannel,
             if (!authorize(request.session, Read, new Resource(Group, offsetFetchRequest.groupId)))
                 offsetFetchRequest.getErrorResponse(Errors.GROUP_AUTHORIZATION_FAILED)
             else {
+                /*
+                 * 依据版本号进行不同的读取 offset 的流程处理：
+                 * - 版本号为 0 表示旧版请求，offset 存储在 ZK 中
+                 * - 版本好为 1 表示新版请求，offset 由 GroupCoordinator 管理
+                 */
                 if (header.apiVersion == 0) {
-                    val (authorizedPartitions, unauthorizedPartitions) = offsetFetchRequest.partitions.asScala
-                            .partition(authorizeTopicDescribe)
+                    val (authorizedPartitions, unauthorizedPartitions) =
+                        offsetFetchRequest.partitions.asScala.partition(authorizeTopicDescribe)
 
                     // version 0 reads offsets from ZK
                     val authorizedPartitionData = authorizedPartitions.map { topicPartition =>
@@ -1019,6 +1038,7 @@ class KafkaApis(val requestChannel: RequestChannel,
             }
 
         trace(s"Sending offset fetch response $offsetFetchResponse for correlation id ${header.correlationId} to client ${header.clientId}.")
+        // 将响应放入 channel 中等待发送
         requestChannel.sendResponse(new Response(request, offsetFetchResponse))
     }
 
@@ -1099,20 +1119,34 @@ class KafkaApis(val requestChannel: RequestChannel,
         requestChannel.sendResponse(new RequestChannel.Response(request, responseBody))
     }
 
+    /**
+     * 处理 JoinGroupRequest 请求
+     *
+     * @param request
+     */
     def handleJoinGroupRequest(request: RequestChannel.Request) {
         val joinGroupRequest = request.body.asInstanceOf[JoinGroupRequest]
 
         // the callback for sending a join-group response
         def sendResponseCallback(joinResult: JoinGroupResult) {
             val members = joinResult.members map { case (memberId, metadataArray) => (memberId, ByteBuffer.wrap(metadataArray)) }
-            val responseBody = new JoinGroupResponse(request.header.apiVersion, joinResult.errorCode, joinResult.generationId,
-                joinResult.subProtocol, joinResult.memberId, joinResult.leaderId, members.asJava)
+            // 创建 JoinGroupResponse 对象
+            val responseBody = new JoinGroupResponse(
+                request.header.apiVersion,
+                joinResult.errorCode,
+                joinResult.generationId,
+                joinResult.subProtocol,
+                joinResult.memberId,
+                joinResult.leaderId,
+                members.asJava)
 
             trace("Sending join group response %s for correlation id %d to client %s."
                     .format(responseBody, request.header.correlationId, request.header.clientId))
+            // 将响应对象放入 channel 等待发送
             requestChannel.sendResponse(new RequestChannel.Response(request, responseBody))
         }
 
+        // 进行权限验证
         if (!authorize(request.session, Read, new Resource(Group, joinGroupRequest.groupId()))) {
             val responseBody = new JoinGroupResponse(
                 request.header.apiVersion,
@@ -1124,7 +1158,7 @@ class KafkaApis(val requestChannel: RequestChannel,
                 Collections.emptyMap())
             requestChannel.sendResponse(new RequestChannel.Response(request, responseBody))
         } else {
-            // let the coordinator to handle join-group
+            // 委托请求给 GroupCoordinator.handleJoinGroup 进行处理
             val protocols = joinGroupRequest.groupProtocols().asScala.map(protocol =>
                 (protocol.name, Utils.toArray(protocol.metadata))).toList
             coordinator.handleJoinGroup(
@@ -1140,14 +1174,21 @@ class KafkaApis(val requestChannel: RequestChannel,
         }
     }
 
+    /**
+     * 处理 SyncGroupRequest 请求
+     *
+     * @param request
+     */
     def handleSyncGroupRequest(request: RequestChannel.Request) {
         val syncGroupRequest = request.body.asInstanceOf[SyncGroupRequest]
 
+        // 创建对应的回调函数，构建 SyncGroupResponse 对象，并添加到 channel 等待发送
         def sendResponseCallback(memberState: Array[Byte], errorCode: Short) {
             val responseBody = new SyncGroupResponse(errorCode, ByteBuffer.wrap(memberState))
             requestChannel.sendResponse(new Response(request, responseBody))
         }
 
+        // 权限校验
         if (!authorize(request.session, Read, new Resource(Group, syncGroupRequest.groupId()))) {
             sendResponseCallback(Array[Byte](), Errors.GROUP_AUTHORIZATION_FAILED.code)
         } else {
@@ -1161,10 +1202,16 @@ class KafkaApis(val requestChannel: RequestChannel,
         }
     }
 
+    /**
+     * 处理 HeartbeatRequest 请求
+     *
+     * @param request
+     */
     def handleHeartbeatRequest(request: RequestChannel.Request) {
         val heartbeatRequest = request.body.asInstanceOf[HeartbeatRequest]
 
         // the callback for sending a heartbeat response
+        // 定义回调函数，将 HeartbeatResponse 放入 channel 中等待发送
         def sendResponseCallback(errorCode: Short) {
             val response = new HeartbeatResponse(errorCode)
             trace("Sending heartbeat response %s for correlation id %d to client %s."
@@ -1172,12 +1219,13 @@ class KafkaApis(val requestChannel: RequestChannel,
             requestChannel.sendResponse(new RequestChannel.Response(request, response))
         }
 
+        // 权限验证
         if (!authorize(request.session, Read, new Resource(Group, heartbeatRequest.groupId))) {
             val heartbeatResponse = new HeartbeatResponse(Errors.GROUP_AUTHORIZATION_FAILED.code)
             requestChannel.sendResponse(new Response(request, heartbeatResponse))
-        }
-        else {
+        } else {
             // let the coordinator to handle heartbeat
+            // 委托给 GroupCoordinator 进行处理
             coordinator.handleHeartbeat(
                 heartbeatRequest.groupId(),
                 heartbeatRequest.memberId(),
@@ -1186,6 +1234,11 @@ class KafkaApis(val requestChannel: RequestChannel,
         }
     }
 
+    /**
+     * 处理 LeaveGroupRequest 请求
+     *
+     * @param request
+     */
     def handleLeaveGroupRequest(request: RequestChannel.Request) {
         val leaveGroupRequest = request.body.asInstanceOf[LeaveGroupRequest]
 

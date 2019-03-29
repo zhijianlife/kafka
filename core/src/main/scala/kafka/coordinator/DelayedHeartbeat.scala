@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -26,15 +26,18 @@ import kafka.server.DelayedOperation
 private[coordinator] class DelayedHeartbeat(coordinator: GroupCoordinator,
                                             group: GroupMetadata,
                                             member: MemberMetadata,
-                                            heartbeatDeadline: Long,
-                                            sessionTimeout: Long)
-  extends DelayedOperation(sessionTimeout) {
+                                            heartbeatDeadline: Long, // DelayedHeartbeat 到期时间戳
+                                            sessionTimeout: Long // DelayedHeartbeat 到期时长，消费者在 JoinGroupRequest 中设置
+                                           )
+        extends DelayedOperation(sessionTimeout) {
 
-  // overridden since tryComplete already synchronizes on the group. This makes it safe to
-  // call purgatory operations while holding the group lock.
-  override def safeTryComplete(): Boolean = tryComplete()
+    // overridden since tryComplete already synchronizes on the group. This makes it safe to
+    // call purgatory operations while holding the group lock.
+    override def safeTryComplete(): Boolean = tryComplete()
 
-  override def tryComplete(): Boolean = coordinator.tryCompleteHeartbeat(group, member, heartbeatDeadline, forceComplete)
-  override def onExpiration() = coordinator.onExpireHeartbeat(group, member, heartbeatDeadline)
-  override def onComplete() = coordinator.onCompleteHeartbeat()
+    override def tryComplete(): Boolean = coordinator.tryCompleteHeartbeat(group, member, heartbeatDeadline, forceComplete)
+
+    override def onExpiration(): Unit = coordinator.onExpireHeartbeat(group, member, heartbeatDeadline)
+
+    override def onComplete(): Unit = coordinator.onCompleteHeartbeat()
 }

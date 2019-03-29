@@ -25,6 +25,11 @@ import org.apache.kafka.common.TopicPartition
 
 import scala.collection.{Seq, immutable, mutable}
 
+/**
+ * 表示消费者 group 的状态，用于服务端 GroupCoordinator 管理 group
+ *
+ * P435
+ */
 private[coordinator] sealed trait GroupState {
     def state: Byte
 }
@@ -41,6 +46,7 @@ private[coordinator] sealed trait GroupState {
  * transition: some members have joined by the timeout => AwaitingSync
  * all members have left the group => Empty
  * group is removed by partition emigration => Dead
+ *
  */
 private[coordinator] case object PreparingRebalance extends GroupState {
     val state: Byte = 1
@@ -58,6 +64,8 @@ private[coordinator] case object PreparingRebalance extends GroupState {
  * leave group from existing member => PreparingRebalance
  * member failure detected => PreparingRebalance
  * group is removed by partition emigration => Dead
+ *
+ * 正在等待 group leader 将分区的分佩结果发送给 GroupCoordinator
  */
 private[coordinator] case object AwaitingSync extends GroupState {
     val state: Byte = 5
@@ -76,6 +84,8 @@ private[coordinator] case object AwaitingSync extends GroupState {
  * leader join-group received => PreparingRebalance
  * follower join-group with new metadata => PreparingRebalance
  * group is removed by partition emigration => Dead
+ *
+ * 表示 group 处于正常状态，初始状态
  */
 private[coordinator] case object Stable extends GroupState {
     val state: Byte = 3
@@ -91,6 +101,8 @@ private[coordinator] case object Stable extends GroupState {
  * respond to offset commit with UNKNOWN_MEMBER_ID
  * allow offset fetch requests
  * transition: Dead is a final state before group metadata is cleaned up, so there are no transitions
+ *
+ * 处于该状态的 group 已经没有 member，并且对应的 metadata 已经被删除
  */
 private[coordinator] case object Dead extends GroupState {
     val state: Byte = 4
@@ -110,6 +122,8 @@ private[coordinator] case object Dead extends GroupState {
  * join group from a new member => PreparingRebalance
  * group is removed by partition emigration => Dead
  * group is removed by expiration => Dead
+ *
+ * 处于该状态的 group 已经没有 member，等待所有的分区 offset 过期
  */
 private[coordinator] case object Empty extends GroupState {
     val state: Byte = 5

@@ -186,6 +186,14 @@ class GroupMetadataManager(val brokerId: Int,
         }
     }
 
+    /**
+     * 依据分区分配结果创建消息（用于追加到 offset topic 中）
+     *
+     * @param group
+     * @param groupAssignment
+     * @param responseCallback
+     * @return
+     */
     def prepareStoreGroup(group: GroupMetadata,
                           groupAssignment: Map[String, Array[Byte]],
                           responseCallback: Errors => Unit): Option[DelayedStore] = {
@@ -201,23 +209,30 @@ class GroupMetadataManager(val brokerId: Int,
                 // We always use CREATE_TIME, like the producer. The conversion to LOG_APPEND_TIME (if necessary) happens automatically.
                 val timestampType = TimestampType.CREATE_TIME
                 val timestamp = time.milliseconds()
+                // 创建记录 GroupMetadata 信息的消息，消息的 value 是分区的分配结果
                 val record = Record.create(magicValue, timestampType, timestamp,
                     GroupMetadataManager.groupMetadataKey(group.groupId),
                     GroupMetadataManager.groupMetadataValue(group, groupAssignment, version = groupMetadataValueVersion))
 
+                // 获取 group 对应的 offset topic 分区
                 val groupMetadataPartition = new TopicPartition(Topic.GroupMetadataTopicName, partitionFor(group.groupId))
+                // offset topic 分区与消息集合的映射关系
                 val groupMetadataRecords = Map(groupMetadataPartition -> MemoryRecords.withRecords(timestampType, compressionType, record))
                 val generationId = group.generationId
 
-                // set the callback function to insert the created group into cache after log append completed
+                /**
+                 * set the callback function to insert the created group into cache after log append completed
+                 *
+                 * 用于在消息被成功追加到 offset topic 分区之后被调用
+                 *
+                 * @param responseStatus
+                 */
                 def putCacheCallback(responseStatus: Map[TopicPartition, PartitionResponse]) {
                     // the append response should only contain the topics partition
                     if (responseStatus.size != 1 || !responseStatus.contains(groupMetadataPartition))
-                        throw new IllegalStateException("Append status %s should only have one partition %s"
-                                .format(responseStatus, groupMetadataPartition))
+                        throw new IllegalStateException("Append status %s should only have one partition %s".format(responseStatus, groupMetadataPartition))
 
-                    // construct the error status in the propagated assignment response
-                    // in the cache
+                    // construct the error status in the propagated assignment response in the cache
                     val status = responseStatus(groupMetadataPartition)
 
                     val responseError = if (status.error == Errors.NONE) {
@@ -259,6 +274,7 @@ class GroupMetadataManager(val brokerId: Int,
                     responseCallback(responseError)
                 }
 
+                // 方法并没有真正执行追加消息的操作，而是记录到 DelayedStore 中
                 Some(DelayedStore(groupMetadataRecords, putCacheCallback))
 
             case None =>
@@ -267,18 +283,25 @@ class GroupMetadataManager(val brokerId: Int,
         }
     }
 
+    /**
+     * 追加消息
+     *
+     * @param delayedStore
+     */
     def store(delayedStore: DelayedStore) {
         // call replica manager to append the group message
         replicaManager.appendRecords(
             config.offsetCommitTimeoutMs.toLong,
-            config.offsetCommitRequiredAcks,
-            internalTopicsAllowed = true, // allow appending to internal offset topic
+            config.offsetCommitRequiredAcks, // -1，即 ISR 集合中所有的副本都已经同步了该消息才认为消息成功追加
+            internalTopicsAllowed = true, // 允许向内部 topic 追加消息
             delayedStore.partitionRecords,
             delayedStore.callback)
     }
 
     /**
      * Store offsets by appending it to the replicated log and then inserting to cache
+     *
+     * 生成封装了待追加消息集合和追加后需要执行的回调函数的 DelayedStore 对象
      */
     def prepareStoreOffsets(group: GroupMetadata,
                             consumerId: String,
@@ -286,8 +309,10 @@ class GroupMetadataManager(val brokerId: Int,
                             offsetMetadata: immutable.Map[TopicPartition, OffsetAndMetadata],
                             responseCallback: immutable.Map[TopicPartition, Short] => Unit): Option[DelayedStore] = {
         // first filter out partitions with offset metadata size exceeding limit
-        val filteredOffsetMetadata = offsetMetadata.filter { case (_, offsetAndMetadata) =>
-            validateOffsetMetadataLength(offsetAndMetadata.metadata)
+        // 检测 OffsetAndMetadata 的 metadata 字段的长度
+        val filteredOffsetMetadata = offsetMetadata.filter {
+            case (_, offsetAndMetadata) =>
+                validateOffsetMetadataLength(offsetAndMetadata.metadata)
         }
 
         // construct the message set to append
@@ -296,14 +321,17 @@ class GroupMetadataManager(val brokerId: Int,
                 // We always use CREATE_TIME, like the producer. The conversion to LOG_APPEND_TIME (if necessary) happens automatically.
                 val timestampType = TimestampType.CREATE_TIME
                 val timestamp = time.milliseconds()
-                val records = filteredOffsetMetadata.map { case (topicPartition, offsetAndMetadata) =>
-                    Record.create(magicValue, timestampType, timestamp,
-                        GroupMetadataManager.offsetCommitKey(group.groupId, topicPartition),
-                        GroupMetadataManager.offsetCommitValue(offsetAndMetadata))
+                // 创建记录 offset 信息的消息，消息的 value 是 OffsetAndMetadata 中的数据
+                val records = filteredOffsetMetadata.map {
+                    case (topicPartition, offsetAndMetadata) =>
+                        Record.create(magicValue, timestampType, timestamp,
+                            GroupMetadataManager.offsetCommitKey(group.groupId, topicPartition),
+                            GroupMetadataManager.offsetCommitValue(offsetAndMetadata))
                 }.toSeq
 
+                // 获取消费者 group 对应的 offset topic 分区
                 val offsetTopicPartition = new TopicPartition(Topic.GroupMetadataTopicName, partitionFor(group.groupId))
-
+                // 获取 offset topic 分区与消息集合的映射关系
                 val entries = Map(offsetTopicPartition -> MemoryRecords.withRecords(timestampType, compressionType, records: _*))
 
                 // set the callback function to insert offsets into cache after log append completed
@@ -319,17 +347,20 @@ class GroupMetadataManager(val brokerId: Int,
 
                     val responseCode =
                         group synchronized {
+                            // 追加消息成功
                             if (status.error == Errors.NONE) {
                                 if (!group.is(Dead)) {
-                                    filteredOffsetMetadata.foreach { case (topicPartition, offsetAndMetadata) =>
-                                        group.completePendingOffsetWrite(topicPartition, offsetAndMetadata)
+                                    filteredOffsetMetadata.foreach {
+                                        case (topicPartition, offsetAndMetadata) =>
+                                            group.completePendingOffsetWrite(topicPartition, offsetAndMetadata)
                                     }
                                 }
                                 Errors.NONE.code
                             } else {
                                 if (!group.is(Dead)) {
-                                    filteredOffsetMetadata.foreach { case (topicPartition, offsetAndMetadata) =>
-                                        group.failPendingOffsetWrite(topicPartition, offsetAndMetadata)
+                                    filteredOffsetMetadata.foreach {
+                                        case (topicPartition, offsetAndMetadata) =>
+                                            group.failPendingOffsetWrite(topicPartition, offsetAndMetadata)
                                     }
                                 }
 
@@ -359,11 +390,12 @@ class GroupMetadataManager(val brokerId: Int,
                         }
 
                     // compute the final error codes for the commit response
-                    val commitStatus = offsetMetadata.map { case (topicPartition, offsetAndMetadata) =>
-                        if (validateOffsetMetadataLength(offsetAndMetadata.metadata))
-                            (topicPartition, responseCode)
-                        else
-                            (topicPartition, Errors.OFFSET_METADATA_TOO_LARGE.code)
+                    val commitStatus = offsetMetadata.map {
+                        case (topicPartition, offsetAndMetadata) =>
+                            if (validateOffsetMetadataLength(offsetAndMetadata.metadata))
+                                (topicPartition, responseCode)
+                            else
+                                (topicPartition, Errors.OFFSET_METADATA_TOO_LARGE.code)
                     }
 
                     // finally trigger the callback logic passed from the API layer
@@ -374,10 +406,11 @@ class GroupMetadataManager(val brokerId: Int,
                     group.prepareOffsetCommit(offsetMetadata)
                 }
 
+                // 返回对应的 DelayedStore 对象
                 Some(DelayedStore(entries, putCacheCallback))
 
             case None =>
-                val commitStatus = offsetMetadata.map { case (topicPartition, offsetAndMetadata) =>
+                val commitStatus = offsetMetadata.map { case (topicPartition, _) =>
                     (topicPartition, Errors.NOT_COORDINATOR_FOR_GROUP.code)
                 }
                 responseCallback(commitStatus)
@@ -404,14 +437,15 @@ class GroupMetadataManager(val brokerId: Int,
                     }.toMap
                 } else {
                     topicPartitionsOpt match {
+                        // 请求的分区为空，表示请求全部分区对应的最近提交的 offset
                         case None =>
                             // Return offsets for all partitions owned by this consumer group. (this only applies to consumers
                             // that commit offsets to Kafka.)
                             group.allOffsets.map { case (topicPartition, offsetAndMetadata) =>
                                 topicPartition -> new OffsetFetchResponse.PartitionData(offsetAndMetadata.offset, offsetAndMetadata.metadata, Errors.NONE)
                             }
-
-                        case Some(topicPartitions) =>
+                        // 查找指定分区集合对应的最近提交的 offset
+                        case Some(_) =>
                             topicPartitionsOpt.getOrElse(Seq.empty[TopicPartition]).map { topicPartition =>
                                 val partitionData = group.offset(topicPartition) match {
                                     case None =>

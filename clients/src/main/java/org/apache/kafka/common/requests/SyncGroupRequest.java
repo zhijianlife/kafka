@@ -29,6 +29,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 消费者 group 中的 leader 通过发送 SyncGroupRequest 请求将分区的分配结果发送给 GroupCoordinator，
+ * GroupCoordinator 会依据分配结果构建 SyncGroupResponse 返回给消费者，消费者收到响应之后进行解析，从而得知分区的分配结果
+ */
 public class SyncGroupRequest extends AbstractRequest {
 
     public static final String GROUP_ID_KEY_NAME = "group_id";

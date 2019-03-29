@@ -235,7 +235,7 @@ class DelayedOperationPurgatory[T <: DelayedOperation](purgatoryName: String,
 
         var watchCreated = false
 
-        // 2. 2. 遍历处理 watchKeys，将 key 对应的 DelayedOperation 添加到 key 对应的 Watchers 中
+        // 2. 遍历处理 watchKeys，将 key 对应的 DelayedOperation 添加到 key 对应的 Watchers 中
         for (key <- watchKeys) {
             // 如果对应的 DelayedOperation 已经执行完成，则放弃添加
             if (operation.isCompleted)
