@@ -33,30 +33,30 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 object Defaults {
-    val SegmentSize = kafka.server.Defaults.LogSegmentBytes
-    val SegmentMs = kafka.server.Defaults.LogRollHours * 60 * 60 * 1000L
-    val SegmentJitterMs = kafka.server.Defaults.LogRollJitterHours * 60 * 60 * 1000L
-    val FlushInterval = kafka.server.Defaults.LogFlushIntervalMessages
-    val FlushMs = kafka.server.Defaults.LogFlushSchedulerIntervalMs
-    val RetentionSize = kafka.server.Defaults.LogRetentionBytes
-    val RetentionMs = kafka.server.Defaults.LogRetentionHours * 60 * 60 * 1000L
-    val MaxMessageSize = kafka.server.Defaults.MessageMaxBytes
-    val MaxIndexSize = kafka.server.Defaults.LogIndexSizeMaxBytes
-    val IndexInterval = kafka.server.Defaults.LogIndexIntervalBytes
-    val FileDeleteDelayMs = kafka.server.Defaults.LogDeleteDelayMs
-    val DeleteRetentionMs = kafka.server.Defaults.LogCleanerDeleteRetentionMs
-    val MinCompactionLagMs = kafka.server.Defaults.LogCleanerMinCompactionLagMs
-    val MinCleanableDirtyRatio = kafka.server.Defaults.LogCleanerMinCleanRatio
-    val Compact = kafka.server.Defaults.LogCleanupPolicy
-    val UncleanLeaderElectionEnable = kafka.server.Defaults.UncleanLeaderElectionEnable
-    val MinInSyncReplicas = kafka.server.Defaults.MinInSyncReplicas
-    val CompressionType = kafka.server.Defaults.CompressionType
-    val PreAllocateEnable = kafka.server.Defaults.LogPreAllocateEnable
-    val MessageFormatVersion = kafka.server.Defaults.LogMessageFormatVersion
-    val MessageTimestampType = kafka.server.Defaults.LogMessageTimestampType
-    val MessageTimestampDifferenceMaxMs = kafka.server.Defaults.LogMessageTimestampDifferenceMaxMs
-    val LeaderReplicationThrottledReplicas = Collections.emptyList[String]()
-    val FollowerReplicationThrottledReplicas = Collections.emptyList[String]()
+    val SegmentSize: Int = kafka.server.Defaults.LogSegmentBytes
+    val SegmentMs: Long = kafka.server.Defaults.LogRollHours * 60 * 60 * 1000L
+    val SegmentJitterMs: Long = kafka.server.Defaults.LogRollJitterHours * 60 * 60 * 1000L
+    val FlushInterval: Long = kafka.server.Defaults.LogFlushIntervalMessages
+    val FlushMs: Long = kafka.server.Defaults.LogFlushSchedulerIntervalMs
+    val RetentionSize: Long = kafka.server.Defaults.LogRetentionBytes
+    val RetentionMs: Long = kafka.server.Defaults.LogRetentionHours * 60 * 60 * 1000L
+    val MaxMessageSize: Int = kafka.server.Defaults.MessageMaxBytes
+    val MaxIndexSize: Int = kafka.server.Defaults.LogIndexSizeMaxBytes
+    val IndexInterval: Int = kafka.server.Defaults.LogIndexIntervalBytes
+    val FileDeleteDelayMs: Int = kafka.server.Defaults.LogDeleteDelayMs
+    val DeleteRetentionMs: Long = kafka.server.Defaults.LogCleanerDeleteRetentionMs
+    val MinCompactionLagMs: Long = kafka.server.Defaults.LogCleanerMinCompactionLagMs
+    val MinCleanableDirtyRatio: Double = kafka.server.Defaults.LogCleanerMinCleanRatio
+    val Compact: String = kafka.server.Defaults.LogCleanupPolicy
+    val UncleanLeaderElectionEnable: Boolean = kafka.server.Defaults.UncleanLeaderElectionEnable
+    val MinInSyncReplicas: Int = kafka.server.Defaults.MinInSyncReplicas
+    val CompressionType: String = kafka.server.Defaults.CompressionType
+    val PreAllocateEnable: Boolean = kafka.server.Defaults.LogPreAllocateEnable
+    val MessageFormatVersion: String = kafka.server.Defaults.LogMessageFormatVersion
+    val MessageTimestampType: String = kafka.server.Defaults.LogMessageTimestampType
+    val MessageTimestampDifferenceMaxMs: Long = kafka.server.Defaults.LogMessageTimestampDifferenceMaxMs
+    val LeaderReplicationThrottledReplicas: util.List[String] = Collections.emptyList[String]()
+    val FollowerReplicationThrottledReplicas: util.List[String] = Collections.emptyList[String]()
 }
 
 case class LogConfig(props: java.util.Map[_, _]) extends AbstractConfig(LogConfig.configDef, props, false) {

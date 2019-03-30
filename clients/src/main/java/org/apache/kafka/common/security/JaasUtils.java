@@ -14,14 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.common.security;
 
-import javax.security.auth.login.Configuration;
-import javax.security.auth.login.AppConfigurationEntry;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.util.Map;
-import java.io.IOException;
+package org.apache.kafka.common.security;
 
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.config.SaslConfigs;
@@ -30,7 +24,15 @@ import org.apache.kafka.common.network.LoginType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.Map;
+import javax.security.auth.login.AppConfigurationEntry;
+import javax.security.auth.login.Configuration;
+
 public class JaasUtils {
+
     private static final Logger LOG = LoggerFactory.getLogger(JaasUtils.class);
     public static final String JAVA_LOGIN_CONFIG_PARAM = "java.security.auth.login.config";
 
@@ -47,31 +49,34 @@ public class JaasUtils {
      * {@link SaslConfigs#SASL_JAAS_CONFIG} is specified, the configuration object
      * is created by parsing the property value. Otherwise, the default Configuration
      * is returned.
+     *
      * @throws IllegalArgumentException if JAAS configuration property is specified
-     * for loginType SERVER
+     *                                  for loginType SERVER
      */
     public static Configuration jaasConfig(LoginType loginType, Map<String, ?> configs) {
         Password jaasConfigArgs = (Password) configs.get(SaslConfigs.SASL_JAAS_CONFIG);
         if (jaasConfigArgs != null) {
-            if (loginType == LoginType.SERVER)
+            if (loginType == LoginType.SERVER) {
                 throw new IllegalArgumentException("JAAS config property not supported for server");
-            else {
+            } else {
                 JaasConfig jaasConfig = new JaasConfig(loginType, jaasConfigArgs.value());
                 AppConfigurationEntry[] clientModules = jaasConfig.getAppConfigurationEntry(LoginType.CLIENT.contextName());
                 int numModules = clientModules == null ? 0 : clientModules.length;
-                if (numModules != 1)
+                if (numModules != 1) {
                     throw new IllegalArgumentException("JAAS config property contains " + numModules + " login modules, should be one module");
+                }
                 return jaasConfig;
             }
-        } else
+        } else {
             return defaultJaasConfig(loginType);
+        }
     }
 
     private static Configuration defaultJaasConfig(LoginType loginType) {
         String jaasConfigFile = System.getProperty(JaasUtils.JAVA_LOGIN_CONFIG_PARAM);
         if (jaasConfigFile == null) {
             LOG.debug("System property '" + JaasUtils.JAVA_LOGIN_CONFIG_PARAM + "' and Kafka SASL property '" +
-                      SaslConfigs.SASL_JAAS_CONFIG + "' are not set, using default JAAS configuration.");
+                    SaslConfigs.SASL_JAAS_CONFIG + "' are not set, using default JAAS configuration.");
         }
 
         Configuration jaasConfig = Configuration.getConfiguration();
@@ -108,20 +113,22 @@ public class JaasUtils {
             throw new IOException(errorMessage);
         }
 
-        for (AppConfigurationEntry entry: configurationEntries) {
-            if (loginModuleName != null && !loginModuleName.equals(entry.getLoginModuleName()))
+        for (AppConfigurationEntry entry : configurationEntries) {
+            if (loginModuleName != null && !loginModuleName.equals(entry.getLoginModuleName())) {
                 continue;
+            }
             Object val = entry.getOptions().get(key);
-            if (val != null)
+            if (val != null) {
                 return (String) val;
+            }
         }
         return null;
     }
 
     public static String defaultKerberosRealm()
-        throws ClassNotFoundException, NoSuchMethodException,
-               IllegalArgumentException, IllegalAccessException,
-               InvocationTargetException {
+            throws ClassNotFoundException, NoSuchMethodException,
+                   IllegalArgumentException, IllegalAccessException,
+                   InvocationTargetException {
 
         //TODO Find a way to avoid using these proprietary classes as access to Java 9 will block access by default
         //due to the Jigsaw module system
@@ -138,7 +145,7 @@ public class JaasUtils {
         getInstanceMethod = classRef.getMethod("getInstance", new Class[0]);
         kerbConf = getInstanceMethod.invoke(classRef, new Object[0]);
         getDefaultRealmMethod = classRef.getDeclaredMethod("getDefaultRealm",
-                                                           new Class[0]);
+                new Class[0]);
         return (String) getDefaultRealmMethod.invoke(kerbConf, new Object[0]);
     }
 
@@ -155,8 +162,8 @@ public class JaasUtils {
         }
         if (isSecurityEnabled && !zkSaslEnabled) {
             LOG.error("JAAS configuration is present, but system property " +
-                        ZK_SASL_CLIENT + " is set to false, which disables " +
-                        "SASL in the ZooKeeper client");
+                    ZK_SASL_CLIENT + " is set to false, which disables " +
+                    "SASL in the ZooKeeper client");
             throw new KafkaException("Exception while determining if ZooKeeper is secure");
         }
 

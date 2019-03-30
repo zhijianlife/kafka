@@ -17,8 +17,8 @@
 
 package kafka.server
 
-import java.lang
 import java.util.Properties
+import java.{lang, util}
 
 import kafka.api.{ApiVersion, KAFKA_0_10_0_IV1}
 import kafka.cluster.EndPoint
@@ -46,8 +46,8 @@ object Defaults {
     /** ********* General Configuration ***********/
     val BrokerIdGenerationEnable = true
     val MaxReservedBrokerId = 1000
-    val BrokerId = -1
-    val MessageMaxBytes = 1000000 + MessageSet.LogOverhead
+    val BrokerId: Int = -1
+    val MessageMaxBytes: Int = 1000000 + MessageSet.LogOverhead
     val NumNetworkThreads = 3
     val NumIoThreads = 8
     val BackgroundThreads = 10
@@ -69,58 +69,58 @@ object Defaults {
     val SocketRequestMaxBytes: Int = 100 * 1024 * 1024
     val MaxConnectionsPerIp: Int = Int.MaxValue
     val MaxConnectionsPerIpOverrides: String = ""
-    val ConnectionsMaxIdleMs = 10 * 60 * 1000L
+    val ConnectionsMaxIdleMs: Long = 10 * 60 * 1000L
     val RequestTimeoutMs = 30000
 
     /** ********* Log Configuration ***********/
     val NumPartitions = 1
     val LogDir = "/tmp/kafka-logs"
-    val LogSegmentBytes = 1 * 1024 * 1024 * 1024
-    val LogRollHours = 24 * 7
+    val LogSegmentBytes: Int = 1 * 1024 * 1024 * 1024
+    val LogRollHours: Int = 24 * 7
     val LogRollJitterHours = 0
-    val LogRetentionHours = 24 * 7
+    val LogRetentionHours: Int = 24 * 7
 
-    val LogRetentionBytes = -1L
-    val LogCleanupIntervalMs = 5 * 60 * 1000L
+    val LogRetentionBytes: Long = -1L
+    val LogCleanupIntervalMs: Long = 5 * 60 * 1000L
     val Delete = "delete"
     val Compact = "compact"
-    val LogCleanupPolicy = Delete
+    val LogCleanupPolicy: String = Delete
     val LogCleanerThreads = 1
-    val LogCleanerIoMaxBytesPerSecond = Double.MaxValue
-    val LogCleanerDedupeBufferSize = 128 * 1024 * 1024L
-    val LogCleanerIoBufferSize = 512 * 1024
+    val LogCleanerIoMaxBytesPerSecond: Double = Double.MaxValue
+    val LogCleanerDedupeBufferSize: Long = 128 * 1024 * 1024L
+    val LogCleanerIoBufferSize: Int = 512 * 1024
     val LogCleanerDedupeBufferLoadFactor = 0.9d
-    val LogCleanerBackoffMs = 15 * 1000
+    val LogCleanerBackoffMs: Int = 15 * 1000
     val LogCleanerMinCleanRatio = 0.5d
     val LogCleanerEnable = true
-    val LogCleanerDeleteRetentionMs = 24 * 60 * 60 * 1000L
+    val LogCleanerDeleteRetentionMs: Long = 24 * 60 * 60 * 1000L
     val LogCleanerMinCompactionLagMs = 0L
-    val LogIndexSizeMaxBytes = 10 * 1024 * 1024
+    val LogIndexSizeMaxBytes: Int = 10 * 1024 * 1024
     val LogIndexIntervalBytes = 4096
-    val LogFlushIntervalMessages = Long.MaxValue
+    val LogFlushIntervalMessages: Long = Long.MaxValue
     val LogDeleteDelayMs = 60000
-    val LogFlushSchedulerIntervalMs = Long.MaxValue
+    val LogFlushSchedulerIntervalMs: Long = Long.MaxValue
     val LogFlushOffsetCheckpointIntervalMs = 60000
     val LogPreAllocateEnable = false
     // lazy val as `InterBrokerProtocolVersion` is defined later
-    lazy val LogMessageFormatVersion = InterBrokerProtocolVersion
+    lazy val LogMessageFormatVersion: String = InterBrokerProtocolVersion
     val LogMessageTimestampType = "CreateTime"
-    val LogMessageTimestampDifferenceMaxMs = Long.MaxValue
+    val LogMessageTimestampDifferenceMaxMs: Long = Long.MaxValue
     val NumRecoveryThreadsPerDataDir = 1
     val AutoCreateTopicsEnable = true
     val MinInSyncReplicas = 1
 
     /** ********* Replication configuration ***********/
-    val ControllerSocketTimeoutMs = RequestTimeoutMs
-    val ControllerMessageQueueSize = Int.MaxValue
+    val ControllerSocketTimeoutMs: Int = RequestTimeoutMs
+    val ControllerMessageQueueSize: Int = Int.MaxValue
     val DefaultReplicationFactor = 1
     val ReplicaLagTimeMaxMs = 10000L
-    val ReplicaSocketTimeoutMs = ConsumerConfig.SocketTimeout
-    val ReplicaSocketReceiveBufferBytes = ConsumerConfig.SocketBufferSize
-    val ReplicaFetchMaxBytes = ConsumerConfig.FetchSize
+    val ReplicaSocketTimeoutMs: Int = ConsumerConfig.SocketTimeout
+    val ReplicaSocketReceiveBufferBytes: Int = ConsumerConfig.SocketBufferSize
+    val ReplicaFetchMaxBytes: Int = ConsumerConfig.FetchSize
     val ReplicaFetchWaitMaxMs = 500
     val ReplicaFetchMinBytes = 1
-    val ReplicaFetchResponseMaxBytes = 10 * 1024 * 1024
+    val ReplicaFetchResponseMaxBytes: Int = 10 * 1024 * 1024
     val NumReplicaFetchers = 1
     val ReplicaFetchBackoffMs = 1000
     val ReplicaHighWatermarkCheckpointIntervalMs = 5000L
@@ -130,8 +130,8 @@ object Defaults {
     val LeaderImbalancePerBrokerPercentage = 10
     val LeaderImbalanceCheckIntervalSeconds = 300
     val UncleanLeaderElectionEnable = true
-    val InterBrokerSecurityProtocol = SecurityProtocol.PLAINTEXT.toString
-    val InterBrokerProtocolVersion = ApiVersion.latestVersion.toString
+    val InterBrokerSecurityProtocol: String = SecurityProtocol.PLAINTEXT.toString
+    val InterBrokerProtocolVersion: String = ApiVersion.latestVersion.toString
 
     /** ********* Controlled shutdown configuration ***********/
     val ControlledShutdownMaxRetries = 3
@@ -143,20 +143,20 @@ object Defaults {
     val GroupMaxSessionTimeoutMs = 300000
 
     /** ********* Offset management configuration ***********/
-    val OffsetMetadataMaxSize = OffsetConfig.DefaultMaxMetadataSize
-    val OffsetsLoadBufferSize = OffsetConfig.DefaultLoadBufferSize
-    val OffsetsTopicReplicationFactor = OffsetConfig.DefaultOffsetsTopicReplicationFactor
+    val OffsetMetadataMaxSize: Int = OffsetConfig.DefaultMaxMetadataSize
+    val OffsetsLoadBufferSize: Int = OffsetConfig.DefaultLoadBufferSize
+    val OffsetsTopicReplicationFactor: Short = OffsetConfig.DefaultOffsetsTopicReplicationFactor
     val OffsetsTopicPartitions: Int = OffsetConfig.DefaultOffsetsTopicNumPartitions
     val OffsetsTopicSegmentBytes: Int = OffsetConfig.DefaultOffsetsTopicSegmentBytes
     val OffsetsTopicCompressionCodec: Int = OffsetConfig.DefaultOffsetsTopicCompressionCodec.codec
     val OffsetsRetentionMinutes: Int = 24 * 60
     val OffsetsRetentionCheckIntervalMs: Long = OffsetConfig.DefaultOffsetsRetentionCheckIntervalMs
-    val OffsetCommitTimeoutMs = OffsetConfig.DefaultOffsetCommitTimeoutMs
-    val OffsetCommitRequiredAcks = OffsetConfig.DefaultOffsetCommitRequiredAcks
+    val OffsetCommitTimeoutMs: Int = OffsetConfig.DefaultOffsetCommitTimeoutMs
+    val OffsetCommitRequiredAcks: Short = OffsetConfig.DefaultOffsetCommitRequiredAcks
 
     /** ********* Quota Configuration ***********/
-    val ProducerQuotaBytesPerSecondDefault = ClientQuotaManagerConfig.QuotaBytesPerSecondDefault
-    val ConsumerQuotaBytesPerSecondDefault = ClientQuotaManagerConfig.QuotaBytesPerSecondDefault
+    val ProducerQuotaBytesPerSecondDefault: Long = ClientQuotaManagerConfig.QuotaBytesPerSecondDefault
+    val ConsumerQuotaBytesPerSecondDefault: Long = ClientQuotaManagerConfig.QuotaBytesPerSecondDefault
     val NumQuotaSamples: Int = ClientQuotaManagerConfig.DefaultNumQuotaSamples
     val QuotaWindowSizeSeconds: Int = ClientQuotaManagerConfig.DefaultQuotaWindowSizeSeconds
     val NumReplicationQuotaSamples: Int = ReplicationQuotaManagerConfig.DefaultNumQuotaSamples
@@ -170,29 +170,29 @@ object Defaults {
     val MetricNumSamples = 2
     val MetricSampleWindowMs = 30000
     val MetricReporterClasses = ""
-    val MetricRecordingLevel = Sensor.RecordingLevel.INFO.toString()
+    val MetricRecordingLevel: String = Sensor.RecordingLevel.INFO.toString
 
     /** ********* SSL configuration ***********/
-    val PrincipalBuilderClass = SslConfigs.DEFAULT_PRINCIPAL_BUILDER_CLASS
-    val SslProtocol = SslConfigs.DEFAULT_SSL_PROTOCOL
-    val SslEnabledProtocols = SslConfigs.DEFAULT_SSL_ENABLED_PROTOCOLS
-    val SslKeystoreType = SslConfigs.DEFAULT_SSL_KEYSTORE_TYPE
-    val SslTruststoreType = SslConfigs.DEFAULT_SSL_TRUSTSTORE_TYPE
-    val SslKeyManagerAlgorithm = SslConfigs.DEFAULT_SSL_KEYMANGER_ALGORITHM
-    val SslTrustManagerAlgorithm = SslConfigs.DEFAULT_SSL_TRUSTMANAGER_ALGORITHM
+    val PrincipalBuilderClass: String = SslConfigs.DEFAULT_PRINCIPAL_BUILDER_CLASS
+    val SslProtocol: String = SslConfigs.DEFAULT_SSL_PROTOCOL
+    val SslEnabledProtocols: String = SslConfigs.DEFAULT_SSL_ENABLED_PROTOCOLS
+    val SslKeystoreType: String = SslConfigs.DEFAULT_SSL_KEYSTORE_TYPE
+    val SslTruststoreType: String = SslConfigs.DEFAULT_SSL_TRUSTSTORE_TYPE
+    val SslKeyManagerAlgorithm: String = SslConfigs.DEFAULT_SSL_KEYMANGER_ALGORITHM
+    val SslTrustManagerAlgorithm: String = SslConfigs.DEFAULT_SSL_TRUSTMANAGER_ALGORITHM
     val SslClientAuthRequired = "required"
     val SslClientAuthRequested = "requested"
     val SslClientAuthNone = "none"
-    val SslClientAuth = SslClientAuthNone
+    val SslClientAuth: String = SslClientAuthNone
 
     /** ********* Sasl configuration ***********/
-    val SaslMechanismInterBrokerProtocol = SaslConfigs.DEFAULT_SASL_MECHANISM
-    val SaslEnabledMechanisms = SaslConfigs.DEFAULT_SASL_ENABLED_MECHANISMS
-    val SaslKerberosKinitCmd = SaslConfigs.DEFAULT_KERBEROS_KINIT_CMD
-    val SaslKerberosTicketRenewWindowFactor = SaslConfigs.DEFAULT_KERBEROS_TICKET_RENEW_WINDOW_FACTOR
-    val SaslKerberosTicketRenewJitter = SaslConfigs.DEFAULT_KERBEROS_TICKET_RENEW_JITTER
-    val SaslKerberosMinTimeBeforeRelogin = SaslConfigs.DEFAULT_KERBEROS_MIN_TIME_BEFORE_RELOGIN
-    val SaslKerberosPrincipalToLocalRules = SaslConfigs.DEFAULT_SASL_KERBEROS_PRINCIPAL_TO_LOCAL_RULES
+    val SaslMechanismInterBrokerProtocol: String = SaslConfigs.DEFAULT_SASL_MECHANISM
+    val SaslEnabledMechanisms: util.List[String] = SaslConfigs.DEFAULT_SASL_ENABLED_MECHANISMS
+    val SaslKerberosKinitCmd: String = SaslConfigs.DEFAULT_KERBEROS_KINIT_CMD
+    val SaslKerberosTicketRenewWindowFactor: Double = SaslConfigs.DEFAULT_KERBEROS_TICKET_RENEW_WINDOW_FACTOR
+    val SaslKerberosTicketRenewJitter: Double = SaslConfigs.DEFAULT_KERBEROS_TICKET_RENEW_JITTER
+    val SaslKerberosMinTimeBeforeRelogin: Long = SaslConfigs.DEFAULT_KERBEROS_MIN_TIME_BEFORE_RELOGIN
+    val SaslKerberosPrincipalToLocalRules: util.List[String] = SaslConfigs.DEFAULT_SASL_KERBEROS_PRINCIPAL_TO_LOCAL_RULES
 
 }
 
@@ -275,9 +275,9 @@ object KafkaConfig {
     val LogFlushIntervalMsProp = "log.flush.interval.ms"
     val LogFlushOffsetCheckpointIntervalMsProp = "log.flush.offset.checkpoint.interval.ms"
     val LogPreAllocateProp = "log.preallocate"
-    val LogMessageFormatVersionProp = LogConfigPrefix + "message.format.version"
-    val LogMessageTimestampTypeProp = LogConfigPrefix + "message.timestamp.type"
-    val LogMessageTimestampDifferenceMaxMsProp = LogConfigPrefix + "message.timestamp.difference.max.ms"
+    val LogMessageFormatVersionProp: String = LogConfigPrefix + "message.format.version"
+    val LogMessageTimestampTypeProp: String = LogConfigPrefix + "message.timestamp.type"
+    val LogMessageTimestampDifferenceMaxMsProp: String = LogConfigPrefix + "message.timestamp.difference.max.ms"
     val NumRecoveryThreadsPerDataDirProp = "num.recovery.threads.per.data.dir"
     val AutoCreateTopicsEnableProp = "auto.create.topics.enable"
     val MinInSyncReplicasProp = "min.insync.replicas"
@@ -334,7 +334,7 @@ object KafkaConfig {
     val CompressionTypeProp = "compression.type"
 
     /** ********* Kafka Metrics Configuration ***********/
-    val MetricSampleWindowMsProp = CommonClientConfigs.METRICS_SAMPLE_WINDOW_MS_CONFIG
+    val MetricSampleWindowMsProp: String = CommonClientConfigs.METRICS_SAMPLE_WINDOW_MS_CONFIG
     val MetricNumSamplesProp: String = CommonClientConfigs.METRICS_NUM_SAMPLES_CONFIG
     val MetricReporterClassesProp: String = CommonClientConfigs.METRIC_REPORTER_CLASSES_CONFIG
     val MetricRecordingLevelProp: String = CommonClientConfigs.METRICS_RECORDING_LEVEL_CONFIG
@@ -855,10 +855,10 @@ class KafkaConfig(val props: java.util.Map[_, _], doLog: Boolean) extends Abstra
     /** ********* Log Configuration ***********/
     val autoCreateTopicsEnable = getBoolean(KafkaConfig.AutoCreateTopicsEnableProp)
     val numPartitions = getInt(KafkaConfig.NumPartitionsProp)
-    val logDirs = CoreUtils.parseCsvList(Option(getString(KafkaConfig.LogDirsProp)).getOrElse(getString(KafkaConfig.LogDirProp)))
+    val logDirs: Seq[String] = CoreUtils.parseCsvList(Option(getString(KafkaConfig.LogDirsProp)).getOrElse(getString(KafkaConfig.LogDirProp)))
     val logSegmentBytes = getInt(KafkaConfig.LogSegmentBytesProp)
     val logFlushIntervalMessages = getLong(KafkaConfig.LogFlushIntervalMessagesProp)
-    val logCleanerThreads = getInt(KafkaConfig.LogCleanerThreadsProp)
+    val logCleanerThreads: Integer = getInt(KafkaConfig.LogCleanerThreadsProp)
     val numRecoveryThreadsPerDataDir = getInt(KafkaConfig.NumRecoveryThreadsPerDataDirProp)
     val logFlushSchedulerIntervalMs = getLong(KafkaConfig.LogFlushSchedulerIntervalMsProp)
     val logFlushOffsetCheckpointIntervalMs = getInt(KafkaConfig.LogFlushOffsetCheckpointIntervalMsProp).toLong
@@ -972,12 +972,12 @@ class KafkaConfig(val props: java.util.Map[_, _], doLog: Boolean) extends Abstra
     val saslInterBrokerHandshakeRequestEnable = interBrokerProtocolVersion >= KAFKA_0_10_0_IV1
 
     /** ********* Quota Configuration **************/
-    val producerQuotaBytesPerSecondDefault = getLong(KafkaConfig.ProducerQuotaBytesPerSecondDefaultProp)
-    val consumerQuotaBytesPerSecondDefault = getLong(KafkaConfig.ConsumerQuotaBytesPerSecondDefaultProp)
-    val numQuotaSamples = getInt(KafkaConfig.NumQuotaSamplesProp)
-    val quotaWindowSizeSeconds = getInt(KafkaConfig.QuotaWindowSizeSecondsProp)
-    val numReplicationQuotaSamples = getInt(KafkaConfig.NumReplicationQuotaSamplesProp)
-    val replicationQuotaWindowSizeSeconds = getInt(KafkaConfig.ReplicationQuotaWindowSizeSecondsProp)
+    val producerQuotaBytesPerSecondDefault: lang.Long = getLong(KafkaConfig.ProducerQuotaBytesPerSecondDefaultProp)
+    val consumerQuotaBytesPerSecondDefault: lang.Long = getLong(KafkaConfig.ConsumerQuotaBytesPerSecondDefaultProp)
+    val numQuotaSamples: Integer = getInt(KafkaConfig.NumQuotaSamplesProp)
+    val quotaWindowSizeSeconds: Integer = getInt(KafkaConfig.QuotaWindowSizeSecondsProp)
+    val numReplicationQuotaSamples: Integer = getInt(KafkaConfig.NumReplicationQuotaSamplesProp)
+    val replicationQuotaWindowSizeSeconds: Integer = getInt(KafkaConfig.ReplicationQuotaWindowSizeSecondsProp)
 
     val deleteTopicEnable: lang.Boolean = getBoolean(KafkaConfig.DeleteTopicEnableProp)
     val compressionType: String = getString(KafkaConfig.CompressionTypeProp)

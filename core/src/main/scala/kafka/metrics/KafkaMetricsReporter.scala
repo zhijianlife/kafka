@@ -9,7 +9,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,11 +20,11 @@
 
 package kafka.metrics
 
-import kafka.utils.{CoreUtils, VerifiableProperties}
 import java.util.concurrent.atomic.AtomicBoolean
 
-import scala.collection.mutable.ArrayBuffer
+import kafka.utils.{CoreUtils, VerifiableProperties}
 
+import scala.collection.mutable.ArrayBuffer
 
 /**
  * Base trait for reporter MBeans. If a client wants to expose these JMX
@@ -34,47 +34,49 @@ import scala.collection.mutable.ArrayBuffer
  * registered MBean is compliant with the standard MBean convention.
  */
 trait KafkaMetricsReporterMBean {
-  def startReporter(pollingPeriodInSeconds: Long)
-  def stopReporter()
+    def startReporter(pollingPeriodInSeconds: Long)
 
-  /**
-   *
-   * @return The name with which the MBean will be registered.
-   */
-  def getMBeanName: String
+    def stopReporter()
+
+    /**
+     *
+     * @return The name with which the MBean will be registered.
+     */
+    def getMBeanName: String
 }
 
 /**
-  * Implement {@link org.apache.kafka.common.ClusterResourceListener} to receive cluster metadata once it's available. Please see the class documentation for ClusterResourceListener for more information.
-  */
+ * Implement {@link org.apache.kafka.common.ClusterResourceListener} to receive cluster metadata once it's available.
+ * Please see the class documentation for ClusterResourceListener for more information.
+ */
 trait KafkaMetricsReporter {
-  def init(props: VerifiableProperties)
+    def init(props: VerifiableProperties)
 }
 
 object KafkaMetricsReporter {
-  val ReporterStarted: AtomicBoolean = new AtomicBoolean(false)
-  private var reporters: ArrayBuffer[KafkaMetricsReporter] = null
+    val ReporterStarted: AtomicBoolean = new AtomicBoolean(false)
+    private var reporters: ArrayBuffer[KafkaMetricsReporter] = _
 
-  def startReporters (verifiableProps: VerifiableProperties): Seq[KafkaMetricsReporter] = {
-    ReporterStarted synchronized {
-      if (!ReporterStarted.get()) {
-        reporters = ArrayBuffer[KafkaMetricsReporter]()
-        val metricsConfig = new KafkaMetricsConfig(verifiableProps)
-        if(metricsConfig.reporters.nonEmpty) {
-          metricsConfig.reporters.foreach(reporterType => {
-            val reporter = CoreUtils.createObject[KafkaMetricsReporter](reporterType)
-            reporter.init(verifiableProps)
-            reporters += reporter
-            reporter match {
-              case bean: KafkaMetricsReporterMBean => CoreUtils.registerMBean(reporter, bean.getMBeanName)
-              case _ =>
+    def startReporters(verifiableProps: VerifiableProperties): Seq[KafkaMetricsReporter] = {
+        ReporterStarted synchronized {
+            if (!ReporterStarted.get()) {
+                reporters = ArrayBuffer[KafkaMetricsReporter]()
+                val metricsConfig = new KafkaMetricsConfig(verifiableProps)
+                if (metricsConfig.reporters.nonEmpty) {
+                    metricsConfig.reporters.foreach(reporterType => {
+                        val reporter = CoreUtils.createObject[KafkaMetricsReporter](reporterType)
+                        reporter.init(verifiableProps)
+                        reporters += reporter
+                        reporter match {
+                            case bean: KafkaMetricsReporterMBean => CoreUtils.registerMBean(reporter, bean.getMBeanName)
+                            case _ =>
+                        }
+                    })
+                    ReporterStarted.set(true)
+                }
             }
-          })
-          ReporterStarted.set(true)
         }
-      }
+        reporters
     }
-    reporters
-  }
 }
 

@@ -52,22 +52,32 @@ object Kafka extends Logging {
         props
     }
 
+    /**
+     * Kafka server 程序的启动方法
+     *
+     * ./kafka-server-start.sh [-daemon] server.properties [--override property=value]*
+     *
+     * @param args
+     */
     def main(args: Array[String]): Unit = {
         try {
+            // 解析命令行参数
             val serverProps = getPropsFromArgs(args)
+            // 创建 kafkaServerStartable 对象，期间会初始化监控上报程序
             val kafkaServerStartable = KafkaServerStartable.fromProps(serverProps)
 
-            // attach shutdown handler to catch control-c
+            // 注册一个钩子方法，当 JVM 被关闭时执行 shutdown 程序，本质上是在执行 KafkaServer.shutdown 方法
             Runtime.getRuntime.addShutdownHook(new Thread() {
                 override def run(): Unit = {
                     kafkaServerStartable.shutdown()
                 }
             })
 
+            // 本质上调用的是 KafkaServer.startup 方法
             kafkaServerStartable.startup()
+            // 阻塞等待 kafka server 程序关闭
             kafkaServerStartable.awaitShutdown()
-        }
-        catch {
+        } catch {
             case e: Throwable =>
                 fatal(e)
                 System.exit(1)

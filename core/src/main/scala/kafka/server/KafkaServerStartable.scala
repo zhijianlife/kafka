@@ -24,12 +24,15 @@ import kafka.utils.{Logging, VerifiableProperties}
 
 object KafkaServerStartable {
     def fromProps(serverProps: Properties): KafkaServerStartable = {
+        // 实例化监控上报程序
         val reporters = KafkaMetricsReporter.startReporters(new VerifiableProperties(serverProps))
         new KafkaServerStartable(KafkaConfig.fromProps(serverProps), reporters)
     }
 }
 
-class KafkaServerStartable(val serverConfig: KafkaConfig, reporters: Seq[KafkaMetricsReporter]) extends Logging {
+class KafkaServerStartable(val serverConfig: KafkaConfig,
+                           reporters: Seq[KafkaMetricsReporter]) extends Logging {
+
     private val server = new KafkaServer(serverConfig, kafkaMetricsReporters = reporters)
 
     def this(serverConfig: KafkaConfig) = this(serverConfig, Seq.empty)
@@ -37,8 +40,7 @@ class KafkaServerStartable(val serverConfig: KafkaConfig, reporters: Seq[KafkaMe
     def startup() {
         try {
             server.startup()
-        }
-        catch {
+        } catch {
             case e: Throwable =>
                 fatal("Fatal error during KafkaServerStartable startup. Prepare to shutdown", e)
                 // KafkaServer already calls shutdown() internally, so this is purely for logging & the exit code
@@ -49,8 +51,7 @@ class KafkaServerStartable(val serverConfig: KafkaConfig, reporters: Seq[KafkaMe
     def shutdown() {
         try {
             server.shutdown()
-        }
-        catch {
+        } catch {
             case e: Throwable =>
                 fatal("Fatal error during KafkaServerStable shutdown. Prepare to halt", e)
                 // Calling exit() can lead to deadlock as exit() can be called multiple times. Force exit.
@@ -66,8 +67,7 @@ class KafkaServerStartable(val serverConfig: KafkaConfig, reporters: Seq[KafkaMe
         server.brokerState.newState(newState)
     }
 
-    def awaitShutdown(): Unit =
-        server.awaitShutdown()
+    def awaitShutdown(): Unit = server.awaitShutdown()
 
 }
 

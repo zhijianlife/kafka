@@ -44,10 +44,10 @@ import scala.collection._
 import scala.util.control.{ControlThrowable, NonFatal}
 
 /**
- * An NIO socket server. The threading model is
- * 1 Acceptor thread that handles new connections
- * Acceptor has N Processor threads that each have their own selector and read requests from sockets
- * M Handler threads that handle requests and produce responses back to the processor threads for writing.
+ * An NIO socket server. The threading model is:
+ * - 1 Acceptor thread that handles new connections
+ * - Acceptor has N Processor threads that each have their own selector and read requests from sockets
+ * - M Handler threads that handle requests and produce responses back to the processor threads for writing.
  */
 class SocketServer(val config: KafkaConfig,
                    val metrics: Metrics,

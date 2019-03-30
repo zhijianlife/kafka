@@ -83,7 +83,11 @@ case object BrokerShuttingDown extends BrokerStates {
     val state: Byte = 7
 }
 
+/**
+ * 描述 broker 节点的状态
+ */
 case class BrokerState() {
+
     @volatile var currentState: Byte = NotRunning.state
 
     def newState(newState: BrokerStates) {

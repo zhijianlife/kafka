@@ -34,10 +34,12 @@ import scala.collection.JavaConverters._
 import scala.collection.{Seq, Set, mutable}
 
 /**
- * A cache for the state (e.g., current leader) of each partition. This cache is updated through
- * UpdateMetadataRequest from the controller. Every broker maintains the same cache, asynchronously.
+ * A cache for the state (e.g., current leader) of each partition.
+ * This cache is updated through UpdateMetadataRequest from the controller.
+ * Every broker maintains the same cache, asynchronously.
  *
- * Broker 使用 MetadataCache 来缓存整个集群中全部分区状态的组件
+ * Broker 使用 MetadataCache 来缓存整个集群上全部分区的状态，
+ * 通过 controller 发送来的 UpdateMetadataRequest 请求维护更新，所有的 broker 维护的 cache 是一致的
  */
 private[server] class MetadataCache(brokerId: Int) extends Logging {
 
