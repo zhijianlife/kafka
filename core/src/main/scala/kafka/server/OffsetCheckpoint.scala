@@ -35,7 +35,18 @@ object OffsetCheckpoint {
 /**
  * This class saves out a map of topic/partition=>offsets to a file
  *
- * 记录 replication-offset-checkpoint 文件，该文件记录了 data 目录下每个 Partition 的 HW
+ * 管理 replication-offset-checkpoint 文件，该文件记录了 log 目录下每个 TP 的 HW offset，该文件的内容示例：
+ *
+ * 0
+ * 8
+ * topic-default 3 115
+ * topic-default 2 118
+ * topic-default 4 145
+ * topic-default 0 122
+ * topic-default 5 122
+ * topic-default 1 117
+ * topic-default 7 140
+ * topic-default 6 121
  */
 class OffsetCheckpoint(val file: File) extends Logging {
 
@@ -46,9 +57,14 @@ class OffsetCheckpoint(val file: File) extends Logging {
     private val lock = new Object()
     file.createNewFile() // in case the file doesn't exist
 
+    /**
+     * 写 replication-offset-checkpoint 文件
+     *
+     * @param offsets
+     */
     def write(offsets: Map[TopicPartition, Long]) {
         lock synchronized {
-            // write to temp file and then swap with the existing file
+            // 创建一个临时文件
             val fileOutputStream = new FileOutputStream(tempPath.toFile)
             val writer = new BufferedWriter(new OutputStreamWriter(fileOutputStream))
             try {
@@ -56,11 +72,11 @@ class OffsetCheckpoint(val file: File) extends Logging {
                 writer.write(CurrentVersion.toString)
                 writer.newLine()
 
-                // 写入记录条数
+                // 写入记录条数（topic 数目 × 每个 topic 的分区数）
                 writer.write(offsets.size.toString)
                 writer.newLine()
 
-                // 循环写入 "topic partition recoveryPoint"
+                // 循环写入数据，格式为 "topic 分区编号 HW"
                 offsets.foreach { case (topicPart, offset) =>
                     writer.write(s"${topicPart.topic} ${topicPart.partition} $offset")
                     writer.newLine()
@@ -80,15 +96,19 @@ class OffsetCheckpoint(val file: File) extends Logging {
                 writer.close()
             }
 
-            // 使用 tmp 文件替换之前的 recovery-point-offset-checkpoint 文件
+            // 使用临时文件替换之前的 recovery-point-offset-checkpoint 文件
             Utils.atomicMoveWithFallback(tempPath, path)
         }
     }
 
+    /**
+     * 读取 replication-offset-checkpoint 文件
+     *
+     * @return
+     */
     def read(): Map[TopicPartition, Long] = {
 
-        def malformedLineException(line: String) =
-            new IOException(s"Malformed line in offset checkpoint file: $line'")
+        def malformedLineException(line: String) = new IOException(s"Malformed line in offset checkpoint file: $line'")
 
         lock synchronized {
             val reader = new BufferedReader(new FileReader(file))
@@ -97,6 +117,7 @@ class OffsetCheckpoint(val file: File) extends Logging {
                 line = reader.readLine()
                 if (line == null)
                     return Map.empty
+                // 读取版本号
                 val version = line.toInt
                 version match {
                     case CurrentVersion =>
@@ -111,12 +132,14 @@ class OffsetCheckpoint(val file: File) extends Logging {
                                 case Array(topic, partition, offset) =>
                                     offsets += new TopicPartition(topic, partition.toInt) -> offset.toLong
                                     line = reader.readLine()
+                                // 格式错误
                                 case _ => throw malformedLineException(line)
                             }
                         }
                         if (offsets.size != expectedSize)
                             throw new IOException(s"Expected $expectedSize entries but found only ${offsets.size}")
                         offsets
+                    // 目前只有 0 的版本号
                     case _ =>
                         throw new IOException("Unrecognized version of the highwatermark checkpoint file: " + version)
                 }

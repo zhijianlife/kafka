@@ -48,6 +48,10 @@ import org.apache.kafka.common.record.Record
  *
  * No attempt is made to checksum the contents of this file, in the event of a crash it is rebuilt.
  *
+ * 建立时间戳和相对 offset 之间的映射关系：
+ * - 时间戳占用 8 个字节
+ * - 相对 offset 占用 4 个字节
+ *
  */
 class TimeIndex(file: File,
                 baseOffset: Long,

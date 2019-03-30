@@ -87,9 +87,9 @@ case class LogAppendInfo(var firstOffset: Long, // 第一条消息的 offset
  *
  */
 @threadsafe
-class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的每个日志和索引文件对应一个 LogSegment
-          @volatile var config: LogConfig, // 相关配置信息
-          @volatile var recoveryPoint: Long = 0L, // 恢复操作的起始 offset，之前的消息已经全部落盘
+class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 TP 目录对应一个 Log 对象，目录中的每个日志和索引文件对应一个 LogSegment
+          @volatile var config: LogConfig, // 当前 TP 的相关配置信息
+          @volatile var recoveryPoint: Long = 0L, // 恢复操作的起始 offset，对应 HW offset，之前的消息已经全部落盘
           scheduler: Scheduler,
           time: Time = Time.SYSTEM) extends Logging with KafkaMetricsGroup {
 
@@ -119,7 +119,7 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
     locally {
         val startMs = time.milliseconds
 
-        loadSegments()
+        this.loadSegments()
 
         /* Calculate the offset of the next message */
         nextOffsetMetadata = new LogOffsetMetadata(
@@ -164,7 +164,7 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
      * Load the log segments from the log files on disk
      */
     private def loadSegments() {
-        // create the log directory if it doesn't exist
+        // 如果对应的 TP 目录不存在则创建
         dir.mkdirs()
         var swapFiles = Set[File]()
 
@@ -173,14 +173,17 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
             if (!file.canRead)
                 throw new IOException("Could not read file " + file)
             val filename = file.getName
+            // 如果是 ".delete" 或 ".cleaned" 文件
             if (filename.endsWith(DeletedFileSuffix) || filename.endsWith(CleanedFileSuffix)) {
                 /*
                  * 删除 ".delete" 和 ".cleaned" 文件
                  * - ".delete" 是指标识需要被删除的日志文件和索引文件
-                 * - ".cleaned" 是指在执行日志压缩过程中宕机，其中的数据状态不明确，无法正确恢复
+                 * - ".cleaned" 是指在执行日志压缩过程中宕机，其中的数据状态不明确，无法正确恢复的文件
                  */
                 file.delete()
-            } else if (filename.endsWith(SwapFileSuffix)) {
+            }
+            // 如果是 ".swap" 文件
+            else if (filename.endsWith(SwapFileSuffix)) {
                 /*
                  * 如果是 ".swap" 文件，则说明日志压缩过程完成，但是在执行 swap 过程中宕机，
                  * 这种文件保存了日志压缩后的完整数据，可以进行恢复：
@@ -204,12 +207,12 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
             }
         }
 
-        // 2. 加载全部的日志文件和索引文件
+        // 2. 加载当前 TP 目录下全部的 log 文件和 index 文件
         for (file <- dir.listFiles if file.isFile) {
             val filename = file.getName
             // 处理 ".index" 和 ".timeindex" 文件
             if (filename.endsWith(IndexFileSuffix) || filename.endsWith(TimeIndexFileSuffix)) {
-                // 如果索引文件没有对应的 log 文件，则删除索引文件
+                // 如果索引文件没有对应的 log 文件，则删除 index 文件
                 val logFile =
                     if (filename.endsWith(TimeIndexFileSuffix))
                         new File(file.getAbsolutePath.replace(TimeIndexFileSuffix, LogFileSuffix))
@@ -222,17 +225,18 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
             }
             // 处理 ".log" 文件
             else if (filename.endsWith(LogFileSuffix)) {
-                // if its a log file, load the corresponding log segment
                 val start = filename.substring(0, filename.length - LogFileSuffix.length).toLong
-                // 创建 ".index" 文件对象
+                // 创建对应的 index 文件对象
                 val indexFile = Log.indexFilename(dir, start)
-                // 创建 ".timeindex" 文件对象
+                // 创建对应的 timeindex 文件对象
                 val timeIndexFile = Log.timeIndexFilename(dir, start)
 
                 val indexFileExists = indexFile.exists()
                 val timeIndexFileExists = timeIndexFile.exists()
+
                 // 创建对应的 LogSegment 对象
-                val segment = new LogSegment(dir = dir,
+                val segment = new LogSegment(
+                    dir = dir,
                     startOffset = start,
                     indexIntervalBytes = config.indexInterval,
                     maxIndexSize = config.maxIndexSize,
@@ -240,14 +244,15 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
                     time = time,
                     fileAlreadyExists = true)
 
-                // 如果对应的索引文件存在
+                // 如果对应的 index 文件存在
                 if (indexFileExists) {
                     try {
                         // 校验 index 文件的完整性
                         segment.index.sanityCheck()
-                        // Resize the time index file to 0 if it is newly created.
+                        // 如果对应的 timeindex 文件不存在，则重置 mmb 对象
                         if (!timeIndexFileExists)
                             segment.timeIndex.resize(0)
+                        // 校验 timeindex 文件的完整性
                         segment.timeIndex.sanityCheck()
                     } catch {
                         case e: java.lang.IllegalArgumentException =>
@@ -257,7 +262,7 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
                             segment.recover(config.maxMessageSize)
                     }
                 }
-                // 如果对应的索引文件不存在，则重建
+                // 如果对应的 index 文件不存在，则重建
                 else {
                     error("Could not find index file corresponding to log file %s, rebuilding index...".format(segment.log.file.getAbsolutePath))
                     segment.recover(config.maxMessageSize)
@@ -347,7 +352,7 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
                 }
             if (truncatedBytes > 0) {
                 // we had an invalid message, delete all remaining log
-                warn("Corruption found in segment %d of log %s, truncating to offset %d.".format(curr.baseOffset, name, curr.nextOffset))
+                warn("Corruption found in segment %d of log %s, truncating to offset %d.".format(curr.baseOffset, name, curr.nextOffset()))
                 unflushed.foreach(deleteSegment)
             }
         }
@@ -619,7 +624,7 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
 
         // attempt to read beyond the log end offset is an error
         if (startOffset > next || entry == null)
-            throw new OffsetOutOfRangeException("Request for offset %d but we only have log segments in the range %d to %d.".format(startOffset, segments.firstKey, next))
+            throw new OffsetOutOfRangeException("Request for offset %d but we only have log segments in the range %s to %d.".format(startOffset, segments.firstKey, next))
 
         // Do the read on the segment with a base offset less than the target offset
         // but if that segment doesn't contain any messages with an offset greater than that
@@ -700,10 +705,7 @@ class Log(@volatile var dir: File, // 当前 Log 对应的目录，目录中的�
             // Get all the segments whose largest timestamp is smaller than target timestamp
             val earlierSegs = segmentsCopy.takeWhile(_.largestTimestamp < targetTimestamp)
             // We need to search the first segment whose largest timestamp is greater than the target timestamp if there is one.
-            if (earlierSegs.length < segmentsCopy.length)
-                Some(segmentsCopy(earlierSegs.length))
-            else
-                None
+            segmentsCopy.lift(earlierSegs.length)
         }
 
         targetSeg.flatMap(_.findOffsetByTimestamp(targetTimestamp))
@@ -1198,9 +1200,12 @@ object Log {
     /** A temporary file used when swapping files into the log */
     val SwapFileSuffix = ".swap"
 
-    /** Clean shutdown file that indicates the broker was cleanly shutdown in 0.8. This is required to maintain backwards compatibility
-     * with 0.8 and avoid unnecessary log recovery when upgrading from 0.8 to 0.8.1 */
-    /** TODO: Get rid of CleanShutdownFile in 0.8.2 */
+    /**
+     * Clean shutdown file that indicates the broker was cleanly shutdown in 0.8.
+     * This is required to maintain backwards compatibility with 0.8 and avoid unnecessary log recovery when upgrading from 0.8 to 0.8.1
+     *
+     * TODO: Get rid of CleanShutdownFile in 0.8.2
+     */
     val CleanShutdownFile = ".kafka_cleanshutdown"
 
     /** a directory that is scheduled to be deleted */

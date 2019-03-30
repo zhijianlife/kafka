@@ -43,20 +43,31 @@ import scala.collection._
  */
 @threadsafe
 class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs 配置，一般选择 log 数目最少的目录进行创建
-                 val topicConfigs: Map[String, LogConfig],
+                 val topicConfigs: Map[String, LogConfig], // topic 相关配置
                  val defaultConfig: LogConfig,
-                 val cleanerConfig: CleanerConfig,
+                 val cleanerConfig: CleanerConfig, // log cleaner 相关配置
                  ioThreads: Int, // 每个 log 目录下分配的执行加载任务的线程数目
                  val flushCheckMs: Long,
                  val flushCheckpointMs: Long,
                  val retentionCheckMs: Long,
-                 scheduler: Scheduler, // 周期任务调度器
-                 val brokerState: BrokerState,
+                 scheduler: Scheduler, // 定时任务调度器
+                 val brokerState: BrokerState, // 当前 broker 节点的状态
                  time: Time) extends Logging {
 
     /**
      * 每个 log 目录下面都有一个 recovery-point-offset-checkpoint 文件，
-     * 记录了当前 log 每个 Log 的 recoveryPoint 值，用于在 broker 启动时恢复 Log
+     * 记录了当前 log 目录每个 Log 的 recoveryPoint 值，用于在 broker 启动时恢复 Log，示例：
+     *
+     * 0
+     * 8
+     * topic-default 3 115
+     * topic-default 2 118
+     * topic-default 4 145
+     * topic-default 0 122
+     * topic-default 5 122
+     * topic-default 1 117
+     * topic-default 7 140
+     * topic-default 6 121
      */
     val RecoveryPointCheckpointFile = "recovery-point-offset-checkpoint"
     val LockFile = ".lock"
@@ -72,15 +83,19 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
     private val logsToBeDeleted = new LinkedBlockingQueue[Log]()
 
     /**
-     * 确保没有重复的 log.dirs 配置，且配置中的路径都是目录且可读，如果不存在则会创建
+     * 确保 log.dirs 配置中没有重复的路径，且配置中的路径都是目录且可读，如果不存在则会创建
      */
     this.createAndValidateLogDirs(logDirs)
 
-    /** 在文件系统层面加锁 */
+    /** 尝试对每个 log 目录在文件系统层面加锁，这里加的是进程锁 */
     private val dirLocks = this.lockLogDirs(logDirs)
 
-    /** 管理每个 log 目录与其下的 recovery-point-offset-checkpoint 文件的映射关系 */
+    /**
+     * 遍历为每个 log 目录创建一个操作其名下 recovery-point-offset-checkpoint 文件的 OffsetCheckpoint 对象，
+     * 并建立映射关系
+     */
     private val recoveryPointCheckpoints = logDirs.map(
+        // recovery-point-offset-checkpoint 文件
         dir => (dir, new OffsetCheckpoint(new File(dir, RecoveryPointCheckpointFile)))).toMap
 
     /**
@@ -88,21 +103,20 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
      */
     this.loadLogs()
 
-    // public, so we can access this from kafka.admin.DeleteTopicTest
-    val cleaner: LogCleaner =
-        if (cleanerConfig.enableCleaner) new LogCleaner(cleanerConfig, logDirs, logs, time = time) else null
+    /** 用于清理过期或者过大的日志 */
+    val cleaner: LogCleaner = if (cleanerConfig.enableCleaner)
+                                  new LogCleaner(cleanerConfig, logDirs, logs, time = time) else null
 
     /**
-     * Create and check validity of the given directories, specifically:
-     * <ol>
-     * <li> Ensure that there are no duplicates in the directory list
-     * <li> Create each directory if it doesn't exist
-     * <li> Check that each path is a readable directory
-     * </ol>
+     * 遍历配置的 log.dirs，如果不存在则创建，需要保证以下几点：
+     * 1. log.dirs 不能包含重复的路径配置
+     * 2. 对应的路径必须是目录，且是可读的
+     *
+     * @param dirs
      */
     private def createAndValidateLogDirs(dirs: Seq[File]) {
+        // 存在重复的 log 目录配置
         if (dirs.map(_.getCanonicalPath).toSet.size < dirs.size)
-        // 存在重复的 log 目录
             throw new KafkaException("Duplicate log directory found: " + logDirs.mkString(", "))
 
         // 遍历处理每个 log 目录
@@ -121,20 +135,25 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
     }
 
     /**
-     * Lock all the given directories
+     * 尝试对每个 log 目录在文件系统层面加锁，这里加的是进程锁
+     *
+     * @param dirs
+     * @return
      */
     private def lockLogDirs(dirs: Seq[File]): Seq[FileLock] = {
         dirs.map { dir =>
             val lock = new FileLock(new File(dir, LockFile))
             if (!lock.tryLock())
-                throw new KafkaException("Failed to acquire lock on file .lock in " + lock.file.getParentFile.getAbsolutePath +
-                        ". A Kafka instance in another process or thread is using this directory.")
+                throw new KafkaException("Failed to acquire lock on file .lock in " + lock.file.getParentFile.getAbsolutePath
+                        + ". A Kafka instance in another process or thread is using this directory.")
             lock
         }
     }
 
     /**
-     * Recover and load all logs in the given data directories
+     * 遍历处理 log.dirs 配置的 log 目录，多线程并发加载每个 log 目录下面 TP 对应的子目录：
+     * - 使用 Log 对象封装每个 TP 目录对应的数据，记录到 LogManager#logs 字段中；
+     * - 对于需要被删除的 TP 目录，添加到 LogManager#logsToBeDeleted 字段中，等待后续周期性任务进行删除。
      */
     private def loadLogs(): Unit = {
         info("Loading logs.")
@@ -152,14 +171,14 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
             // 尝试获取 .kafka_cleanshutdown 文件，如果该文件存在则说明 broker 节点是正常关闭的
             val cleanShutdownFile = new File(dir, Log.CleanShutdownFile)
             if (cleanShutdownFile.exists) {
+                // 当前 broker 是正常关闭的，无需加载相应数据，因为已经转移到其他 broker
                 debug("Found clean shutdown file. Skipping recovery for all logs in data directory: " + dir.getAbsolutePath)
             } else {
-                // log recovery itself is being performed by `Log` class during initialization
-                // broker 上次是非正常关闭的，设置状态
+                // 当前 broker 不是正常关闭，设置状态为 RecoveringFromUncleanShutdown
                 brokerState.newState(RecoveringFromUncleanShutdown)
             }
 
-            // 读取每个 log 目录下的 recovery-point-offset-checkpoint 文件，返回 TP 与 recoveryCheckpoint 之间的映射关系
+            // 读取每个 log 目录下的 recovery-point-offset-checkpoint 文件，返回 TP 与 HW offset 之间的映射关系
             var recoveryPoints = Map[TopicPartition, Long]()
             try {
                 recoveryPoints = this.recoveryPointCheckpoints(dir).read()
@@ -175,24 +194,24 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
                 // 只处理目录
                 logDir <- dirContent if logDir.isDirectory
             } yield {
-                // 为每个 Log 目录创建一个 runnable 任务
+                // 为每个 Log 目录创建一个 Runnable 任务
                 CoreUtils.runnable {
                     debug("Loading log '" + logDir.getName + "'")
 
                     // 依据文件名解析得到对应的 TP
                     val topicPartition = Log.parseTopicPartitionName(logDir)
-                    // 获取 Log 对应的配置
+                    // 获取当前 topic 分区对应的配置
                     val config = topicConfigs.getOrElse(topicPartition.topic, defaultConfig)
-                    // 获取 Log 对应的 recoveryPoint
+                    // 获取 TP 对应的 HW offset
                     val logRecoveryPoint = recoveryPoints.getOrElse(topicPartition, 0L)
 
-                    // 创建对应的 Log 对象
+                    // 创建对应的 Log 对象，每个 TP 目录对应一个 Log 对象
                     val current = new Log(logDir, config, logRecoveryPoint, scheduler, time)
                     // 如果当前 log 是需要被删除的文件，则记录到 logsToBeDeleted 中，会有周期性任务对其执行删除操作
                     if (logDir.getName.endsWith(Log.DeleteDirSuffix)) { // -delete
                         logsToBeDeleted.add(current)
                     } else {
-                        // 将 Log 记录到 log 集合中
+                        // 建立 TP 与其 Log 对象之间的映射关系，不允许一个 TP 对应多个目录
                         val previous = logs.put(topicPartition, current)
                         if (previous != null) {
                             throw new IllegalArgumentException(
@@ -202,11 +221,11 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
                 }
             }
 
-            // 提交任务，并将提交结果封装到 jobs 集合中
+            // 提交任务，并将提交结果封装到 jobs 集合中，jobsForDir 是 List[Runnable] 类型
             jobs(cleanShutdownFile) = jobsForDir.map(pool.submit)
         }
 
-        // 阻塞等待上面提交的任务执行完成
+        // 阻塞等待上面提交的任务执行完成，即等待所有 log 目录下 TP 对应的目录文件加载完成
         try {
             for ((cleanShutdownFile, dirJobs) <- jobs) {
                 dirJobs.foreach(_.get)
@@ -225,15 +244,14 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
     }
 
     /**
-     * Start the background threads to flush logs and do log cleanup
+     * 启动 LogManager 中的周期性定时任务
      */
     def startup() {
-        /* Schedule the cleanup task to delete old logs */
         if (scheduler != null) {
-            // 1. 启动 log retention 周期性任务
+            // 1. 启动 log-retention 周期性任务
             info("Starting log cleanup with a period of %d ms.".format(retentionCheckMs))
             scheduler.schedule("kafka-log-retention",
-                cleanupLogs,
+                this.cleanupLogs,
                 delay = InitialTaskDelayMs,
                 period = retentionCheckMs,
                 TimeUnit.MILLISECONDS)
@@ -241,28 +259,28 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
             // 2. 启动 log flusher 周期性任务
             info("Starting log flusher with a default period of %d ms.".format(flushCheckMs))
             scheduler.schedule("kafka-log-flusher",
-                flushDirtyLogs,
+                this.flushDirtyLogs,
                 delay = InitialTaskDelayMs,
                 period = flushCheckMs,
                 TimeUnit.MILLISECONDS)
 
             // 3. 启动 recovery point checkpoint 周期性任务
             scheduler.schedule("kafka-recovery-point-checkpoint",
-                checkpointRecoveryPointOffsets,
+                this.checkpointRecoveryPointOffsets,
                 delay = InitialTaskDelayMs,
                 period = flushCheckpointMs,
                 TimeUnit.MILLISECONDS)
 
             // 4. 启动 delete logs 周期性任务
             scheduler.schedule("kafka-delete-logs",
-                deleteLogs,
+                this.deleteLogs,
                 delay = InitialTaskDelayMs,
                 period = defaultConfig.fileDeleteDelayMs,
                 TimeUnit.MILLISECONDS)
         }
 
-        if (cleanerConfig.enableCleaner)
-            cleaner.startup() // 启动 LogCleaner
+        // 启动 LogCleaner
+        if (cleanerConfig.enableCleaner) cleaner.startup()
     }
 
     /**

@@ -74,7 +74,15 @@ class LogSegment(val log: FileRecords,
     /** 最大时间戳的消息对应的 offset */
     @volatile private var offsetOfMaxTimestamp = timeIndex.lastEntry.offset
 
-    def this(dir: File, startOffset: Long, indexIntervalBytes: Int, maxIndexSize: Int, rollJitterMs: Long, time: Time, fileAlreadyExists: Boolean = false, initFileSize: Int = 0, preallocate: Boolean = false) =
+    def this(dir: File,
+             startOffset: Long,
+             indexIntervalBytes: Int,
+             maxIndexSize: Int,
+             rollJitterMs: Long,
+             time: Time,
+             fileAlreadyExists: Boolean = false,
+             initFileSize: Int = 0,
+             preallocate: Boolean = false) =
         this(FileRecords.open(Log.logFile(dir, startOffset), fileAlreadyExists, initFileSize, preallocate),
             new OffsetIndex(Log.indexFilename(dir, startOffset), baseOffset = startOffset, maxIndexSize = maxIndexSize),
             new TimeIndex(Log.timeIndexFilename(dir, startOffset), baseOffset = startOffset, maxIndexSize = maxIndexSize),
@@ -306,7 +314,7 @@ class LogSegment(val log: FileRecords,
         }
     }
 
-    override def toString = "LogSegment(baseOffset=" + baseOffset + ", size=" + size + ")"
+    override def toString: String = "LogSegment(baseOffset=" + baseOffset + ", size=" + size + ")"
 
     /**
      * Truncate off all index and log entries with offsets >= the given offset.
@@ -454,9 +462,9 @@ class LogSegment(val log: FileRecords,
      */
     def close() {
         CoreUtils.swallow(timeIndex.maybeAppend(maxTimestampSoFar, offsetOfMaxTimestamp, skipFullCheck = true))
-        CoreUtils.swallow(index.close)
+        CoreUtils.swallow(index.close())
         CoreUtils.swallow(timeIndex.close())
-        CoreUtils.swallow(log.close)
+        CoreUtils.swallow(log.close())
     }
 
     /**

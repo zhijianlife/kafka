@@ -203,7 +203,7 @@ class KafkaServer(val config: KafkaConfig, // 配置信息对象
                 // 设置 broker 节点的状态为 Starting
                 brokerState.newState(Starting)
 
-                // 启动定时任务调度器
+                // 初始化定时任务调度器
                 kafkaScheduler.startup()
 
                 // 创建 ZkUtils 工具类对象，期间会在 ZK 上创建一些基本的节点
@@ -416,10 +416,11 @@ class KafkaServer(val config: KafkaConfig, // 配置信息对象
                     metrics,
                     time,
                     "kafka-server-controlled-shutdown",
-                    Map.empty.asJava,
+                    Map.empty[String, String].asJava,
                     false,
                     channelBuilder
                 )
+
                 new NetworkClient(
                     selector,
                     metadataUpdater,

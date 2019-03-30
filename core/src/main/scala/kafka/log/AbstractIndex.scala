@@ -37,7 +37,9 @@ import scala.math.ceil
  * @param baseOffset   对应日志文件中第一个消息的 offset
  * @param maxIndexSize The maximum index size in bytes.
  */
-abstract class AbstractIndex[K, V](@volatile var file: File, val baseOffset: Long, val maxIndexSize: Int = -1)
+abstract class AbstractIndex[K, V](@volatile var file: File,
+                                   val baseOffset: Long,
+                                   val maxIndexSize: Int = -1)
         extends Logging {
 
     protected def entrySize: Int
