@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -25,14 +25,14 @@ import kafka.utils.VerifiableProperties
  * takes a VerifiableProperties instance.
  */
 trait Decoder[T] {
-  def fromBytes(bytes: Array[Byte]): T
+    def fromBytes(bytes: Array[Byte]): T
 }
 
 /**
  * The default implementation does nothing, just returns the same byte array it takes in.
  */
 class DefaultDecoder(props: VerifiableProperties = null) extends Decoder[Array[Byte]] {
-  def fromBytes(bytes: Array[Byte]): Array[Byte] = bytes
+    def fromBytes(bytes: Array[Byte]): Array[Byte] = bytes
 }
 
 /**
@@ -40,13 +40,13 @@ class DefaultDecoder(props: VerifiableProperties = null) extends Decoder[Array[B
  * an optional property serializer.encoding to control this.
  */
 class StringDecoder(props: VerifiableProperties = null) extends Decoder[String] {
-  val encoding =
-    if(props == null)
-      "UTF8"
-    else
-      props.getString("serializer.encoding", "UTF8")
+    val encoding =
+        if (props == null)
+            "UTF8"
+        else
+            props.getString("serializer.encoding", "UTF8")
 
-  def fromBytes(bytes: Array[Byte]): String = {
-    new String(bytes, encoding)
-  }
+    def fromBytes(bytes: Array[Byte]): String = {
+        new String(bytes, encoding)
+    }
 }

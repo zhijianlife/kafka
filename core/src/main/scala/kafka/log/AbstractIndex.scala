@@ -39,8 +39,7 @@ import scala.math.ceil
  */
 abstract class AbstractIndex[K, V](@volatile var file: File,
                                    val baseOffset: Long,
-                                   val maxIndexSize: Int = -1)
-        extends Logging {
+                                   val maxIndexSize: Int = -1) extends Logging {
 
     protected def entrySize: Int
 

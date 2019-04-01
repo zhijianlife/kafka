@@ -24,29 +24,32 @@ import kafka.common.InvalidOffsetException
 import kafka.utils.CoreUtils.inLock
 
 /**
- * An index that maps offsets to physical file locations for a particular log segment. This index may be sparse:
- * that is it may not hold an entry for all messages in the log.
+ * 建立 offset 到物理文件地址的映射关系，采用稀疏的方式进行存储，基于二分法检索
  *
+ * An index that maps offsets to physical file locations for a particular log segment.
+ *
+ * This index may be sparse: that is it may not hold an entry for all messages in the log.
  * The index is stored in a file that is pre-allocated to hold a fixed maximum number of 8-byte entries.
  *
  * The index supports lookups against a memory-map of this file. These lookups are done using a simple binary search variant
  * to locate the offset/location pair for the greatest offset less than or equal to the target offset.
  *
- * Index files can be opened in two ways: either as an empty, mutable index that allows appends or
- * an immutable read-only index file that has previously been populated. The makeReadOnly method will turn a mutable file into an 
- * immutable one and truncate off any extra bytes. This is done when the index file is rolled over.
+ * Index files can be opened in two ways: either as an empty, mutable index that allows appends
+ * or an immutable read-only index file that has previously been populated.
+ * The makeReadOnly method will turn a mutable file into an immutable one and truncate off any extra bytes.
+ * This is done when the index file is rolled over.
  *
  * No attempt is made to checksum the contents of this file, in the event of a crash it is rebuilt.
  *
- * The file format is a series of entries. The physical format is a 4 byte "relative" offset and a 4 byte file location for the 
- * message with that offset. The offset stored is relative to the base offset of the index file. So, for example,
- * if the base offset was 50, then the offset 55 would be stored as 5. Using relative offsets in this way let's us use
- * only 4 bytes for the offset.
+ * The file format is a series of entries.
+ * The physical format is a 4 byte "relative" offset and a 4 byte file location for the  message with that offset.
+ * The offset stored is relative to the base offset of the index file. So, for example,
+ * if the base offset was 50, then the offset 55 would be stored as 5.
+ * Using relative offsets in this way let's us use only 4 bytes for the offset.
  *
  * The frequency of entries is up to the user of this class.
  *
- * All external APIs translate from relative offsets to full offsets, so users of this class do not interact with the internal 
- * storage format.
+ * All external APIs translate from relative offsets to full offsets, so users of this class do not interact with the internal  storage format.
  *
  * 一个日志索引文件包含两部分：
  *

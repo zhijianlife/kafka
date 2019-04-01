@@ -37,7 +37,7 @@ import org.apache.kafka.common.record.Record
  * All external APIs translate from relative offsets to full offsets, so users of this class do not interact with the internal
  * storage format.
  *
- * The timestamps in the same time index file are guaranteed to be monotonically increasing.
+ * The timestamps in the same time index file are guaranteed to be monotonically（单调的） increasing.
  *
  * The index support timestamp lookup for a memory map of this file. The lookup is done using a binary search to find
  * the offset of the message whose indexed timestamp is closest but smaller or equals to the target timestamp.
@@ -48,7 +48,7 @@ import org.apache.kafka.common.record.Record
  *
  * No attempt is made to checksum the contents of this file, in the event of a crash it is rebuilt.
  *
- * 建立时间戳和相对 offset 之间的映射关系：
+ * 建立时间戳和相对 offset 之间的映射关系（该时间戳是当前 offset 之前最大的时间戳）：
  * - 时间戳占用 8 个字节
  * - 相对 offset 占用 4 个字节
  *
@@ -158,7 +158,7 @@ class TimeIndex(file: File,
         }
     }
 
-    override def truncate() = truncateToEntries(0)
+    override def truncate(): Unit = truncateToEntries(0)
 
     /**
      * Remove all entries from the index which have an offset greater than or equal to the given offset.
