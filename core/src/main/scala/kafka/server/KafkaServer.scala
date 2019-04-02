@@ -270,7 +270,7 @@ class KafkaServer(val config: KafkaConfig, // 配置信息对象
                     authZ
                 }
 
-                // 创建 KafkaApis 对象，用于处理所有的请求
+                // 创建 KafkaApis 对象，用于分发接收到的所有的请求
                 apis = new KafkaApis(socketServer.requestChannel, replicaManager, adminManager, groupCoordinator,
                     kafkaController, zkUtils, config.brokerId, config, metadataCache, metrics, authorizer, quotaManagers, clusterId, time)
 
