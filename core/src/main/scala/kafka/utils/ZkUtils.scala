@@ -44,14 +44,14 @@ import scala.collection._
  * ZK 路径说明：
  * - /brokers/ids/{id}: 记录集群中可用的 broker 的 ID
  * - /brokers/topics/{topic}/partitions: 记录一个 topic 中所有分区的分配信息，以及 AR 集合
- * - /brokers/topics/{topic}/partitions/{partition_id}/state: 记录某分区 leader 副本所在的 brokerId、leaderEpoch、ISR 集合，以及 zkVersion 等
+ * - /brokers/topics/{topic}/partitions/{partition_id}/state: 记录分区 leader 副本所在的 brokerId、leaderEpoch、ISR 集合，以及 zkVersion 等
  * - /controller: 记录当前 controller leader 的 ID
  * - /controller_epoch: 记录当前 controller leader 的年代信息
- * - /admin/reassign_partitions: 记录了需要进行副本重新分配的分区
- * - /admin/preferred_replica_election: 记录了需要进行优先副本选举的分区，优先副本是在创建分区时指定的第一个副本
- * - /admin/delete_topics: 记录待删除的 topic
- * - /isr_change_notification: 记录了一段时间内 ISR 集合发生变化的分区
- * - /config: 记录了一些配置信息
+ * - /admin/reassign_partitions: 记录需要进行副本重新分配的分区
+ * - /admin/preferred_replica_election: 记录需要进行优先副本选举的分区，优先副本是在创建分区时指定的第一个副本
+ * - /admin/delete_topics: 记录待删除的 topic 集合
+ * - /isr_change_notification: 记录一段时间内 ISR 集合发生变化的分区
+ * - /config: 记录一些配置信息
  */
 object ZkUtils {
 

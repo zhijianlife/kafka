@@ -59,26 +59,44 @@ sealed trait BrokerStates {
     def state: Byte
 }
 
+/**
+ * 未运行，初始状态
+ */
 case object NotRunning extends BrokerStates {
     val state: Byte = 0
 }
 
+/**
+ * 启动中
+ */
 case object Starting extends BrokerStates {
     val state: Byte = 1
 }
 
+/**
+ * 从上次异常关闭中恢复
+ */
 case object RecoveringFromUncleanShutdown extends BrokerStates {
     val state: Byte = 2
 }
 
+/**
+ * 启动成功
+ */
 case object RunningAsBroker extends BrokerStates {
     val state: Byte = 3
 }
 
+/**
+ * 正在等待 controlled shutdown 操作
+ */
 case object PendingControlledShutdown extends BrokerStates {
     val state: Byte = 6
 }
 
+/**
+ * 正在执行 shutdown 操作
+ */
 case object BrokerShuttingDown extends BrokerStates {
     val state: Byte = 7
 }

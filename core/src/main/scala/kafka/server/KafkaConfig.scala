@@ -920,9 +920,9 @@ class KafkaConfig(val props: java.util.Map[_, _], doLog: Boolean) extends Abstra
     val interBrokerProtocolVersion = ApiVersion(interBrokerProtocolVersionString)
 
     /** ********* Controlled shutdown configuration ***********/
-    val controlledShutdownMaxRetries = getInt(KafkaConfig.ControlledShutdownMaxRetriesProp)
-    val controlledShutdownRetryBackoffMs = getLong(KafkaConfig.ControlledShutdownRetryBackoffMsProp)
-    val controlledShutdownEnable = getBoolean(KafkaConfig.ControlledShutdownEnableProp)
+    val controlledShutdownMaxRetries: Integer = getInt(KafkaConfig.ControlledShutdownMaxRetriesProp)
+    val controlledShutdownRetryBackoffMs: lang.Long = getLong(KafkaConfig.ControlledShutdownRetryBackoffMsProp)
+    val controlledShutdownEnable: lang.Boolean = getBoolean(KafkaConfig.ControlledShutdownEnableProp)
 
     /** ********* Group coordinator configuration ***********/
     val groupMinSessionTimeoutMs = getInt(KafkaConfig.GroupMinSessionTimeoutMsProp)

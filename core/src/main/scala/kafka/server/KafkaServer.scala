@@ -590,8 +590,7 @@ class KafkaServer(val config: KafkaConfig, // 配置信息对象
 
         if (startupComplete.get() && config.controlledShutdownEnable) {
             // We request the controller to do a controlled shutdown. On failure, we backoff for a configured period
-            // of time and try again for a configured number of retries. If all the attempt fails, we simply force
-            // the shutdown.
+            // of time and try again for a configured number of retries. If all the attempt fails, we simply force the shutdown.
             info("Starting controlled shutdown")
 
             brokerState.newState(PendingControlledShutdown)
@@ -617,15 +616,17 @@ class KafkaServer(val config: KafkaConfig, // 配置信息对象
         try {
             info("shutting down")
 
+            // 如果正在启动，则不允许关闭
             if (isStartingUp.get)
                 throw new IllegalStateException("Kafka server is still starting up, cannot shut down!")
 
-            // To ensure correct behavior under concurrent calls, we need to check `shutdownLatch` first since it gets updated
-            // last in the `if` block. If the order is reversed, we could shutdown twice or leave `isShuttingDown` set to
-            // `true` at the end of this method.
             if (shutdownLatch.getCount > 0 && isShuttingDown.compareAndSet(false, true)) {
                 CoreUtils.swallow(controlledShutdown())
+                // 设置 broker 状态为 BrokerShuttingDown，标识当前 broker 正在执行关闭
                 brokerState.newState(BrokerShuttingDown)
+
+                /* 关闭相应注册的组件 */
+
                 if (socketServer != null)
                     CoreUtils.swallow(socketServer.shutdown())
                 if (requestHandlerPool != null)
@@ -649,16 +650,17 @@ class KafkaServer(val config: KafkaConfig, // 配置信息对象
                 if (metrics != null)
                     CoreUtils.swallow(metrics.close())
 
+                // 设置 broker 状态为 NotRunning，表示关闭成功
                 brokerState.newState(NotRunning)
 
+                // 设置状态标记
                 startupComplete.set(false)
                 isShuttingDown.set(false)
                 CoreUtils.swallow(AppInfoParser.unregisterAppInfo(jmxPrefix, config.brokerId.toString))
                 shutdownLatch.countDown()
                 info("shut down completed")
             }
-        }
-        catch {
+        } catch {
             case e: Throwable =>
                 fatal("Fatal error during KafkaServer shutdown.", e)
                 isShuttingDown.set(false)
@@ -722,37 +724,37 @@ class KafkaServer(val config: KafkaConfig, // 配置信息对象
      * @return A brokerId.
      */
     private def getBrokerId: Int = {
-        // 获取 brokerId
+        // 获取配置的 brokerId
         var brokerId = config.brokerId
         val brokerIdSet = mutable.HashSet[Int]()
 
         // 遍历 log.dirs
         for (logDir <- config.logDirs) {
-            // 在每一个 log 目录下面创建一个 meta.properties 文件，内容包含当前 broker 节点的 ID 和版本
+            // 在每一个 log 目录下面创建一个 meta.properties 文件，内容包含当前 broker 节点的 ID 和版本信息
             val brokerMetadataOpt = brokerMetadataCheckpoints(logDir).read()
             brokerMetadataOpt.foreach { brokerMetadata =>
                 brokerIdSet.add(brokerMetadata.brokerId)
             }
         }
 
-        // 不允许多个 broker 共享一个 log 目录
         if (brokerIdSet.size > 1) {
+            // 不允许多个 broker 共享一个 log 目录
             throw new InconsistentBrokerIdException(
                 s"Failed to match broker.id across log.dirs. This could happen if multiple brokers shared a log directory (log.dirs) " +
                         s"or partial data was manually copied from another broker. Found $brokerIdSet")
         }
-        // 配置的 brokerId 与 meta.properties 中记录的 brokerId 不一致
         else if (brokerId >= 0 && brokerIdSet.size == 1 && brokerIdSet.last != brokerId) {
+            // 配置的 brokerId 与 meta.properties 中记录的 brokerId 不一致
             throw new InconsistentBrokerIdException(
                 s"Configured broker.id $brokerId doesn't match stored broker.id ${brokerIdSet.last} in meta.properties. " +
                         s"If you moved your data, make sure your configured broker.id matches. " +
                         s"If you intend to create a new broker, you should remove all data in your data directories (log.dirs).")
         }
-             // 如果没有配置，则自动创建 brokerId，通过 ZK 保证 brokerId 的不重复
         else if (brokerIdSet.isEmpty && brokerId < 0 && config.brokerIdGenerationEnable) // generate a new brokerId from Zookeeper
+             // 如果没有配置，则自动创建 brokerId，通过 ZK 保证 brokerId 的全局唯一性
                  brokerId = generateBrokerId
-             // 从 meta.properties 中获取 brokerId
         else if (brokerIdSet.size == 1) // pick broker.id from meta.properties
+             // 从 meta.properties 中获取 brokerId
                  brokerId = brokerIdSet.last
 
         brokerId

@@ -71,6 +71,8 @@ object CoreUtils extends Logging {
     /**
      * Do the given action and log any exceptions thrown without rethrowing them
      *
+     * 执行目标动作，如果发生异常则将异常打印到日志中，而不抛出去
+     *
      * @param log    The log method to use for logging. E.g. logger.warn
      * @param action The action to execute
      */
