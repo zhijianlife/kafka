@@ -60,7 +60,7 @@ class LogSegment(val log: FileRecords,
                  val rollJitterMs: Long,
                  time: Time) extends Logging {
 
-    /** 当前 LogSegment 对象的创建时间 */
+    /** 当前 LogSegment 的创建时间 */
     private var created = time.milliseconds
 
     /** 从上次添加索引项后，在日志文件中累计加入的消息的字节数 */
@@ -71,7 +71,7 @@ class LogSegment(val log: FileRecords,
 
     /** 已追加的消息对应的最大时间戳 */
     @volatile private var maxTimestampSoFar = timeIndex.lastEntry.timestamp
-    /** 最大时间戳的消息对应的 offset */
+    /** 已追加的具备最大时间戳的消息对应的 offset */
     @volatile private var offsetOfMaxTimestamp = timeIndex.lastEntry.offset
 
     def this(dir: File,
@@ -91,7 +91,11 @@ class LogSegment(val log: FileRecords,
             rollJitterMs,
             time)
 
-    /* Return the size in bytes of this log segment */
+    /**
+     * Return the size in bytes of this log segment
+     *
+     * @return
+     */
     def size: Long = log.sizeInBytes()
 
     /**
@@ -102,10 +106,6 @@ class LogSegment(val log: FileRecords,
     }
 
     /**
-     * Append the given messages starting with the given offset. Add an entry to the index if needed.
-     *
-     * It is assumed this method is being called from within a lock.
-     *
      * 追加消息
      *
      * @param firstOffset                 The first offset in the message set.
@@ -115,7 +115,7 @@ class LogSegment(val log: FileRecords,
      */
     @nonthreadsafe
     def append(firstOffset: Long, // 待追加消息的第一条消息的 offset
-               largestOffset: Long,
+               largestOffset: Long, // 待追加消息中的最大 offset
                largestTimestamp: Long, // 待追加消息中的最大时间戳
                shallowOffsetOfMaxTimestamp: Long, // 最大时间戳消息对应的 offset
                records: MemoryRecords) {
@@ -126,7 +126,7 @@ class LogSegment(val log: FileRecords,
             val physicalPosition = log.sizeInBytes()
             if (physicalPosition == 0)
                 rollingBasedTimestamp = Some(largestTimestamp)
-            // append the messages
+
             require(canConvertToRelativeOffset(largestOffset), "largest offset in message set can not be safely converted to relative offset.")
 
             // 写日志文件
@@ -139,14 +139,14 @@ class LogSegment(val log: FileRecords,
                 offsetOfMaxTimestamp = shallowOffsetOfMaxTimestamp
             }
 
-            // append an entry to the index (if needed)
+            // 如果当前累计添加的日志字节数超过设置值（对应 index.interval.bytes 配置）
             if (bytesSinceLastIndexEntry > indexIntervalBytes) {
-                // 向索引文件添加索引项
+                // 更新 index 和 timeindex 文件
                 index.append(firstOffset, physicalPosition)
                 timeIndex.maybeAppend(maxTimestampSoFar, offsetOfMaxTimestamp)
-                bytesSinceLastIndexEntry = 0
+                bytesSinceLastIndexEntry = 0 // 重置当前累计加入的日志字节数
             }
-            // 更新累计加入的消息的字节数
+            // 更新累计加入的日志字节数
             bytesSinceLastIndexEntry += records.sizeInBytes
         }
     }

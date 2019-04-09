@@ -678,6 +678,7 @@ class KafkaServer(val config: KafkaConfig, // 配置信息对象
     def boundPort(listenerName: ListenerName): Int = socketServer.boundPort(listenerName)
 
     private def createLogManager(zkClient: ZkClient, brokerState: BrokerState): LogManager = {
+        // 使用 LogConfig 封装日志相关的配置
         val defaultProps = KafkaServer.copyKafkaConfigToLog(config)
         val defaultLogConfig = LogConfig(defaultProps)
 

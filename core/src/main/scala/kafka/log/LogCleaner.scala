@@ -35,13 +35,16 @@ import scala.collection.JavaConverters._
 import scala.collection._
 
 /**
- * The cleaner is responsible for removing obsolete records from logs which have the dedupe retention strategy.
+ * The cleaner is responsible for removing obsolete（过期的） records from logs which have the dedupe（重复删除的） retention strategy.
  * A message with key K and offset O is obsolete if there exists a message with key K and offset O' such that O < O'.
  *
- * Each log can be thought of being split into two sections of segments: a "clean" section which has previously been cleaned followed by a
- * "dirty" section that has not yet been cleaned. The dirty section is further divided into the "cleanable" section followed by an "uncleanable" section.
- * The uncleanable section is excluded from cleaning. The active log segment is always uncleanable. If there is a
- * compaction lag time set, segments whose largest message timestamp is within the compaction lag time of the cleaning operation are also uncleanable.
+ * Each log can be thought of being split into two sections of segments:
+ *
+ * a "clean" section which has previously been cleaned followed by a "dirty" section that has not yet been cleaned.
+ * The dirty section is further divided into the "cleanable" section followed by an "uncleanable" section.
+ * The uncleanable section is excluded from cleaning. The active log segment is always uncleanable.
+ * If there is a compaction lag time set, segments whose largest message timestamp
+ * is within the compaction lag time of the cleaning operation are also uncleanable.
  *
  * The cleaning is carried out by a pool of background threads. Each thread chooses the dirtiest log that has the "dedupe" retention policy 
  * and cleans that. The dirtiness of the log is guessed by taking the ratio of bytes in the dirty section of the log to the total bytes in the log. 

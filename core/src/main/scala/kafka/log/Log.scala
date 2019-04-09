@@ -977,6 +977,7 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 
 
     /**
      * Completely delete this log directory and all contents from the file system with no delay
+     *
      */
     private[log] def delete() {
         lock synchronized {
