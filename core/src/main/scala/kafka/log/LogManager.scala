@@ -539,9 +539,10 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
         debug("Beginning log cleanup...")
         var total = 0
         val startMs = time.milliseconds
-        // 遍历处理每个 TP 对应的 Log，只有对应 Log 配置了 cleanup.policy=delete 才会执行删除
+        // 遍历处理每个 topic 分区对应的 Log 对象，只有对应 Log 配置了 cleanup.policy=delete 才会执行删除
         for (log <- allLogs(); if !log.config.compact) {
             debug("Garbage collecting '" + log.name + "'")
+            // 遍历删除当前 Log 对象中过期的 LogSegment，并保证 Log 的大小在允许范围内（对应 retention.bytes 配置）
             total += log.deleteOldSegments()
         }
         debug("Log cleanup completed. " + total + " files deleted in " + (time.milliseconds - startMs) / 1000 + " seconds")
@@ -574,14 +575,13 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
     private def flushDirtyLogs(): Unit = {
         debug("Checking for dirty logs to flush...")
 
-        // 遍历处理 TP 对应的 Log
+        // 遍历处理每个 topic 分区对应的 Log 对象
         for ((topicPartition, log) <- logs) {
             try {
-                // 距离上次执行 flush 的时间
                 val timeSinceLastFlush = time.milliseconds - log.lastFlushTime
                 debug("Checking if flush is needed on " + topicPartition.topic + " flush interval  " + log.config.flushMs +
                         " last flushed " + log.lastFlushTime + " time since last flush: " + timeSinceLastFlush)
-                // 如果时间超过 flush.ms 配置值，则执行 flush 操作
+                // 如果距离上次 flush 的时间超过 flush.ms 值，则执行 flush 操作
                 if (timeSinceLastFlush >= log.config.flushMs)
                     log.flush()
             } catch {

@@ -733,16 +733,17 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 
      */
     private def deleteOldSegments(predicate: LogSegment => Boolean): Int = {
         lock synchronized {
-            // 依据时间检查当前 Log 中的 LogSegment 是否满足 predicate 条件
+            // 检查当前 Log 中的 LogSegment 是否满足删除条件，并返回需要被删除的 LogSegment 集合
             val deletable = this.deletableSegments(predicate)
             val numToDelete = deletable.size
             if (numToDelete > 0) {
                 // 如果当前 Log 中所有的 LogSegment 都需要被删除，则在删除之前创建一个新的 activeSegment
                 if (segments.size == numToDelete)
                     this.roll()
-                // 遍历删除这些需要删除的 LogSegment 文件
+                // 遍历删除需要删除的 LogSegment 对象及其相关文件
                 deletable.foreach(deleteSegment)
             }
+            // 返回被删除的 LogSegment 数目
             numToDelete
         }
     }
@@ -759,7 +760,7 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 
         if (lastEntry == null) Seq.empty
         // 遍历 logSegments 中所有满足删除条件的 LogSegment
         else logSegments.takeWhile(
-            s => predicate(s) // 如果当前 LogSegment 中最大消息的时间戳相对于当前时间已经超过 retention.ms，则允许删除
+            s => predicate(s) // 如果当前 LogSegment 过期，或者总大小过大
                     && (s.baseOffset != lastEntry.getValue.baseOffset || s.size > 0)) // 且当前 LogSegment 中有数据
     }
 
@@ -768,7 +769,9 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 
      * or because the log size is > retentionSize
      */
     def deleteOldSegments(): Int = {
+        // 仅处理配置了 cleanup.policy=delete 策略的 Log 对象
         if (!config.delete) return 0
+        // 删除当前 Log 对象中过期的 LogSegment，如果当前 Log 的大小超出允许最大值，则删除多出的部分
         this.deleteRetentionMsBreachedSegments() + this.deleteRetentionSizeBreachedSegments()
     }
 
@@ -780,6 +783,7 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 
     private def deleteRetentionMsBreachedSegments(): Int = {
         if (config.retentionMs < 0) return 0
         val startMs = time.milliseconds
+        // 如果 LogSegment 中最大时间戳距离当前已经超过配置时间，则删除
         this.deleteOldSegments(startMs - _.largestTimestamp > config.retentionMs)
     }
 
@@ -790,11 +794,12 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 
      */
     private def deleteRetentionSizeBreachedSegments(): Int = {
         if (config.retentionSize < 0 || size < config.retentionSize) return 0
-        var diff = size - config.retentionSize // Log 的大小减去允许的大小（retention.bytes）
+        // Log 的总大小减去允许的大小
+        var diff = size - config.retentionSize
 
         def shouldDelete(segment: LogSegment): Boolean = {
+            // 大于等于 0 则说明仍然过大
             if (diff - segment.size >= 0) {
-                // 减去超出大小的部分
                 diff -= segment.size
                 true
             } else {
@@ -883,32 +888,29 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 
         val start = time.nanoseconds
         lock synchronized {
             val newOffset = Math.max(expectedNextOffset, logEndOffset)
-            // 获取日志文件（名称是 ${LEO}.log）
-            val logFile = Log.logFile(dir, newOffset)
-            // 获取索引文件（名称是 ${LEO}.index）
-            val indexFile = indexFilename(dir, newOffset)
-            // 获取时间索引文件（名称是 ${LEO}.timeindex）
-            val timeIndexFile = timeIndexFilename(dir, newOffset)
-            // 遍历检查，如果文件已经存在则删除
+            val logFile = Log.logFile(dir, newOffset) // 对应的 log 文件
+            val indexFile = indexFilename(dir, newOffset) // 对应的 index 文件
+            val timeIndexFile = timeIndexFilename(dir, newOffset) // 对应的 timeindex 文件
+            // 遍历检查，如果文件存在则删除
             for (file <- List(logFile, indexFile, timeIndexFile); if file.exists) {
                 warn("Newly rolled segment file " + file.getName + " already exists; deleting it first")
                 file.delete()
             }
 
-            // 处理上一任 activeSegment
+            // 处理之前的 activeSegment
             segments.lastEntry() match {
                 case null =>
                 case entry =>
-                    val seg = entry.getValue
-                    // 追加最大时间戳和对应的 offset 到 timeindex
+                    val seg: LogSegment = entry.getValue
+                    // 追加最大时间戳与对应的 offset 到 timeindex 文件
                     seg.onBecomeInactiveSegment()
-                    // 对日志文件和索引文件进行阶段处理，仅保留有效字节
+                    // 对 log、index 和 timeindex 文件进行截断处理，仅保留有效字节
                     seg.index.trimToValidSize()
                     seg.timeIndex.trimToValidSize()
                     seg.log.trim()
             }
 
-            // 创建新的 activeSegment
+            // 创建新的 activeSegment 对象
             val segment = new LogSegment(
                 dir,
                 startOffset = newOffset,
@@ -920,14 +922,13 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 
                 initFileSize = initFileSize(),
                 preallocate = config.preallocate)
 
-            // 添加新创建的 LogSegment 到 segments 跳跃表
+            // 添加新的 activeSegment 到 segments 跳跃表中的 baseOffset 位置
             val prev = this.addSegment(segment)
 
-            // 如果已经存在对应 baseOffset 的 LogSegment，则抛出异常
+            // 如果对应 baseOffset 位置已经存在 LogSegment，则抛出异常
             if (prev != null)
                 throw new KafkaException("Trying to roll a new log segment for topic partition %s with start offset %d while it already exists.".format(name, newOffset))
-            // We need to update the segment base offset and append position data of the metadata when log rolls.
-            // The next offset should not change.
+
             // 更新 nextOffsetMetadata，主要是更新 segmentBaseOffset 和 relativePositionInSegment
             this.updateLogEndOffset(nextOffsetMetadata.messageOffset)
 
@@ -958,7 +959,7 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 
      * @param offset The offset to flush up to (non-inclusive); the new recovery point
      */
     def flush(offset: Long): Unit = {
-        // 如果尾部 offset 小于等于 recoveryPoint，则直接返回，因为已经全部落盘了
+        // 如果 offset 小于等于 recoveryPoint，则直接返回，因为已经全部落盘了
         if (offset <= this.recoveryPoint)
             return
         debug("Flushing log '" + name + " up to offset " + offset + ", last flushed: " + lastFlushTime + " current time: " + time.milliseconds + " unflushed = " + unflushedMessages)
@@ -1091,7 +1092,7 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 
         lock synchronized {
             // 从跳跃表中删除当前 LogSegment 对象
             segments.remove(segment.baseOffset)
-            // 将对应的日志文件和索引文件后缀改为 .deleted，并提交一个定时任务执行删除操作
+            // 将对应的 log、index 和 timeindex 文件添加“.deleted”后缀，并提交给定时任务 delete-file 进行删除
             this.asyncDeleteSegment(segment)
         }
     }
@@ -1172,9 +1173,11 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 
     /**
      * Add the given segment to the segments in this log. If this segment replaces an existing segment, delete it.
      *
+     * 添加 LogSegment 到当前分片文件中第一条消息的 offset 位置
+     *
      * @param segment The segment to add
      */
-    def addSegment(segment: LogSegment): LogSegment = this.segments.put(segment.baseOffset, segment)
+    def addSegment(segment: LogSegment): LogSegment = segments.put(segment.baseOffset, segment)
 
 }
 
