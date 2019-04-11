@@ -959,15 +959,16 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 
      * @param offset The offset to flush up to (non-inclusive); the new recovery point
      */
     def flush(offset: Long): Unit = {
-        // 如果 offset 小于等于 recoveryPoint，则直接返回，因为已经全部落盘了
-        if (offset <= this.recoveryPoint)
+        // 如果 offset 小于等于 recoveryPoint，则直接返回，因为之前的已经全部落盘了
+        if (offset <= recoveryPoint)
             return
         debug("Flushing log '" + name + " up to offset " + offset + ", last flushed: " + lastFlushTime + " current time: " + time.milliseconds + " unflushed = " + unflushedMessages)
-        // 遍历处理 [recoveryPoint, offset) 之间的 LogSegment
-        for (segment <- this.logSegments(this.recoveryPoint, offset))
-            segment.flush() // 执行刷盘操作
+        // 获取 [recoveryPoint, offset) 之间的 LogSegment
+        for (segment <- this.logSegments(recoveryPoint, offset))
+            segment.flush() // 执行刷盘操作，包括 log、index 和 timeindex 文件
         lock synchronized {
-            if (offset > this.recoveryPoint) {
+            // 如果当前已经刷盘的 offset 大于之前记录的 recoveryPoint，则更新 recoveryPoint
+            if (offset > recoveryPoint) {
                 // 更新 recoveryPoint
                 this.recoveryPoint = offset
                 // 更新最近一次执行 flush 的时间

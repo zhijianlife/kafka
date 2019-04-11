@@ -394,6 +394,7 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
      * 定时将每个 Log 的 recoveryPoint 写入 recovery-point-offset-checkpoint 文件
      */
     def checkpointRecoveryPointOffsets() {
+        // 为每个 log 目录应用 checkpointLogsInDir 方法
         logDirs.foreach(checkpointLogsInDir)
     }
 
@@ -401,7 +402,7 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
      * Make a checkpoint for all logs in provided directory.
      */
     private def checkpointLogsInDir(dir: File): Unit = {
-        // 获取指定 log 目录下对应的 Map[TopicPartition, Log] 集合
+        // 获取指定 log 目录对应的 Map[TopicPartition, Log] 集合
         val recoveryPoints = logsByDir.get(dir.toString)
         if (recoveryPoints.isDefined) {
             // 更新对应的 recovery-point-offset-checkpoint 文件
