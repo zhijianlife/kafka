@@ -54,7 +54,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
     /** 读写对应的日志文件 */
     private final FileChannel channel;
 
-    /** 日志文件 */
+    /** 日志文件对象 */
     private volatile File file;
 
     /**
@@ -79,9 +79,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
         } else {
             int limit = Math.min((int) channel.size(), end);
             size.set(limit - start);
-
-            // if this is not a slice, update the file pointer to the end of the file
-            // set the file position to the last byte in the file
+            // 将指针移动到文件最后的可写位置
             channel.position(limit);
         }
 
@@ -164,7 +162,9 @@ public class FileRecords extends AbstractRecords implements Closeable {
      * @return the number of bytes written to the underlying file
      */
     public int append(MemoryRecords records) throws IOException {
+        // 写入文件
         int written = records.writeFullyTo(channel);
+        // 修改文件大小
         size.getAndAdd(written);
         return written;
     }
@@ -233,31 +233,45 @@ public class FileRecords extends AbstractRecords implements Closeable {
      * size of the underlying FileChannel.
      * It is expected that no other threads will do writes to the log when this function is called.
      *
+     * 将文件截断到 targetSize
+     *
      * @param targetSize The size to truncate to. Must be between 0 and sizeInBytes.
      * @return The number of bytes truncated off
      */
     public int truncateTo(int targetSize) throws IOException {
         int originalSize = sizeInBytes();
+        // 校验 targetSize 值，保证在当前 log 文件的大小范围内
         if (targetSize > originalSize || targetSize < 0) {
             throw new KafkaException("Attempt to truncate log segment to " + targetSize + " bytes failed, " +
                     " size of this log segment is " + originalSize + " bytes.");
         }
         if (targetSize < (int) channel.size()) {
+            // 截断文件
             channel.truncate(targetSize);
+            // 移动 position 指针
             channel.position(targetSize);
+            // 更新文件大小
             size.set(targetSize);
         }
         return originalSize - targetSize;
     }
 
+    /**
+     * 将 FileRecords 中的数据写入指定的 Channel 中
+     *
+     * @param destChannel
+     * @param offset
+     * @param length The number of bytes to write
+     * @return
+     * @throws IOException
+     */
     @Override
     public long writeTo(GatheringByteChannel destChannel, long offset, int length) throws IOException {
         long newSize = Math.min(channel.size(), end) - start;
         int oldSize = sizeInBytes();
         if (newSize < oldSize) {
             throw new KafkaException(String.format(
-                    "Size of FileRecords %s has been truncated during write: old size %d, new size %d",
-                    file.getAbsolutePath(), oldSize, newSize));
+                    "Size of FileRecords %s has been truncated during write: old size %d, new size %d", file.getAbsolutePath(), oldSize, newSize));
         }
 
         long position = start + offset;
@@ -274,8 +288,11 @@ public class FileRecords extends AbstractRecords implements Closeable {
 
     /**
      * Search forward for the file position of the last offset that is greater than or equal to the target offset
-     * and return its physical position and the size of the message (including log overhead) at the returned offset. If
-     * no such offsets are found, return null.
+     * and return its physical position and the size of the message (including log overhead) at the returned offset.
+     * If no such offsets are found, return null.
+     *
+     * 从 startingPosition 开始逐条遍历当前 FileRecords 中的消息，并将每条消息的 offset 与 targetOffset 进行比较，
+     * 直到 offset 大于等于 targetOffset，最后返回对应的 offset 值
      *
      * @param targetOffset The offset to search for.
      * @param startingPosition The starting position in the file to begin searching from.
@@ -284,6 +301,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
         for (FileChannelLogEntry entry : shallowEntriesFrom(startingPosition)) {
             long offset = entry.offset();
             if (offset >= targetOffset) {
+                // 封装 offset 和对应的 position (物理地址)，以及消息的大小
                 return new LogEntryPosition(offset, entry.position(), entry.sizeInBytes());
             }
         }
@@ -309,8 +327,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
                     }
                 }
                 throw new IllegalStateException(String.format("The message set (max timestamp = %s, max offset = %s" +
-                                " should contain target timestamp %s, but does not.", shallowRecord.timestamp(),
-                        shallowEntry.offset(), targetTimestamp));
+                        " should contain target timestamp %s, but does not.", shallowRecord.timestamp(), shallowEntry.offset(), targetTimestamp));
             }
         }
         return null;

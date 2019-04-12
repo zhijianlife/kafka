@@ -84,9 +84,9 @@ public class FileLogInputStream implements LogInputStream<FileLogInputStream.Fil
     }
 
     /**
-     * Log entry backed by an underlying FileChannel. This allows iteration over the shallow log
-     * entries without needing to read the record data into memory until it is needed. The downside
-     * is that entries will generally no longer be readable when the underlying channel is closed.
+     * Log entry backed by an underlying FileChannel.
+     * This allows iteration over the shallow log entries without needing to read the record data into memory until it is needed.
+     * The downside is that entries will generally no longer be readable when the underlying channel is closed.
      */
     public static class FileChannelLogEntry extends LogEntry {
         private final long offset;

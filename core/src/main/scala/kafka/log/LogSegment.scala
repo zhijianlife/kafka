@@ -42,21 +42,21 @@ import scala.math._
  *
  * A segment with a base offset of [base_offset] would be stored in two files, a [base_offset].index and a [base_offset].log file.
  *
- * 每个日志文件可以切分成多个分片，每个分片对应一个 LogSegment，封装了日志和日志对应的索引，同时提供了日志文件和索引文件的读写功能
+ * 每个日志文件可以切分成多个分片（topic 分区文件），每个分片对应一个 LogSegment，封装了 log、index 和 timeindex 文件
  *
- * @param log                用于操作日志文件
- * @param index              用于操作索引文件
- * @param timeIndex          The timestamp index
- * @param baseOffset         当前分片文件中第一条消息的 offset 值
+ * @param log                用于操作 log 文件
+ * @param index              用于操作 index 文件
+ * @param timeIndex          用户操作 timeindex 文件
+ * @param baseOffset         当前日志分片文件中第一条消息的 offset 值
  * @param indexIntervalBytes 索引项之间间隔的最小字节数
  * @param time               时间戳工具
  */
 @nonthreadsafe
-class LogSegment(val log: FileRecords,
-                 val index: OffsetIndex,
-                 val timeIndex: TimeIndex,
-                 val baseOffset: Long,
-                 val indexIntervalBytes: Int,
+class LogSegment(val log: FileRecords, // log 文件对象
+                 val index: OffsetIndex, // index 文件对象
+                 val timeIndex: TimeIndex, // timeindex 文件对象
+                 val baseOffset: Long, // 当前日志分片文件中第一条消息的 offset 值
+                 val indexIntervalBytes: Int, // 索引项之间间隔的最小字节数，对应 index.interval.bytes 配置
                  val rollJitterMs: Long,
                  time: Time) extends Logging {
 
@@ -108,17 +108,19 @@ class LogSegment(val log: FileRecords,
     /**
      * 追加消息
      *
-     * @param firstOffset                 The first offset in the message set.
-     * @param largestTimestamp            The largest timestamp in the message set.
-     * @param shallowOffsetOfMaxTimestamp The offset of the message that has the largest timestamp in the messages to append.
-     * @param records                     The log entries to append.
+     * @param firstOffset                 待追加消息的第一条消息的 offset
+     * @param largestOffset               待追加消息中的最大 offset
+     * @param largestTimestamp            待追加消息中的最大时间戳
+     * @param shallowOffsetOfMaxTimestamp 最大时间戳消息对应的 offset
+     * @param records                     待追加的消息
      */
     @nonthreadsafe
     def append(firstOffset: Long, // 待追加消息的第一条消息的 offset
                largestOffset: Long, // 待追加消息中的最大 offset
                largestTimestamp: Long, // 待追加消息中的最大时间戳
                shallowOffsetOfMaxTimestamp: Long, // 最大时间戳消息对应的 offset
-               records: MemoryRecords) {
+               records: MemoryRecords) // 待追加的消息
+    {
         if (records.sizeInBytes > 0) {
             trace("Inserting %d bytes at offset %d at position %d with largest timestamp %d at shallow offset %d"
                     .format(records.sizeInBytes, firstOffset, log.sizeInBytes(), largestTimestamp, shallowOffsetOfMaxTimestamp))
@@ -129,7 +131,7 @@ class LogSegment(val log: FileRecords,
 
             require(canConvertToRelativeOffset(largestOffset), "largest offset in message set can not be safely converted to relative offset.")
 
-            // 写日志文件
+            // 将消息数据追加到 log 文件
             val appendedBytes = log.append(records)
             trace(s"Appended $appendedBytes to ${log.file()} at offset $firstOffset")
 
@@ -165,7 +167,7 @@ class LogSegment(val log: FileRecords,
      */
     @threadsafe
     private[log] def translateOffset(offset: Long, startingFilePosition: Int = 0): LogEntryPosition = {
-        // 基于二分查找小于等于参数 offset 的最大 offset，返回 offset 和对应的物理地址
+        // 基于二分查找获取小于等于参数 offset 的最大 offset，返回 offset 和对应的物理地址
         val mapping = index.lookup(offset)
         // 查找对应的物理地址 position
         log.searchForOffsetWithSize(offset, max(mapping.position, startingFilePosition))
@@ -195,50 +197,49 @@ class LogSegment(val log: FileRecords,
         if (maxSize < 0)
             throw new IllegalArgumentException("Invalid max size for log read (%d)".format(maxSize))
 
+        // 获取当前 log 文件的字节大小
         val logSize = log.sizeInBytes // this may change, need to save a consistent copy
-        // 获取大于等于 startOffset 的最小的 offset 对应的物理地址 position
+        // 获取小于等于 startOffset 的最大 offset 对应的物理地址 position
         val startOffsetAndSize = this.translateOffset(startOffset)
 
-        // if the start position is already off the end of the log, return null
+        // 读取的位置超出了当前文件，直接返回 null
         if (startOffsetAndSize == null)
             return null
 
         val startPosition = startOffsetAndSize.position
-        val offsetMetadata = new LogOffsetMetadata(startOffset, this.baseOffset, startPosition)
+        val offsetMetadata = new LogOffsetMetadata(startOffset, baseOffset, startPosition)
 
+        // 更新读取消息的最大字节数
         val adjustedMaxSize =
-            if (minOneMessage) math.max(maxSize, startOffsetAndSize.size)
-            else maxSize
-
-        // return a log segment but with zero size in the case below
+            if (minOneMessage) math.max(maxSize, startOffsetAndSize.size) else maxSize
+        // 如果请求读取的消息最大字节数为 0，则返回一个空的结果对象
         if (adjustedMaxSize == 0)
             return FetchDataInfo(offsetMetadata, MemoryRecords.EMPTY)
 
         // 计算读取的字节数
         // calculate the length of the message set to read based on whether or not they gave us a maxOffset
         val length = maxOffset match {
-            // 如果 maxOffset 为空
+            // 如果未指定读取消息的结束位置
             case None =>
-                // no max offset, just read until the max position
+                // 直接读取到指定的最大物理地址
                 min((maxPosition - startPosition).toInt, adjustedMaxSize)
+            // 如果指定了读取消息的结束位置
             case Some(offset) =>
-                // there is a max offset, translate it to a file position and use that to calculate the max read size;
-                // when the leader of a partition changes, it's possible for the new leader's high watermark to be less than the
-                // true high watermark in the previous leader for a short window. In this window, if a consumer fetches on an
-                // offset between new leader's high watermark and the log end offset, we want to return an empty response.
+                // 如果结束位置小于起始位置，则直接返回一个空的结果对象
                 if (offset < startOffset)
                     return FetchDataInfo(offsetMetadata, MemoryRecords.EMPTY)
-                // 将 offset 转换成对应的物理地址
+                // 将结束位置 offset 转换成对应的物理地址
                 val mapping = this.translateOffset(offset, startPosition)
                 val endPosition =
                     if (mapping == null)
-                        logSize // 如果 maxOffset 超出当前日志文件时，则使用日志文件长度
+                        logSize // 如果结束位置 maxOffset 超出当前日志文件，则使用日志文件长度
                     else
                         mapping.position
-                // 由 maxOffset、maxPosition，以及 maxSize 共同决定读取长度
+                // 由 maxOffset、maxPosition，以及 maxSize 共同决定最终读取长度
                 min(min(maxPosition, endPosition) - startPosition, adjustedMaxSize).toInt
         }
 
+        // 读取对应的消息数据，并封装成 FetchDataInfo 对象返回
         FetchDataInfo(
             offsetMetadata,
             log.read(startPosition, length),
@@ -257,25 +258,30 @@ class LogSegment(val log: FileRecords,
      */
     @nonthreadsafe
     def recover(maxMessageSize: Int): Int = {
+        // 清空 index 文件
         index.truncate()
         index.resize(index.maxIndexSize)
+        // 清空 timeindex 文件
         timeIndex.truncate()
         timeIndex.resize(timeIndex.maxIndexSize)
-        var validBytes = 0
-        var lastIndexEntry = 0
+        var validBytes = 0 // 记录通过验证的字节数
+        var lastIndexEntry = 0 // 最后一个索引项对应的物理地址
         maxTimestampSoFar = Record.NO_TIMESTAMP
         try {
+            // 遍历 log 文件，重建索引
             for (entry <- log.shallowEntries(maxMessageSize).asScala) {
+                // 获取对应的消息 Record 对象
                 val record = entry.record
+                // 校验消息数据的有效性，如果存在问题则抛出异常
                 record.ensureValid()
 
-                // The max timestamp should have been put in the outer message, so we don't need to iterate over the inner messages.
+                // 更新本地记录的消息最大时间戳及其 offset
                 if (record.timestamp > maxTimestampSoFar) {
                     maxTimestampSoFar = record.timestamp
                     offsetOfMaxTimestamp = entry.offset
                 }
 
-                // Build offset index
+                // 如果当前字节减去上一次记录索引的字节超过设置的索引项之间间隔的最小字节数，则添加索引项
                 if (validBytes - lastIndexEntry > indexIntervalBytes) {
                     val startOffset = entry.firstOffset
                     index.append(startOffset, validBytes)
@@ -286,9 +292,9 @@ class LogSegment(val log: FileRecords,
             }
         } catch {
             case e: CorruptRecordException =>
-                logger.warn("Found invalid messages in log segment %s at byte offset %d: %s."
-                        .format(log.file.getAbsolutePath, validBytes, e.getMessage))
+                logger.warn("Found invalid messages in log segment %s at byte offset %d: %s.".format(log.file.getAbsolutePath, validBytes, e.getMessage))
         }
+        // 截断日志和索引文件中无效的字节
         val truncated = log.sizeInBytes - validBytes
         log.truncateTo(validBytes)
         index.trimToValidSize()

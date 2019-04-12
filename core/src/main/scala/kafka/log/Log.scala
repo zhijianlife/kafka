@@ -87,8 +87,8 @@ case class LogAppendInfo(var firstOffset: Long, // 第一条消息的 offset
  *
  */
 @threadsafe
-class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 TP 目录对应一个 Log 对象，目录中的每个日志和索引文件对应一个 LogSegment
-          @volatile var config: LogConfig, // 当前 TP 的相关配置信息
+class Log(@volatile var dir: File, // 当前 Log 对象对应的 topic 分区目录
+          @volatile var config: LogConfig, // 当前 topic 分区对应的配置信息
           @volatile var recoveryPoint: Long = 0L, // 恢复操作的起始 offset，对应 HW offset，之前的消息已经全部落盘
           scheduler: Scheduler,
           time: Time = Time.SYSTEM) extends Logging with KafkaMetricsGroup {
@@ -106,14 +106,18 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 
     }
 
     /**
-     * 用于产生分配给当前消息的 offset，也是当前副本的 LogEndOffset:
+     * 用于记录分配给当前消息的 offset，也是当前副本的 LEO:
      * - messageOffset 记录了当前 Log 最后一个 offset 值
-     * - segmentBaseOffset 记录了 activeSegment 的 baseOffset
-     * - relativePositionInSegment 记录了 activeSegment 的大小
+     * - segmentBaseOffset 记录了 activeSegment 对象的 baseOffset
+     * - relativePositionInSegment 记录了 activeSegment 对象的大小
      */
     @volatile private var nextOffsetMetadata: LogOffsetMetadata = _
 
-    /** 当前 Log 包含的 LogSegment 集合，SkipList 结构 */
+    /**
+     * 当前 Log 包含的 LogSegment 集合，SkipList 结构：
+     * - 以 baseOffset 作为 key
+     * - 以 LogSegment 对象作为 value
+     */
     private val segments: ConcurrentNavigableMap[java.lang.Long, LogSegment] = new ConcurrentSkipListMap[java.lang.Long, LogSegment]
 
     locally {
@@ -129,6 +133,7 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 
                 .format(name, segments.size(), logEndOffset, time.milliseconds - startMs))
     }
 
+    /** 基于 topic 分区目录解析得到对应的 TP 对象 */
     val topicPartition: TopicPartition = Log.parseTopicPartitionName(dir)
 
     private val tags = Map("topic" -> topicPartition.topic, "partition" -> topicPartition.partition.toString)
@@ -157,41 +162,38 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 
         },
         tags)
 
-    /** The name of this log */
+    /** 当前 Log 对象对应的分区目录名称 */
     def name: String = dir.getName
 
     /**
      * Load the log segments from the log files on disk
      */
     private def loadSegments() {
-        // 如果对应的 TP 目录不存在则创建
+        // 如果对应的 topic 分区目录不存在则创建
         dir.mkdirs()
-        var swapFiles = Set[File]()
+        var swapFiles = Set[File]() // 记录需要执行 swap 的文件
 
-        // 1. 删除 ".delete" 和 ".cleaned" 文件，将 ".swap" 文件加入到 swap 集合中
+        // 1. 删除标记为 deleted 或 cleaned 的文件，将标记为 swap 的文件加入到交换集合中，等待后续完成交换过程
         for (file <- dir.listFiles if file.isFile) {
             if (!file.canRead)
                 throw new IOException("Could not read file " + file)
             val filename = file.getName
-            // 如果是 ".delete" 或 ".cleaned" 文件
+            /*
+             * 如果是标记为 deleted 或 cleaned 的文件，则删除
+             * - 其中 deleted 文件是指标识需要被删除的 log 文件和 index 文件
+             * - 其中 cleaned 文件是指在执行日志压缩过程中宕机，文件中的数据状态不明确，无法正确恢复的文件
+             */
             if (filename.endsWith(DeletedFileSuffix) || filename.endsWith(CleanedFileSuffix)) {
-                /*
-                 * 删除 ".delete" 和 ".cleaned" 文件
-                 * - ".delete" 是指标识需要被删除的日志文件和索引文件
-                 * - ".cleaned" 是指在执行日志压缩过程中宕机，其中的数据状态不明确，无法正确恢复的文件
-                 */
                 file.delete()
             }
-            // 如果是 ".swap" 文件
+            /*
+             * 如果是标记为 swap 的文件（可以用于交换的临时文件），则说明日志压缩过程已完成，但是在执行交换过程中宕机，
+             * 因为 swap 文件已经保存了日志压缩后的完整数据，可以进行恢复：
+             *
+             * 1. 如果 swap 文件是 log 文件，则删除对应的 index 文件，稍后 swap 操作会重建索引
+             * 2. 如果 swap 文件是 index 文件，则直接删除，后续加载 log 文件时会重建索引
+             */
             else if (filename.endsWith(SwapFileSuffix)) {
-                /*
-                 * 如果是 ".swap" 文件，则说明日志压缩过程完成，但是在执行 swap 过程中宕机，
-                 * 这种文件保存了日志压缩后的完整数据，可以进行恢复：
-                 *
-                 * 1. 如果是 log 文件，则删除 index 文件，稍后会完成 swap 操作
-                 * 2. 如果是 index 文件，则直接删除，因为后续可以重建
-                 */
-
                 // 移除 swap 后缀
                 val baseName = new File(CoreUtils.replaceSuffix(file.getPath, SwapFileSuffix, ""))
                 // 如果是 index 文件，则直接删除，因为后续可以重建
@@ -207,10 +209,10 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 
             }
         }
 
-        // 2. 加载当前 TP 目录下全部的 log 文件和 index 文件
+        // 2. 加载 topic 分区目录下全部的 log 文件和 index 文件，如果对应的 index 不存在或数据不完整，则重建
         for (file <- dir.listFiles if file.isFile) {
             val filename = file.getName
-            // 处理 ".index" 和 ".timeindex" 文件
+            // 处理 index 和 timeindex 文件
             if (filename.endsWith(IndexFileSuffix) || filename.endsWith(TimeIndexFileSuffix)) {
                 // 如果索引文件没有对应的 log 文件，则删除 index 文件
                 val logFile =
@@ -223,14 +225,14 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 
                     file.delete()
                 }
             }
-            // 处理 ".log" 文件
+            // 处理 log 文件
             else if (filename.endsWith(LogFileSuffix)) {
+                // 获取 baseOffset
                 val start = filename.substring(0, filename.length - LogFileSuffix.length).toLong
                 // 创建对应的 index 文件对象
                 val indexFile = Log.indexFilename(dir, start)
                 // 创建对应的 timeindex 文件对象
                 val timeIndexFile = Log.timeIndexFilename(dir, start)
-
                 val indexFileExists = indexFile.exists()
                 val timeIndexFileExists = timeIndexFile.exists()
 
@@ -244,17 +246,18 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 
                     time = time,
                     fileAlreadyExists = true)
 
-                // 如果对应的 index 文件存在
+                // 如果对应的 index 文件存在，则校验数据完整性，如果不完整则重建
                 if (indexFileExists) {
                     try {
                         // 校验 index 文件的完整性
                         segment.index.sanityCheck()
-                        // 如果对应的 timeindex 文件不存在，则重置 mmb 对象
+                        // 如果对应的 timeindex 文件不存在，则重置对应的 mmb 对象
                         if (!timeIndexFileExists)
                             segment.timeIndex.resize(0)
                         // 校验 timeindex 文件的完整性
                         segment.timeIndex.sanityCheck()
                     } catch {
+                        // 索引文件完整性异常，删除重建
                         case e: java.lang.IllegalArgumentException =>
                             warn(s"Found a corrupted index file due to ${e.getMessage}}. deleting ${timeIndexFile.getAbsolutePath}, " + s"${indexFile.getAbsolutePath} and rebuilding index...")
                             indexFile.delete()
@@ -272,15 +275,16 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 
             }
         }
 
-        // 3. 遍历处理步骤 1 中记录的 swap 文件
+        // 3. 遍历处理步骤 1 中记录的 swap 文件，使用压缩后的 LogSegment 替换压缩前的 LogSegment 集合，并删除压缩前的日志和索引文件
         for (swapFile <- swapFiles) {
+            // 移除 “.swap” 后缀
             val logFile = new File(CoreUtils.replaceSuffix(swapFile.getPath, SwapFileSuffix, ""))
             val fileName = logFile.getName
             // 基于 log 文件名得到对应的 baseOffset
             val startOffset = fileName.substring(0, fileName.length - LogFileSuffix.length).toLong
-            val indexFile = new File(CoreUtils.replaceSuffix(logFile.getPath, LogFileSuffix, IndexFileSuffix) + SwapFileSuffix)
+            val indexFile = new File(CoreUtils.replaceSuffix(logFile.getPath, LogFileSuffix, IndexFileSuffix) + SwapFileSuffix) // .index.swap
             val index = new OffsetIndex(indexFile, baseOffset = startOffset, maxIndexSize = config.maxIndexSize)
-            val timeIndexFile = new File(CoreUtils.replaceSuffix(logFile.getPath, LogFileSuffix, TimeIndexFileSuffix) + SwapFileSuffix)
+            val timeIndexFile = new File(CoreUtils.replaceSuffix(logFile.getPath, LogFileSuffix, TimeIndexFileSuffix) + SwapFileSuffix) // .timeindex.swap
             val timeIndex = new TimeIndex(timeIndexFile, baseOffset = startOffset, maxIndexSize = config.maxIndexSize)
             // 创建对应的 LogSegment 对象
             val swapSegment = new LogSegment(FileRecords.open(swapFile),
@@ -291,18 +295,23 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 
                 rollJitterMs = config.randomSegmentJitter,
                 time = time)
             info("Found log file %s from interrupted swap operation, repairing.".format(swapFile.getPath))
-            // 依据日志文件重建索引文件，同时验证日志文件中的消息的合法性
+            // 依据 log 文件重建索引文件，同时校验 log 文件中消息的合法性
             swapSegment.recover(config.maxMessageSize)
-            // 查找 swapSegment 对应的日志压缩前的 LogSegment 集合
-            val oldSegments = logSegments(swapSegment.baseOffset, swapSegment.nextOffset())
-            // 将 swapSegment 对象加入到 segments 中，将 oldSegments 中所有的 LogSegment 对象从 segments 中删除
-            // 并删除对应的日志文件和索引文件，最后移除文件的 ".swap" 后缀
-            replaceSegments(swapSegment, oldSegments.toSeq, isRecoveredSwapFile = true)
+            /*
+             * 查找 swapSegment 获取 [baseOffset, nextOffset] 区间对应的日志压缩前的 LogSegment 集合，
+             * 区间中的 LogSegment 数据都压缩到了 swapSegment 中
+             */
+            val oldSegments = this.logSegments(swapSegment.baseOffset, swapSegment.nextOffset())
+            /*
+             * 将 swapSegment 对象加入到 segments 中，将 oldSegments 中所有的 LogSegment 对象从 segments 中删除，
+             * 并删除对应的日志文件和索引文件，最后移除文件的 ".swap" 后缀
+             */
+            this.replaceSegments(swapSegment, oldSegments.toSeq, isRecoveredSwapFile = true)
         }
 
-        // 4. 如果 segments 为空，则需要创建一个 activeSegment
+        // 4. 后处理，如果对应 SkipList 为空，则新建一个空的 activeSegment，如果不为空则校验 recoveryPoint 之后数据的完整性
         if (logSegments.isEmpty) {
-            // no existing segments, create a new mutable segment beginning at offset 0
+            // 如果 SkipList 为空，则需要创建一个 activeSegment，保证 SkipList 能够正常操作
             segments.put(0L, new LogSegment(dir = dir,
                 startOffset = 0,
                 indexIntervalBytes = config.indexInterval,
@@ -313,9 +322,9 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 
                 initFileSize = this.initFileSize(),
                 preallocate = config.preallocate))
         } else {
-            // 如果 segments 不为空
+            // 如果 SkipList 不为空，则需要对其中的数据进行验证
             if (!dir.getAbsolutePath.endsWith(Log.DeleteDirSuffix)) {
-                // 处理 broker 异常关闭时到的数据异常，需要验证 [recoveryPoint, activeSegment] 中的所有消息，并移除验证失败的消息
+                // 处理 broker 异常关闭导致的数据异常，需要验证 [recoveryPoint, activeSegment] 中的所有消息，并移除验证失败的消息
                 this.recoverLog()
                 // reset the index size of the currently active log segment to allow more entries
                 activeSegment.index.resize(config.maxIndexSize)
@@ -329,25 +338,27 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 
     }
 
     private def recoverLog() {
-        // if we have the clean shutdown marker, skip recovery
+        // 如果 log 目录下包含 “.kafka_cleanshutdown”文件，则说明 broker 是正常关闭的
         if (hasCleanShutdownFile) {
-            this.recoveryPoint = activeSegment.nextOffset()
+            recoveryPoint = activeSegment.nextOffset()
             return
         }
 
-        // okay we need to actually recovery this log
-        val unflushed = logSegments(this.recoveryPoint, Long.MaxValue).iterator
+        /* 当前 broker 非正常关闭 */
+
+        // 获取 recoveryPoint 之后的 LogSegment 集合，如果存在数据异常，则移除这些 LogSegment
+        val unflushed = logSegments(recoveryPoint, Long.MaxValue).iterator
         while (unflushed.hasNext) {
             val curr = unflushed.next
             info("Recovering unflushed segment %d in log %s.".format(curr.baseOffset, name))
             val truncatedBytes =
                 try {
+                    // 遍历处理对应的 LogSegment 对象，依据日 log 文件重建索引文件，同时验证日志文件中数据的合法性
                     curr.recover(config.maxMessageSize)
                 } catch {
                     case _: InvalidOffsetException =>
                         val startOffset = curr.baseOffset
-                        warn("Found invalid offset during recovery for log " + dir.getName + ". Deleting the corrupt segment and " +
-                                "creating an empty one with starting offset " + startOffset)
+                        warn("Found invalid offset during recovery for log " + dir.getName + ". Deleting the corrupt segment and creating an empty one with starting offset " + startOffset)
                         curr.truncateTo(startOffset)
                 }
             if (truncatedBytes > 0) {
@@ -1135,6 +1146,9 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的目录，每个 
      * If the broker crashes, any .deleted files which may be left behind are deleted
      * on recovery in loadSegments().
      * </ol>
+     *
+     * 将 swapSegment 对象加入到 segments 中，将 oldSegments 中所有的 LogSegment 对象从 segments 中删除，
+     * 并删除对应的日志文件和索引文件，最后移除文件的 ".swap" 后缀
      *
      * @param newSegment          The new log segment to add to the log
      * @param oldSegments         The old log segments to delete from the log

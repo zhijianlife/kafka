@@ -47,7 +47,7 @@ object ConsumerGroupCommand extends Logging {
             CommandLineUtils.printUsageAndDie(opts.parser, "List all consumer groups, describe a consumer group, or delete consumer group info.")
 
         // should have exactly one action
-        val actions = Seq(opts.listOpt, opts.describeOpt, opts.deleteOpt).count(opts.options.has _)
+        val actions = Seq(opts.listOpt, opts.describeOpt, opts.deleteOpt).count(opts.options.has)
         if (actions != 1)
             CommandLineUtils.printUsageAndDie(opts.parser, "Command must include exactly one action: --list, --describe, --delete")
 
@@ -75,19 +75,19 @@ object ConsumerGroupCommand extends Logging {
                         printError(s"The consumer group '$groupId' does not exist.")
                     case Some(assignments) =>
                         if (opts.useOldConsumer)
-                            printAssignment(assignments, false)
+                            printAssignment(assignments, useNewConsumer = false)
                         else
                             state match {
                                 case Some("Dead") =>
                                     printError(s"Consumer group '$groupId' does not exist.")
                                 case Some("Empty") =>
                                     System.err.println(s"Consumer group '$groupId' has no active members.")
-                                    printAssignment(assignments, true)
+                                    printAssignment(assignments, useNewConsumer = true)
                                 case Some("PreparingRebalance") | Some("AwaitingSync") =>
                                     System.err.println(s"Warning: Consumer group '$groupId' is rebalancing.")
-                                    printAssignment(assignments, true)
+                                    printAssignment(assignments, useNewConsumer = true)
                                 case Some("Stable") =>
-                                    printAssignment(assignments, true)
+                                    printAssignment(assignments, useNewConsumer = true)
                                 case other =>
                                     // the control should never reach here
                                     throw new KafkaException(s"Expected a valid consumer group state, but found '${other.getOrElse("NONE")}'.")
@@ -246,7 +246,7 @@ object ConsumerGroupCommand extends Logging {
             val consumerTopicPartitions = consumerIdByTopicPartition groupBy {
                 _._2
             } map {
-                case (key, value) => (key, value.unzip._1.toArray)
+                case (key, value) => (key, value.keys.toArray)
             }
 
             // mapping of consumer id -> list of subscribed topics
@@ -389,7 +389,7 @@ object ConsumerGroupCommand extends Logging {
         private val adminClient = createAdminClient()
 
         // `consumer` is only needed for `describe`, so we instantiate it lazily
-        private var consumer: KafkaConsumer[String, String] = null
+        private var consumer: KafkaConsumer[String, String] = _
 
         def listGroups(): List[String] = {
             adminClient.listAllConsumerGroupsFlattened().map(_.groupId)
@@ -436,7 +436,7 @@ object ConsumerGroupCommand extends Logging {
         }
 
         protected def getLogEndOffset(topicPartition: TopicPartition): LogEndOffsetResult = {
-            val consumer = getConsumer()
+            val consumer = getConsumer
             consumer.assign(List(topicPartition).asJava)
             consumer.seekToEnd(List(topicPartition).asJava)
             val logEndOffset = consumer.position(topicPartition)
@@ -454,7 +454,7 @@ object ConsumerGroupCommand extends Logging {
             AdminClient.create(props)
         }
 
-        private def getConsumer() = {
+        private def getConsumer: KafkaConsumer[String, String] = {
             if (consumer == null)
                 consumer = createNewConsumer()
             consumer
