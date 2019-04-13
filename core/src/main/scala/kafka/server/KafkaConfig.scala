@@ -875,7 +875,7 @@ class KafkaConfig(val props: java.util.Map[_, _], doLog: Boolean) extends Abstra
     val logCleanerMinCompactionLagMs = getLong(KafkaConfig.LogCleanerMinCompactionLagMsProp)
     val logCleanerBackoffMs = getLong(KafkaConfig.LogCleanerBackoffMsProp)
     val logCleanerMinCleanRatio = getDouble(KafkaConfig.LogCleanerMinCleanRatioProp)
-    val logCleanerEnable = getBoolean(KafkaConfig.LogCleanerEnableProp)
+    val logCleanerEnable: lang.Boolean = getBoolean(KafkaConfig.LogCleanerEnableProp)
     val logIndexSizeMaxBytes = getInt(KafkaConfig.LogIndexSizeMaxBytesProp)
     val logIndexIntervalBytes = getInt(KafkaConfig.LogIndexIntervalBytesProp)
     val logDeleteDelayMs = getLong(KafkaConfig.LogDeleteDelayMsProp)

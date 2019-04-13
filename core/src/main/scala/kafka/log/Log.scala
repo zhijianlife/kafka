@@ -65,8 +65,8 @@ case class LogAppendInfo(var firstOffset: Long, // 第一条消息的 offset
                          var logAppendTime: Long, // 消息追加到 Log 的时间戳
                          sourceCodec: CompressionCodec, // 生产者使用的压缩方式
                          targetCodec: CompressionCodec, // 服务端使用的压缩方式
-                         shallowCount: Int, // 外层消息数
-                         validBytes: Int, // 验证的字节数
+                         shallowCount: Int, // 浅层消息数
+                         validBytes: Int, // 已验证的字节数
                          offsetsMonotonic: Boolean // 标识生产者为消息分配的内部 offset 是否是单调递增的
                         )
 
@@ -107,7 +107,7 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的 topic 分区目
 
     /**
      * 用于记录分配给当前消息的 offset，也是当前副本的 LEO:
-     * - messageOffset 记录了当前 Log 最后一个 offset 值
+     * - messageOffset 记录了当前 Log 下一条待追加消息的 offset 值
      * - segmentBaseOffset 记录了 activeSegment 对象的 baseOffset
      * - relativePositionInSegment 记录了 activeSegment 对象的大小
      */
@@ -396,34 +396,33 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的 topic 分区目
      * This method will generally be responsible for assigning offsets to the messages,
      * however if the assignOffsets=false flag is passed we will only check that the existing offsets are valid.
      *
-     * @param records       The log records to append
-     * @param assignOffsets Should the log assign offsets to this message set or blindly apply what it is given
+     * @param records       需要追加的消息数据
+     * @param assignOffsets 是否需要为消息分配 offset
      * @throws KafkaStorageException If the append fails due to an I/O error.
      * @return Information about the appended messages including the first and last offset.
      */
     def append(records: MemoryRecords, assignOffsets: Boolean = true): LogAppendInfo = {
-        // 解析、校验 records，封装成 LogAppendInfo 对象
+        // 1. 解析、校验待追加的消息数据，封装成 LogAppendInfo 对象
         val appendInfo = this.analyzeAndValidateRecords(records)
+        // 如果消息数为 0，则直接返回
+        if (appendInfo.shallowCount == 0) return appendInfo
 
-        // 如果外层消息数为 0，则直接返回
-        if (appendInfo.shallowCount == 0)
-            return appendInfo
-
-        // 将未通过验证的字节部分剔除
+        // 2. 剔除待追加消息中未通过验证的字节部分
         var validRecords = this.trimInvalidBytes(records, appendInfo)
 
         try {
-            // they are valid, insert them in the log
+            // 将待追加消息中剩余有效的字节追加到 Log 对象中
             lock synchronized {
 
-                // 如果需要分配 offset
+                // 3.1 如果指定需要分配 offset
                 if (assignOffsets) {
-                    // 获取当前 Log 最后一个 offset 值，以此开始向后分配 offset
+                    // 获取当前 Log 对象对应的最后一个 offset 值，以此开始向后分配 offset
                     val offset = new LongRef(nextOffsetMetadata.messageOffset)
+                    // 更新待追加消息的 firstOffset 为 Log 对象最后一个 offset 值
                     appendInfo.firstOffset = offset.value
                     val now = time.milliseconds
                     val validateAndOffsetAssignResult = try {
-                        // 进一步验证
+                        // 对消息（包括压缩后的）的 magic 值进行统一，验证数据完整性，并分配 offset，同时按要求更新消息的时间戳
                         LogValidator.validateMessagesAndAssignOffsets(
                             validRecords,
                             offset,
@@ -441,17 +440,16 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的 topic 分区目
                     validRecords = validateAndOffsetAssignResult.validatedRecords
                     appendInfo.maxTimestamp = validateAndOffsetAssignResult.maxTimestamp
                     appendInfo.offsetOfMaxTimestamp = validateAndOffsetAssignResult.shallowOffsetOfMaxTimestamp
+                    // 更新待追加消息的 lastOffset 值
                     appendInfo.lastOffset = offset.value - 1
                     // 如果时间戳类型为 LOG_APPEND_TIME，则修改时间戳
                     if (config.messageTimestampType == TimestampType.LOG_APPEND_TIME)
                         appendInfo.logAppendTime = now
 
-                    // 如果在 validateMessagesAndAssignOffsets 中修改了消息的长度，则需要重新验证，防止消息过长
+                    // 如果在 validateMessagesAndAssignOffsets 操作时修改了消息的长度，则需要重新验证，防止消息过长
                     if (validateAndOffsetAssignResult.messageSizeMaybeChanged) {
                         for (logEntry <- validRecords.shallowEntries.asScala) {
                             if (logEntry.sizeInBytes > config.maxMessageSize) {
-                                // we record the original message set size instead of the trimmed size
-                                // to be consistent with pre-compression bytesRejectedRate recording
                                 BrokerTopicStats.getBrokerTopicStats(topicPartition.topic).bytesRejectedRate.mark(records.sizeInBytes)
                                 BrokerTopicStats.getBrokerAllTopicsStats.bytesRejectedRate.mark(records.sizeInBytes)
                                 throw new RecordTooLargeException(
@@ -460,43 +458,43 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的 topic 分区目
                         }
                     }
                 }
-                // 不需要分配 offset
+                // 3.2 不需要分配 offset
                 else {
-                    // we are taking the offsets we are given
+                    // 如果消息的 offset 不是单调递增，或者消息的 firstOffset 小于 Log 中记录的下一条消息 offset，则说明 appendInfo 非法
                     if (!appendInfo.offsetsMonotonic || appendInfo.firstOffset < nextOffsetMetadata.messageOffset)
                         throw new IllegalArgumentException("Out of order offsets found in " + records.deepEntries.asScala.map(_.offset))
                 }
 
-                // check messages set size may be exceed config.segmentSize
+                // 4. 校验待追加消息的长度，保证不超过了单个 LogSegment 所允许的最大长度（对应 segment.bytes 配置）
                 if (validRecords.sizeInBytes > config.segmentSize) {
                     throw new RecordBatchTooLargeException(
                         "Message set size is %d bytes which exceeds the maximum configured segment size of %s.".format(validRecords.sizeInBytes, config.segmentSize))
                 }
 
-                // 获取或创建 activeSegment
+                // 5. 获取 activeSegment 对象，如果需要则创建新的 activeSegment 对象
                 val segment = this.maybeRoll(
                     messagesSize = validRecords.sizeInBytes,
                     maxTimestampInMessages = appendInfo.maxTimestamp,
                     maxOffsetInMessages = appendInfo.lastOffset)
 
 
-                // 往 activeSegment 追加消息
-                segment.append(firstOffset = appendInfo.firstOffset,
+                // 6. 往 activeSegment 追加消息
+                segment.append(
+                    firstOffset = appendInfo.firstOffset,
                     largestOffset = appendInfo.lastOffset,
                     largestTimestamp = appendInfo.maxTimestamp,
                     shallowOffsetOfMaxTimestamp = appendInfo.offsetOfMaxTimestamp,
                     records = validRecords)
 
-                // 更新 LEO 中记录的当前 Log 最后一个 offset 值
+                // 7. 更新 LEO 中记录的当前 Log 最后一个 offset 值
                 this.updateLogEndOffset(appendInfo.lastOffset + 1)
 
                 trace("Appended message set to log %s with first offset: %d, next offset: %d, and messages: %s"
                         .format(this.name, appendInfo.firstOffset, nextOffsetMetadata.messageOffset, validRecords))
 
-                // 如果刷盘时间间隔达到阈值，则执行刷盘
+                // 8. 如果刷盘时间间隔达到阈值（对应 flush.messages 配置），则执行刷盘
                 if (unflushedMessages >= config.flushInterval)
-                // 将 [recoveryPoint, logEndOffset) 之间的数据刷盘
-                    this.flush()
+                    this.flush() // 将 [recoveryPoint, logEndOffset) 之间的数据刷盘
 
                 appendInfo
             }
@@ -518,19 +516,19 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的 topic 分区目
      * <li> Last offset in the message set
      * <li> Number of messages
      * <li> Number of valid bytes
-     * <li> Whether the offsets are monotonically increasing
+     * <li> Whether the offsets are monotonically increasing （单调递增的）
      * <li> Whether any compression codec is used (if many are used, then the last one is given)
      * </ol>
      */
     private def analyzeAndValidateRecords(records: MemoryRecords): LogAppendInfo = {
-        var shallowMessageCount = 0 // 外层消息数
+        var shallowMessageCount = 0 // 消息条数
         var validBytesCount = 0 // 通过验证的消息字节数
         var firstOffset = -1L // 第一条消息的 offset
         var lastOffset = -1L // 最后一条消息的 offset
         var sourceCodec: CompressionCodec = NoCompressionCodec // 生产者使用的压缩方式
         var monotonic = true // 标识生产者为消息分配的内部 offset 是否是单调递增的
-        var maxTimestamp = Record.NO_TIMESTAMP
-        var offsetOfMaxTimestamp = -1L
+        var maxTimestamp = Record.NO_TIMESTAMP // 消息的最大时间戳
+        var offsetOfMaxTimestamp = -1L // 最大时间戳消息对应的 offset
 
         // 基于浅层迭代器迭代，对于压缩的消息不会解压缩
         for (entry <- records.shallowEntries.asScala) {
@@ -538,7 +536,7 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的 topic 分区目
             if (firstOffset < 0)
                 firstOffset = entry.offset
 
-            // 如果是单调递增的话，则在遍历过程中 lastOffset 应该使用小于当前的 offset
+            // 如果是单调递增的话，则在遍历过程中 lastOffset 应该始终小于当前的 offset
             if (lastOffset >= entry.offset)
                 monotonic = false
 
@@ -547,7 +545,7 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的 topic 分区目
 
             val record = entry.record
 
-            // 如果消息的大小大于允许的最大值，则抛出异常
+            // 如果待追加的消息长度大于允许的最大值（对应 max.message.bytes 配置），则抛出异常
             val messageSize = entry.sizeInBytes
             if (messageSize > config.maxMessageSize) {
                 BrokerTopicStats.getBrokerTopicStats(topicPartition.topic).bytesRejectedRate.mark(records.sizeInBytes)
@@ -558,13 +556,13 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的 topic 分区目
             // CRC 校验
             record.ensureValid()
 
-            // 记录当前消息集合中时间戳最大的消息，及其对应的 offset
+            // 记录当前消息集合中时间戳最大的消息，及其 offset
             if (record.timestamp > maxTimestamp) {
                 maxTimestamp = record.timestamp
                 offsetOfMaxTimestamp = lastOffset
             }
 
-            // 外层消息数加 1
+            // 浅层消息数加 1
             shallowMessageCount += 1
             // 更新已验证的字节数
             validBytesCount += messageSize
@@ -575,7 +573,7 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的 topic 分区目
                 sourceCodec = messageCodec
         }
 
-        // 解析服务端使用的压缩方式
+        // 解析服务端使用的压缩方式（对应 compression.type 配置）
         val targetCodec = BrokerCompressionCodec.getTargetCompressionCodec(config.compressionType, sourceCodec)
 
         // 封装成 LogAppendInfo 对象返回
@@ -584,8 +582,6 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的 topic 分区目
     }
 
     /**
-     * Trim any invalid bytes from the end of this message set (if there are any)
-     *
      * 剔除未通过验证的字节
      *
      * @param records The records to trim
@@ -593,14 +589,17 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的 topic 分区目
      * @return A trimmed message set. This may be the same as what was passed in or it may not.
      */
     private def trimInvalidBytes(records: MemoryRecords, info: LogAppendInfo): MemoryRecords = {
+        // 获取已验证的字节数
         val validBytes = info.validBytes
         if (validBytes < 0)
             throw new CorruptRecordException(
                 "Illegal length of message set " + validBytes + " Message set cannot be appended to log. Possible causes are corrupted produce requests")
+        // 所有的字节都是已验证的，则直接返回
         if (validBytes == records.sizeInBytes) {
             records
-        } else {
-            // trim invalid bytes
+        }
+        // 存在未通过验证的字节，对这些异常字节进行截断
+        else {
             val validByteBuffer = records.buffer.duplicate()
             validByteBuffer.limit(validBytes)
             MemoryRecords.readableRecords(validByteBuffer)
@@ -610,6 +609,8 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的 topic 分区目
     /**
      * Read messages from the log.
      *
+     * 从 Log 对象中读取指定 offset 之后的消息
+     *
      * @param startOffset   The offset to begin reading at
      * @param maxLength     The maximum number of bytes to read
      * @param maxOffset     The offset to read up to, exclusive. (i.e. this offset NOT included in the resulting message set)
@@ -617,65 +618,62 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的 topic 分区目
      * @throws OffsetOutOfRangeException If startOffset is beyond the log end offset or before the base offset of the first segment.
      * @return The fetch data information including fetch starting offset metadata and messages read.
      */
-    def read(startOffset: Long,
-             maxLength: Int,
-             maxOffset: Option[Long] = None,
+    def read(startOffset: Long, // 读取消息的起始 offset
+             maxLength: Int, // 读取消息的最大字节数
+             maxOffset: Option[Long] = None, // 读取消息的结束 offset
              minOneMessage: Boolean = false): FetchDataInfo = {
 
         trace("Reading %d bytes from offset %d in log %s of length %d bytes".format(maxLength, startOffset, name, size))
 
         // 将 nextOffsetMetadata 保存成局部变量，从而避免加锁带来的竞态条件
         val currentNextOffsetMetadata = nextOffsetMetadata
+        // 获取 Log 本地记录的下一条待追加消息消息对应的 offset
         val next = currentNextOffsetMetadata.messageOffset
+        // 边界检查
         if (startOffset == next)
             return FetchDataInfo(currentNextOffsetMetadata, MemoryRecords.EMPTY)
 
-        // 查找 baseOffset 小于 startOffset 且最大的 LogSegment
+        // 查找 baseOffset 小于等于 startOffset 且最大的 LogSegment 对象
         var entry = segments.floorEntry(startOffset)
 
-        // attempt to read beyond the log end offset is an error
+        // 边界检查，Log 对象中记录的最后一条消息的真实 offset 应该是 next-1，next 指的是下一条追加消息的 offset
         if (startOffset > next || entry == null)
             throw new OffsetOutOfRangeException("Request for offset %d but we only have log segments in the range %s to %d.".format(startOffset, segments.firstKey, next))
 
-        // Do the read on the segment with a base offset less than the target offset
-        // but if that segment doesn't contain any messages with an offset greater than that
-        // continue to read from successive segments until we get some messages or we reach the end of the log
         while (entry != null) {
-            // If the fetch occurs on the active segment, there might be a race condition where two fetch requests occur after
-            // the message is appended but before the nextOffsetMetadata is updated. In that case the second fetch may
-            // cause OffsetOutOfRangeException. To solve that, we cap the reading up to exposed position instead of the log
-            // end of the active segment.
+            // 获取读取的最大物理地址
             val maxPosition = {
-                // 如果当前读取的是 activeSegment，这里的逻辑重点参考一下书本
+                // 如果当前读取的是 activeSegment 对象
                 if (entry == segments.lastEntry) {
+                    // 从 nextOffsetMetadata 对象中获取 activeSegment 对应的最大物理地址
                     val exposedPos = nextOffsetMetadata.relativePositionInSegment.toLong
-                    // Check the segment again in case a new segment has just rolled out.
+                    /*
+                     * 如果期间正好创建了一个新的 activeSegment，那么这里拿到的应该是上一任 activeSegment 对象，
+                     * 它已经不再活跃了，可以直接读取到结尾
+                     */
                     if (entry != segments.lastEntry)
-                    // New log segment has rolled out, we can read up to the file end.
-                    // 期间正好写线程执行了 roll 操作，当前 activeSegment 已经被刷盘，不在活跃了，所以可以直接读取到结尾
                         entry.getValue.size
+                    // 否则，直接返回 exposedPos，如果这里读取到 LogSegment 结尾的话，可能会出现 OffsetOutOfRangeException 异常
                     else
                         exposedPos
-                } else {
-                    // 如果当前是非 activeSegment，则直接读取到结尾
+                }
+                // 如果当前是非 activeSegment 对象，则直接读取到对应 LogSegment 的结尾
+                else {
                     entry.getValue.size
                 }
             }
 
-            // 调用 LogSegment.read 方法读取消息
+            // 调用 LogSegment#read 方法读取消息
             val fetchInfo = entry.getValue.read(startOffset, maxOffset, maxLength, maxPosition, minOneMessage)
             if (fetchInfo == null) {
-                // 如果没有读取到消息，则读取下一个 LogSegment
+                // 如果没有读取到消息，则尝试读取下一个 LogSegment 对象
                 entry = segments.higherEntry(entry.getKey)
             } else {
                 return fetchInfo
             }
         }
 
-        // okay we are beyond the end of the last segment with no data fetched although the start offset is in range,
-        // this can happen when all messages with offset larger than start offsets have been deleted.
-        // In this case, we will return the empty set with log end offset metadata
-        // 没有找到 startOffset 之后的消息
+        // 没有读取到 startOffset 之后的消息
         FetchDataInfo(nextOffsetMetadata, MemoryRecords.EMPTY)
     }
 
@@ -845,46 +843,45 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的 topic 分区目
     /**
      * Roll the log over to a new empty log segment if necessary.
      *
+     * logSegment will be rolled if one of the following conditions met:
+     * <ol>
+     * <li> The logSegment is full
+     * <li> The maxTime has elapsed since the timestamp of first message in the segment
+     * (or since the create time if the first message does not have a timestamp)
+     * <li> The index is full
+     * </ol>
+     *
+     * 创建新的 activeSegment 的条件有：
+     * 1. 当前 activeSegment 在追加本次消息之后，长度超过 LogSegment 允许的最大值
+     * 2. 当前 activeSegment 的存活时间超过了允许的最大时间
+     * 3. 索引文件（index 和 timeindex）满了
+     *
      * @param messagesSize           The messages set size in bytes
      * @param maxTimestampInMessages The maximum timestamp in the messages.
-     *                               logSegment will be rolled if one of the following conditions met
-     *                               <ol>
-     *                               <li> The logSegment is full
-     *                               <li> The maxTime has elapsed since the timestamp of first message in the segment (or since the create time if
-     *                               the first message does not have a timestamp)
-     *                               <li> The index is full
-     *                               </ol>
      * @return The currently active segment after (perhaps) rolling to a new segment
      */
-    private def maybeRoll(messagesSize: Int,
-                          maxTimestampInMessages: Long,
-                          maxOffsetInMessages: Long): LogSegment = {
+    private def maybeRoll(messagesSize: Int, // 待追加的消息长度
+                          maxTimestampInMessages: Long, // 消息中的最大时间戳
+                          maxOffsetInMessages: Long // 消息的 lastOffset
+                         ): LogSegment = {
+        // 获取当前的 activeSegment
         val segment = activeSegment
         val now = time.milliseconds
         val reachedRollMs = segment.timeWaitedForRoll(now, maxTimestampInMessages) > config.segmentMs - segment.rollJitterMs
-        if (segment.size > config.segmentSize - messagesSize // 当前 activeSegment 大小加上本次带追加的消息的大小，超过允许的 LogSegment 的最大长度
-                || (segment.size > 0 && reachedRollMs) // 当前 activeSegment 的活跃时间已将超过了允许的最大活跃时间
-                || segment.index.isFull // 索引文件满了
-                || segment.timeIndex.isFull
-                || !segment.canConvertToRelativeOffset(maxOffsetInMessages)) {
+        if (segment.size > config.segmentSize - messagesSize // 当前 activeSegment 在追加本次消息之后，长度超过 LogSegment 允许的最大值
+                || (segment.size > 0 && reachedRollMs) // 当前 activeSegment 的存活时间超过了允许的最大时间
+                || segment.index.isFull || segment.timeIndex.isFull // 索引文件满了
+                || !segment.canConvertToRelativeOffset(maxOffsetInMessages)) // 当前消息的 lastOffset 相对于 baseOffset 超过了 Integer.MAX_VALUE
+        {
             debug(s"Rolling new log segment in $name (log_size = ${segment.size}/${config.segmentSize}}, " +
                     s"index_size = ${segment.index.entries}/${segment.index.maxEntries}, " +
                     s"time_index_size = ${segment.timeIndex.entries}/${segment.timeIndex.maxEntries}, " +
                     s"inactive_time_ms = ${segment.timeWaitedForRoll(now, maxTimestampInMessages)}/${config.segmentMs - segment.rollJitterMs}).")
 
-            /*
-             * maxOffsetInMessages - Integer.MAX_VALUE is a heuristic value for the first offset in the set of messages.
-             * Since the offset in messages will not differ by more than Integer.MAX_VALUE, this is guaranteed <= the real
-             * first offset in the set. Determining the true first offset in the set requires decompression, which the follower
-             * is trying to avoid during log append. Prior behavior assigned new baseOffset = logEndOffset from old segment.
-             * This was problematic in the case that two consecutive messages differed in offset by Integer.MAX_VALUE.toLong + 2 or more.
-             * In this case, the prior behavior would roll a new log segment whose base offset was too low to contain the next message.
-             * This edge case is possible when a replica is recovering a highly compacted topic from scratch.
-             *
-             * 创建新的 activeSegment
-             */
+            // 创建新的 activeSegment
             this.roll(maxOffsetInMessages - Integer.MAX_VALUE)
         } else {
+            // 不需要创建新的 activeSegment，直接返回
             segment
         }
     }
@@ -893,11 +890,14 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的 topic 分区目
      * Roll the log over to a new active segment starting with the current logEndOffset.
      * This will trim the index to the exact size of the number of entries it currently contains.
      *
+     * 创建新的 activeSegment，并将上任的 activeSegment 中的数据落盘
+     *
      * @return The newly rolled segment
      */
     def roll(expectedNextOffset: Long = 0): LogSegment = {
         val start = time.nanoseconds
         lock synchronized {
+            // 获取 LEO
             val newOffset = Math.max(expectedNextOffset, logEndOffset)
             val logFile = Log.logFile(dir, newOffset) // 对应的 log 文件
             val indexFile = indexFilename(dir, newOffset) // 对应的 index 文件
@@ -933,18 +933,16 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的 topic 分区目
                 initFileSize = initFileSize(),
                 preallocate = config.preallocate)
 
-            // 添加新的 activeSegment 到 segments 跳跃表中的 baseOffset 位置
+            // 添加新的 activeSegment 到 segments 跳跃表中
             val prev = this.addSegment(segment)
-
-            // 如果对应 baseOffset 位置已经存在 LogSegment，则抛出异常
+            // 如果对应位置已经存在 LogSegment，则抛出异常
             if (prev != null)
                 throw new KafkaException("Trying to roll a new log segment for topic partition %s with start offset %d while it already exists.".format(name, newOffset))
 
-            // 更新 nextOffsetMetadata，主要是更新 segmentBaseOffset 和 relativePositionInSegment
+            // 因为有新的 activeSegment 创建，所以更新 Log 中记录的 activeSegment 的 baseOffset，及其物理地址
             this.updateLogEndOffset(nextOffsetMetadata.messageOffset)
 
-            // schedule an asynchronous flush of the old segment
-            // 执行 flush 操作
+            // 执行 flush 操作，将上任 activeSegment 的数据落盘
             scheduler.schedule("flush-log", () => this.flush(newOffset))
 
             info("Rolled new log segment for '" + name + "' in %.0f ms.".format((System.nanoTime - start) / (1000.0 * 1000.0)))
@@ -990,12 +988,14 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的 topic 分区目
 
     /**
      * Completely delete this log directory and all contents from the file system with no delay
-     *
      */
     private[log] def delete() {
         lock synchronized {
+            // 遍历 SkipList 中每个 LogSegment 对应的 log、index 和 timeindex 文件
             logSegments.foreach(_.delete())
+            // 清空 SkipList 对象
             segments.clear()
+            // 删除 log 目录及其目录下的所有文件和目录
             Utils.delete(dir)
         }
     }

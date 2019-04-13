@@ -47,6 +47,8 @@ object OffsetCheckpoint {
  * topic-default 1 117
  * topic-default 7 140
  * topic-default 6 121
+ *
+ * 管理 cleaner-offset-checkpoint 文件
  */
 class OffsetCheckpoint(val file: File) extends Logging {
 

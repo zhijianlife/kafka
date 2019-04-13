@@ -72,12 +72,12 @@ import scala.collection._
  * @param logs    The pool of logs
  * @param time    A way to control the passage of time
  */
-class LogCleaner(val config: CleanerConfig,
-                 val logDirs: Array[File],
-                 val logs: Pool[TopicPartition, Log],
+class LogCleaner(val config: CleanerConfig, // cleaner 线程相关配置
+                 val logDirs: Array[File], // 对应 log.dirs 相关配置
+                 val logs: Pool[TopicPartition, Log], // TP 与对应 Log 对象之间的映射关系
                  time: Time = Time.SYSTEM) extends Logging with KafkaMetricsGroup {
 
-    /* for managing the state of partitions being cleaned. package-private to allow access in tests */
+    /** 负责管理每个 Log 的压缩状态，以及维护和更新 cleaner checkpoint 信息 */
     private[log] val cleanerManager = new LogCleanerManager(logDirs, logs)
 
     /* a throttle used to limit the I/O of all the cleaner threads to a user-specified maximum rate */
@@ -174,7 +174,7 @@ class LogCleaner(val config: CleanerConfig,
      * @return A boolean indicating whether the work has completed before timeout
      */
     def awaitCleaned(topicPartition: TopicPartition, offset: Long, maxWaitMs: Long = 60000L): Boolean = {
-        def isCleaned = cleanerManager.allCleanerCheckpoints.get(topicPartition).fold(false)(_ >= offset)
+        def isCleaned: Boolean = cleanerManager.allCleanerCheckpoints.get(topicPartition).fold(false)(_ >= offset)
 
         var remainingWaitMs = maxWaitMs
         while (!isCleaned && remainingWaitMs > 0) {
@@ -197,9 +197,11 @@ class LogCleaner(val config: CleanerConfig,
         if (config.dedupeBufferSize / config.numThreads > Int.MaxValue)
             warn("Cannot use more than 2G of cleaner buffer space per cleaner thread, ignoring excess buffer space...")
 
-        val cleaner = new Cleaner(id = threadId,
-            offsetMap = new SkimpyOffsetMap(memory = math.min(config.dedupeBufferSize / config.numThreads, Int.MaxValue).toInt,
-                hashAlgorithm = config.hashAlgorithm),
+        /** 真正执行清理操作的对象 */
+        val cleaner = new Cleaner(
+            id = threadId,
+            offsetMap = new SkimpyOffsetMap(
+                memory = math.min(config.dedupeBufferSize / config.numThreads, Int.MaxValue).toInt, hashAlgorithm = config.hashAlgorithm),
             ioBufferSize = config.ioBufferSize / config.numThreads / 2,
             maxIoBufferSize = config.maxMessageSize,
             dupBufferLoadFactor = config.dedupeBufferLoadFactor,
@@ -220,7 +222,7 @@ class LogCleaner(val config: CleanerConfig,
          * The main loop for the cleaner thread
          */
         override def doWork() {
-            cleanOrSleep()
+            this.cleanOrSleep()
         }
 
         override def shutdown(): Unit = {
@@ -233,35 +235,42 @@ class LogCleaner(val config: CleanerConfig,
          * Clean a log if there is a dirty log available, otherwise sleep for a bit
          */
         private def cleanOrSleep() {
-            // 获取需要执行压缩的 Log
+            // 获取需要进行日志清理的 LogToClean 对象
             val cleaned = cleanerManager.grabFilthiestCompactedLog(time) match {
-                case None => // 没有需要压缩的 Log
+                // 没有需要压缩的 LogToClean 对象
+                case None =>
                     false
+                // 执行日志压缩操作
                 case Some(cleanable) =>
-                    // 执行日志压缩操作
                     var endOffset = cleanable.firstDirtyOffset
                     try {
+                        // 调用 Cleaner#clean 方法执行清理工作
                         val (nextDirtyOffset, cleanerStats) = cleaner.clean(cleanable)
                         recordStats(cleaner.id, cleanable.log.name, cleanable.firstDirtyOffset, endOffset, cleanerStats)
                         endOffset = nextDirtyOffset
                     } catch {
                         case _: LogCleaningAbortedException => // task can be aborted, let it go.
                     } finally {
+                        // 对 Log 的清理状态进行转换，同时更新 cleaner-offset-checkpoint 文件
                         cleanerManager.doneCleaning(cleanable.topicPartition, cleanable.log.dir.getParentFile, endOffset)
                     }
                     true
             }
+
+            // 获取所有启用 compact 和 delete 清理策略的 Log，并将其对应的 topic 分区状态设置为 LogCleaningInProgress
             val deletable: Iterable[(TopicPartition, Log)] = cleanerManager.deletableLogs()
             deletable.foreach {
                 case (topicPartition, log) =>
                     try {
+                        // 对设置了清理策略为 delete 的 LogSegment 执行删除操作
                         log.deleteOldSegments()
                     } finally {
+                        // 移除这些 topic 分区对应的 LogCleaningInProgress 状态
                         cleanerManager.doneDeleting(topicPartition)
                     }
             }
 
-            // 如果没有需要执行压缩的 Log，则休息一会后继续重试
+            // 如果没有需要执行清理的 LogToClean 对象，则休息一会后继续重试
             if (!cleaned)
                 backOffWaitLatch.await(config.backOffMs, TimeUnit.MILLISECONDS)
         }
@@ -315,12 +324,13 @@ class LogCleaner(val config: CleanerConfig,
  */
 private[log] class Cleaner(val id: Int,
                            val offsetMap: OffsetMap,
-                           ioBufferSize: Int,
-                           maxIoBufferSize: Int,
-                           dupBufferLoadFactor: Double,
+                           ioBufferSize: Int, // 指定读写 LogSegment 的 ByteBuffer 大小
+                           maxIoBufferSize: Int, // 指定消息的最大长度
+                           dupBufferLoadFactor: Double, // 指定 SkimpyOffsetMap 的最大占用比例
                            throttler: Throttler,
                            time: Time,
-                           checkDone: TopicPartition => Unit) extends Logging {
+                           checkDone: TopicPartition => Unit // 检测 Log 的清理状态
+                          ) extends Logging {
 
     override val loggerName: String = classOf[LogCleaner].getName
 
@@ -348,27 +358,31 @@ private[log] class Cleaner(val id: Int,
 
         // build the offset map
         info("Building offset map for %s...".format(cleanable.log.name))
+        // 1. 清理操作的 offset 上界
         val upperBoundOffset = cleanable.firstUncleanableOffset
-        buildOffsetMap(log, cleanable.firstDirtyOffset, upperBoundOffset, offsetMap, stats)
+
+        // 2. 遍历处理待清理区间的 LogSegment，填充 offsetMap 对象
+        this.buildOffsetMap(log, cleanable.firstDirtyOffset, upperBoundOffset, offsetMap, stats)
         val endOffset = offsetMap.latestOffset + 1
         stats.indexDone()
 
         // figure out the timestamp below which it is safe to remove delete tombstones
         // this position is defined to be a configurable time beneath the last modified time of the last clean segment
-        val deleteHorizonMs =
-        log.logSegments(0, cleanable.firstDirtyOffset).lastOption match {
+        // 3. 计算可以安全删除的标识
+        val deleteHorizonMs = log.logSegments(0, cleanable.firstDirtyOffset).lastOption match {
             case None => 0L
-            case Some(seg) => seg.lastModified - log.config.deleteRetentionMs
+            case Some(seg) => seg.lastModified - log.config.deleteRetentionMs // delete.retention.ms
         }
 
         // determine the timestamp up to which the log will be cleaned
         // this is the lower of the last active segment and the compaction lag
         val cleanableHorizonMs = log.logSegments(0, cleanable.firstUncleanableOffset).lastOption.map(_.lastModified).getOrElse(0L)
 
-        // group the segments and clean the groups
-        info("Cleaning log %s (cleaning prior to %s, discarding tombstones prior to %s)...".format(log.name, new Date(cleanableHorizonMs), new Date(deleteHorizonMs)))
-        for (group <- groupSegmentsBySize(log.logSegments(0, endOffset), log.config.segmentSize, log.config.maxIndexSize, cleanable.firstUncleanableOffset))
-            cleanSegments(log, group, offsetMap, deleteHorizonMs, stats)
+        // 4. 对需要清理的 LogSegment 进行分组，并以组为单位执行清理操作
+        info("Cleaning log %s (cleaning prior to %s, discarding tombstones prior to %s)..."
+                .format(log.name, new Date(cleanableHorizonMs), new Date(deleteHorizonMs)))
+        for (group <- this.groupSegmentsBySize(log.logSegments(0, endOffset), log.config.segmentSize, log.config.maxIndexSize, cleanable.firstUncleanableOffset))
+            this.cleanSegments(log, group, offsetMap, deleteHorizonMs, stats)
 
         // record buffer utilization
         stats.bufferUtilization = offsetMap.utilization
@@ -392,10 +406,12 @@ private[log] class Cleaner(val id: Int,
                                    map: OffsetMap,
                                    deleteHorizonMs: Long,
                                    stats: CleanerStats) {
-        // create a new segment with the suffix .cleaned appended to both the log and index name
+        // 创建 log 文件对应的“.cleaned”文件
         val logFile = new File(segments.head.log.file.getPath + Log.CleanedFileSuffix)
         logFile.delete()
+        // 创建 index 文件对应的“.cleaned”文件
         val indexFile = new File(segments.head.index.file.getPath + Log.CleanedFileSuffix)
+        // 创建 timeindex 文件对应的“.cleaned”文件
         val timeIndexFile = new File(segments.head.timeIndex.file.getPath + Log.CleanedFileSuffix)
         indexFile.delete()
         timeIndexFile.delete()
@@ -548,16 +564,20 @@ private[log] class Cleaner(val id: Int,
     }
 
     /**
-     * Group the segments in a log into groups totaling less than a given size. the size is enforced separately for the log data and the index data.
-     * We collect a group of such segments together into a single
-     * destination segment. This prevents segment sizes from shrinking too much.
+     * Group the segments in a log into groups totaling less than a given size.
+     * the size is enforced separately for the log data and the index data.
+     * We collect a group of such segments together into a single destination segment.
+     * This prevents segment sizes from shrinking too much.
      *
      * @param segments     The log segments to group
      * @param maxSize      the maximum size in bytes for the total of all log data in a group
      * @param maxIndexSize the maximum size in bytes for the total of all index data in a group
      * @return A list of grouped segments
      */
-    private[log] def groupSegmentsBySize(segments: Iterable[LogSegment], maxSize: Int, maxIndexSize: Int, firstUncleanableOffset: Long): List[Seq[LogSegment]] = {
+    private[log] def groupSegmentsBySize(segments: Iterable[LogSegment],
+                                         maxSize: Int,
+                                         maxIndexSize: Int,
+                                         firstUncleanableOffset: Long): List[Seq[LogSegment]] = {
         var grouped = List[List[LogSegment]]()
         var segs = segments.toList
         while (segs.nonEmpty) {
@@ -619,16 +639,16 @@ private[log] class Cleaner(val id: Int,
                                     map: OffsetMap,
                                     stats: CleanerStats) {
         map.clear()
+        // 获取 [start, end) 之间的 LogSegment 对象
         val dirty = log.logSegments(start, end).toBuffer
         info("Building offset map for log %s for %d segments in offset range [%d, %d).".format(log.name, dirty.size, start, end))
 
-        // Add all the cleanable dirty segments. We must take at least map.slots * load_factor,
-        // but we may be able to fit more (if there is lots of duplication in the dirty section of the log)
-        var full = false
+        var full = false // 标识 map 是否被填充满了
         for (segment <- dirty if !full) {
-            checkDone(log.topicPartition)
-
-            full = buildOffsetMapForSegment(log.topicPartition, segment, map, start, log.config.maxMessageSize, stats)
+            // 检查当前分区的压缩状态，确保不是 LogCleaningAborted 状态
+            this.checkDone(log.topicPartition)
+            // 处理当前 LogSegment 中的消息集合，以消息的 key 作为 key，对应的 offset 作为 value，填充 map
+            full = this.buildOffsetMapForSegment(log.topicPartition, segment, map, start, log.config.maxMessageSize, stats)
             if (full)
                 debug("Offset map is full, %d segments fully mapped, segment with base offset %d is partially mapped".format(dirty.indexOf(segment), segment.baseOffset))
         }
@@ -650,34 +670,43 @@ private[log] class Cleaner(val id: Int,
                                          maxLogMessageSize: Int,
                                          stats: CleanerStats): Boolean = {
         var position = segment.index.lookup(start).position
+        // 当前 map 的最大容量
         val maxDesiredMapSize = (map.slots * this.dupBufferLoadFactor).toInt
+        // 遍历处理 LogSegment 中的消息
         while (position < segment.log.sizeInBytes) {
-            checkDone(topicPartition)
+            // 再次校验当前分区的状态
+            this.checkDone(topicPartition)
             readBuffer.clear()
             segment.log.readInto(readBuffer, position)
+            // 读取消息集合
             val records = MemoryRecords.readableRecords(readBuffer)
             throttler.maybeThrottle(records.sizeInBytes)
 
             val startPosition = position
+            // 深层迭代遍历消息集合
             for (entry <- records.deepEntries.asScala) {
                 val message = entry.record
+                // 仅处理持有 key，且 offset 位于 start 之后的消息
                 if (message.hasKey && entry.offset >= start) {
                     if (map.size < maxDesiredMapSize)
+                    // 将消息的 key 及其 offset 放入 map 中
                         map.put(message.key, entry.offset)
                     else
+                    // 标识 map 已满
                         return true
                 }
                 stats.indexMessagesRead(1)
             }
             val bytesRead = records.validBytes
+            // 向前移动地址
             position += bytesRead
             stats.indexBytesRead(bytesRead)
-
-            // if we didn't read even one complete message, our read buffer may be too small
+            // 如果 position 未向前移动，则说明没有读取到一个完整的消息，需要对 buffer 进行扩容
             if (position == startPosition)
-                growBuffers(maxLogMessageSize)
-        }
-        restoreBuffers()
+                this.growBuffers(maxLogMessageSize)
+        } // ~ end while
+        // 重置 buffer
+        this.restoreBuffers()
         false
     }
 }
@@ -728,22 +757,27 @@ private class CleanerStats(time: Time = Time.SYSTEM) {
         endTime = time.milliseconds
     }
 
-    def elapsedSecs = (endTime - startTime) / 1000.0
+    def elapsedSecs: Double = (endTime - startTime) / 1000.0
 
-    def elapsedIndexSecs = (mapCompleteTime - startTime) / 1000.0
+    def elapsedIndexSecs: Double = (mapCompleteTime - startTime) / 1000.0
 
 }
 
 /**
  * Helper class for a log, its topic/partition, the first cleanable position, and the first uncleanable dirty position
  */
-private case class LogToClean(topicPartition: TopicPartition, log: Log, firstDirtyOffset: Long, uncleanableOffset: Long) extends Ordered[LogToClean] {
-    val cleanBytes = log.logSegments(-1, firstDirtyOffset).map(_.size).sum
+private case class LogToClean(topicPartition: TopicPartition, // Log 文件对应的 TP 对象
+                              log: Log,
+                              firstDirtyOffset: Long, // 清理区间的起始 offset
+                              uncleanableOffset: Long // 清理区间的结束 offset （不包括）
+                             ) extends Ordered[LogToClean] {
+
+    val cleanBytes: Long = log.logSegments(-1, firstDirtyOffset).map(_.size).sum
     private[this] val firstUncleanableSegment = log.logSegments(uncleanableOffset, log.activeSegment.baseOffset).headOption.getOrElse(log.activeSegment)
-    val firstUncleanableOffset = firstUncleanableSegment.baseOffset
-    val cleanableBytes = log.logSegments(firstDirtyOffset, math.max(firstDirtyOffset, firstUncleanableOffset)).map(_.size).sum
-    val totalBytes = cleanBytes + cleanableBytes
-    val cleanableRatio = cleanableBytes / totalBytes.toDouble
+    val firstUncleanableOffset: Long = firstUncleanableSegment.baseOffset
+    val cleanableBytes: Long = log.logSegments(firstDirtyOffset, math.max(firstDirtyOffset, firstUncleanableOffset)).map(_.size).sum
+    val totalBytes: Long = cleanBytes + cleanableBytes
+    val cleanableRatio: Double = cleanableBytes / totalBytes.toDouble
 
     override def compare(that: LogToClean): Int = math.signum(this.cleanableRatio - that.cleanableRatio).toInt
 }

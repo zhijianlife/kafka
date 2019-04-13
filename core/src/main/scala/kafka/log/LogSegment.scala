@@ -119,8 +119,8 @@ class LogSegment(val log: FileRecords, // log 文件对象
                largestOffset: Long, // 待追加消息中的最大 offset
                largestTimestamp: Long, // 待追加消息中的最大时间戳
                shallowOffsetOfMaxTimestamp: Long, // 最大时间戳消息对应的 offset
-               records: MemoryRecords) // 待追加的消息
-    {
+               records: MemoryRecords // 待追加的消息
+              ) {
         if (records.sizeInBytes > 0) {
             trace("Inserting %d bytes at offset %d at position %d with largest timestamp %d at shallow offset %d"
                     .format(records.sizeInBytes, firstOffset, log.sizeInBytes(), largestTimestamp, shallowOffsetOfMaxTimestamp))
