@@ -140,6 +140,7 @@ public class MemoryRecords extends AbstractRecords {
 
         ByteBufferOutputStream bufferOutputStream = new ByteBufferOutputStream(destinationBuffer);
 
+        // 浅层迭代
         for (ByteBufferLogEntry shallowEntry : fromShallowEntries) {
             bytesRead += shallowEntry.sizeInBytes();
 
@@ -157,6 +158,7 @@ public class MemoryRecords extends AbstractRecords {
                 Record deepRecord = deepEntry.record();
                 messagesRead += 1;
 
+                // 使用消息过滤器，过滤掉不应该保留的消息
                 if (filter.shouldRetain(deepEntry)) {
                     // Check for log corruption due to KAFKA-4298. If we find it, make sure that we overwrite
                     // the corrupted entry with correct data.
@@ -168,12 +170,14 @@ public class MemoryRecords extends AbstractRecords {
                         maxOffset = deepEntry.offset();
                     }
 
+                    // 将当前消息记录到需要保留的集合中
                     retainedEntries.add(deepEntry);
                 } else {
                     writeOriginalEntry = false;
                 }
             }
 
+            // 如果整个消息都需要被保留，直接将消息写入到 buffer 中
             if (writeOriginalEntry) {
                 // There are no messages compacted out and no message format conversion, write the original message set back
                 bufferOutputStream.write(shallowEntry.buffer());
@@ -184,12 +188,15 @@ public class MemoryRecords extends AbstractRecords {
                     maxTimestamp = shallowRecord.timestamp();
                     shallowOffsetOfMaxTimestamp = shallowEntry.offset();
                 }
-            } else if (!retainedEntries.isEmpty()) {
+            }
+            // 如果只有部分消息需要被保留，则需要对深层消息进行重新压缩后写入 buffer
+            else if (!retainedEntries.isEmpty()) {
                 LogEntry firstEntry = retainedEntries.iterator().next();
                 long firstOffset = firstEntry.offset();
                 byte magic = firstEntry.record().magic();
 
-                MemoryRecordsBuilder builder = new MemoryRecordsBuilder(bufferOutputStream, magic,
+                MemoryRecordsBuilder builder = new MemoryRecordsBuilder(
+                        bufferOutputStream, magic,
                         shallowRecord.compressionType(), shallowRecord.timestampType(),
                         firstOffset, shallowRecord.timestamp(), bufferOutputStream.buffer().remaining());
                 for (LogEntry entry : retainedEntries)
@@ -203,8 +210,7 @@ public class MemoryRecords extends AbstractRecords {
 
                 if (filteredSizeInBytes > shallowEntry.sizeInBytes() && filteredSizeInBytes > maxRecordSize) {
                     log.warn("Record batch from {} with first offset {} exceeded max record size {} after cleaning " +
-                                    "(new size is {}). Consumers with version earlier than 0.10.1.0 may need to " +
-                                    "increase their fetch sizes.",
+                                    "(new size is {}). Consumers with version earlier than 0.10.1.0 may need to increase their fetch sizes.",
                             partition, firstOffset, maxRecordSize, filteredSizeInBytes);
                 }
 
@@ -222,10 +228,10 @@ public class MemoryRecords extends AbstractRecords {
                 return new FilterResult(outputBuffer, messagesRead, bytesRead, messagesRetained, bytesRetained,
                         maxOffset, maxTimestamp, shallowOffsetOfMaxTimestamp);
             }
-        }
+        } // ~ end for
 
-        return new FilterResult(destinationBuffer, messagesRead, bytesRead, messagesRetained, bytesRetained,
-                maxOffset, maxTimestamp, shallowOffsetOfMaxTimestamp);
+        return new FilterResult(destinationBuffer, messagesRead, bytesRead,
+                messagesRetained, bytesRetained, maxOffset, maxTimestamp, shallowOffsetOfMaxTimestamp);
     }
 
     /**

@@ -157,8 +157,7 @@ abstract class AbstractIndex[K, V](@volatile var file: File,
     }
 
     /**
-     * Trim this segment to fit just the valid entries, deleting all trailing unwritten bytes from
-     * the file.
+     * Trim this segment to fit just the valid entries, deleting all trailing unwritten bytes from the file.
      */
     def trimToValidSize() {
         inLock(lock) {

@@ -1147,7 +1147,7 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的 topic 分区目
      * on recovery in loadSegments().
      * </ol>
      *
-     * 将 swapSegment 对象加入到 segments 中，将 oldSegments 中所有的 LogSegment 对象从 segments 中删除，
+     * 将 newSegment 对象加入到 segments 中，将 oldSegments 中所有的 LogSegment 对象从 segments 中删除，
      * 并删除对应的日志文件和索引文件，最后移除文件的 ".swap" 后缀
      *
      * @param newSegment          The new log segment to add to the log
