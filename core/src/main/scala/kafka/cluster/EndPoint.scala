@@ -64,7 +64,10 @@ object EndPoint {
  *
  * 封装监听的服务器对应的 host、port，以及网络协议等信息
  */
-case class EndPoint(host: String, port: Int, listenerName: ListenerName, securityProtocol: SecurityProtocol) {
+case class EndPoint(host: String,
+                    port: Int,
+                    listenerName: ListenerName,
+                    securityProtocol: SecurityProtocol) {
     def connectionString: String = {
         val hostport = if (host == null) ":" + port else Utils.formatAddress(host, port)
         listenerName.value + "://" + hostport

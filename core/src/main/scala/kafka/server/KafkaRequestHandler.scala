@@ -28,7 +28,7 @@ import org.apache.kafka.common.utils.{Time, Utils}
 /**
  * A thread that answers kafka requests.
  *
- * 负责从 RequestChannel 中获取请求，并调用 KafkaApis 的 handle 方法进行处理
+ * 负责从请求队列中获取请求，并调用 KafkaApis 的 handle 方法进行处理
  */
 class KafkaRequestHandler(id: Int,
                           brokerId: Int,
@@ -44,10 +44,6 @@ class KafkaRequestHandler(id: Int,
             try {
                 var req: RequestChannel.Request = null
                 while (req == null) {
-                    // We use a single meter for aggregate idle percentage for the thread pool.
-                    // Since meter is calculated as total_recorded_value / time_window and
-                    // time_window is independent of the number of threads, each recorded idle
-                    // time should be discounted by # threads.
                     val startSelectTime = time.nanoseconds
                     // 从请求队列中获取请求
                     req = requestChannel.receiveRequest(300)
@@ -55,14 +51,14 @@ class KafkaRequestHandler(id: Int,
                     aggregateIdleMeter.mark(idleTime / totalHandlerThreads)
                 }
 
-                // 如果是 AllDone 请求，则结束当前线程
+                // 如果是 AllDone 请求，则退出当前线程
                 if (req eq RequestChannel.AllDone) {
                     debug("Kafka request handler %d on broker %d received shut down command".format(id, brokerId))
                     return
                 }
                 req.requestDequeueTimeMs = time.milliseconds
                 trace("Kafka request handler %d on broker %d handling request %s".format(id, brokerId, req))
-                // 处理请求，将响应写会对应 Processor 的 responseQueue 中，并唤醒 Processor 线程
+                // 处理请求，将响应写回到对应 Processor 的响应队列中，并唤醒 Processor 线程
                 apis.handle(req)
             } catch {
                 case e: Throwable => error("Exception when handling request", e)
