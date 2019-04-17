@@ -130,7 +130,7 @@ class SystemTimer(executorName: String,
             try {
                 while (bucket != null) {
                     // 推进时间轮表针
-                    timingWheel.advanceClock(bucket.getExpiration())
+                    timingWheel.advanceClock(bucket.getExpiration)
 
                     /*
                      * 尝试将 bucket 中的任务重新添加到时间轮，此过程不一定是将任务提交执行，

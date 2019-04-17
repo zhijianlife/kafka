@@ -44,12 +44,16 @@ private[timer] class TimerTaskList(taskCounter: AtomicInteger) extends Delayed {
     }
 
     // Get the bucket's expiration time
-    def getExpiration(): Long = {
+    def getExpiration: Long = {
         expiration.get()
     }
 
-    // Apply the supplied function to each of tasks in this list
-    def foreach(f: (TimerTask) => Unit): Unit = {
+    /**
+     * Apply the supplied function to each of tasks in this list
+     *
+     * @param f
+     */
+    def foreach(f: TimerTask => Unit): Unit = {
         synchronized {
             var entry = root.next
             while (entry ne root) {
@@ -62,7 +66,11 @@ private[timer] class TimerTaskList(taskCounter: AtomicInteger) extends Delayed {
         }
     }
 
-    // Add a timer task entry to this list
+    /**
+     * Add a timer task entry to this list
+     *
+     * @param timerTaskEntry
+     */
     def add(timerTaskEntry: TimerTaskEntry): Unit = {
         var done = false
         while (!done) {
@@ -89,7 +97,11 @@ private[timer] class TimerTaskList(taskCounter: AtomicInteger) extends Delayed {
         }
     }
 
-    // Remove the specified timer task entry from this list
+    /**
+     * Remove the specified timer task entry from this list
+     *
+     * @param timerTaskEntry
+     */
     def remove(timerTaskEntry: TimerTaskEntry): Unit = {
         synchronized {
             timerTaskEntry.synchronized {
@@ -105,8 +117,12 @@ private[timer] class TimerTaskList(taskCounter: AtomicInteger) extends Delayed {
         }
     }
 
-    // Remove all task entries and apply the supplied function to each of them
-    def flush(f: (TimerTaskEntry) => Unit): Unit = {
+    /**
+     * Remove all task entries and apply the supplied function to each of them
+     *
+     * @param f
+     */
+    def flush(f: TimerTaskEntry => Unit): Unit = {
         synchronized {
             var head = root.next
             while (head ne root) {

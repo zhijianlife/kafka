@@ -39,7 +39,7 @@ class KafkaRequestHandler(id: Int,
                           time: Time) extends Runnable with Logging {
     this.logIdent = "[Kafka Request Handler " + id + " on Broker " + brokerId + "], "
 
-    def run() {
+    override def run() {
         while (true) {
             try {
                 var req: RequestChannel.Request = null
