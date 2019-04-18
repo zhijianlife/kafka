@@ -40,7 +40,7 @@ class TimerTest {
         }
     }
 
-    private[this] var timer: Timer = null
+    private[this] var timer: Timer = _
 
     @Before
     def setup() {
@@ -105,6 +105,6 @@ class TimerTest {
 
         latches.foreach { latch => latch.await() }
 
-        assertEquals("output should match", ids.sorted, output.toSeq)
+        assertEquals("output should match", ids.sorted, output)
     }
 }

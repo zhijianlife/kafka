@@ -421,7 +421,7 @@ class DelayedOperationPurgatory[T <: DelayedOperation](purgatoryName: String,
 
             purged
         }
-    }
+    } // ~ end of Watchers
 
     def advanceClock(timeoutMs: Long) {
         // 尝试推进时间轮表针
@@ -447,7 +447,7 @@ class DelayedOperationPurgatory[T <: DelayedOperation](purgatoryName: String,
     }
 
     /**
-     * A background reaper to expire delayed operations that have timed out
+     * A background reaper（收割者） to expire delayed operations that have timed out
      */
     private class ExpiredOperationReaper extends ShutdownableThread("ExpirationReaper-%d".format(brokerId), false) {
 
