@@ -25,6 +25,7 @@ import kafka.utils.threadsafe
 import org.apache.kafka.common.utils.{Time, Utils}
 
 trait Timer {
+
     /**
      * Add a new task to this executor. It will be executed after the task's delay
      * (beginning from the time of submission)
@@ -65,20 +66,21 @@ trait Timer {
  */
 @threadsafe
 class SystemTimer(executorName: String,
-                  tickMs: Long = 1,
-                  wheelSize: Int = 20,
+                  tickMs: Long = 1, // 默认时间格时间为 1 毫秒
+                  wheelSize: Int = 20, // 默认时间格大小为 20
                   startMs: Long = Time.SYSTEM.hiResClockMs) extends Timer {
 
-    /** 线程池 */
+    /** 定时任务执行线程池 */
     private[this] val taskExecutor = Executors.newFixedThreadPool(1, new ThreadFactory() {
-        def newThread(runnable: Runnable): Thread =
-            Utils.newThread("executor-" + executorName, runnable, false)
+        def newThread(runnable: Runnable): Thread = Utils.newThread("executor-" + executorName, runnable, false)
     })
 
     /** 各个层级时间轮共用的队列 */
     private[this] val delayQueue = new DelayQueue[TimerTaskList]()
+
     /** 各个层级时间轮共用的任务个数计数器 */
     private[this] val taskCounter = new AtomicInteger(0)
+
     /** 层级时间轮中最底层的时间轮 */
     private[this] val timingWheel = new TimingWheel(
         tickMs = tickMs,
@@ -88,15 +90,20 @@ class SystemTimer(executorName: String,
         delayQueue
     )
 
-    /** 用来同步时间轮表针 currentTime 修改的读写锁 */
+    /** 用来同步修改时间轮指针的读写锁 */
     private[this] val readWriteLock = new ReentrantReadWriteLock()
     private[this] val readLock = readWriteLock.readLock()
     private[this] val writeLock = readWriteLock.writeLock()
 
+    /**
+     * 添加定时任务
+     *
+     * @param timerTask the task to add
+     */
     def add(timerTask: TimerTask): Unit = {
         readLock.lock()
         try {
-            // 将 TimerTask 封装成 TimerTaskEntry
+            // 将 TimerTask 封装成 TimerTaskEntry，并添加到时间轮中
             this.addTimerTaskEntry(new TimerTaskEntry(timerTask, timerTask.delayMs + Time.SYSTEM.hiResClockMs))
         } finally {
             readLock.unlock()
@@ -106,35 +113,31 @@ class SystemTimer(executorName: String,
     private def addTimerTaskEntry(timerTaskEntry: TimerTaskEntry): Unit = {
         // 往时间轮中添加定时任务，同时检测添加的任务是否已经过期
         if (!timingWheel.add(timerTaskEntry)) {
-            // 任务过期或已经被取消，则将任务提交执行
+            // 任务过期但未被取消，则立即提交执行
             if (!timerTaskEntry.cancelled)
                 taskExecutor.submit(timerTaskEntry.timerTask)
         }
     }
 
-    /** 将 TimerTaskEntry 重新提交到时间轮中 */
-    private[this] val reinsert = (timerTaskEntry: TimerTaskEntry) => addTimerTaskEntry(timerTaskEntry)
+    /** 将定时任务重新添加到时间轮中 */
+    private[this] val reinsert = (timerTaskEntry: TimerTaskEntry) => this.addTimerTaskEntry(timerTaskEntry)
 
     /**
-     * Advances the clock if there is an expired bucket.
-     * If there isn't any expired bucket when called, waits up to timeoutMs before giving up.
-     *
-     * 推进时间轮表针，同时处理 TimerTaskList 中到期的任务
+     * 推进时间轮指针，同时处理时间格中到期的任务
      */
     def advanceClock(timeoutMs: Long): Boolean = {
-        // 阻塞等待获取 TimerTaskList
+        // 超时等待获取时间格对象
         var bucket = delayQueue.poll(timeoutMs, TimeUnit.MILLISECONDS)
-        // 如果有 TimerTaskList 到期
+        // 如果有到期的时间格
         if (bucket != null) {
             writeLock.lock()
             try {
                 while (bucket != null) {
-                    // 推进时间轮表针
+                    // 推进时间轮指针
                     timingWheel.advanceClock(bucket.getExpiration)
-
                     /*
-                     * 尝试将 bucket 中的任务重新添加到时间轮，此过程不一定是将任务提交执行，
-                     * 对于未到期的任务只是从原来的时间轮降级到下层的时间轮继续等待
+                     * 遍历处理当前时间格中的任务列表，提交执行到期但未被取消的任务，
+                     * 对于未到期的任务重新添加到时间轮中继续等待被执行，期间可能会对任务在层级上执行降级
                      */
                     bucket.flush(reinsert)
                     bucket = delayQueue.poll()

@@ -17,10 +17,13 @@
 
 package kafka.utils.timer
 
+/**
+ * 定时任务
+ */
 trait TimerTask extends Runnable {
 
-    /** 记录当前任务的延迟时长 */
-    val delayMs: Long // timestamp in millisecond
+    /** 当前任务的延迟时长（单位：毫秒） */
+    val delayMs: Long
 
     private[this] var timerTaskEntry: TimerTaskEntry = _
 
@@ -33,11 +36,10 @@ trait TimerTask extends Runnable {
 
     private[timer] def setTimerTaskEntry(entry: TimerTaskEntry): Unit = {
         synchronized {
-            // if this timerTask is already held by an existing timer task entry,
-            // we will remove such an entry first.
-            if (timerTaskEntry != null && timerTaskEntry != entry)
+            // 如果对应的 entry 之前被添加过，则先移除之前的添加记录
+            if (timerTaskEntry != null && timerTaskEntry != entry) {
                 timerTaskEntry.remove()
-
+            }
             timerTaskEntry = entry
         }
     }

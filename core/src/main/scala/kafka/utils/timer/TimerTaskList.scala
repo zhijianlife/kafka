@@ -25,31 +25,31 @@ import org.apache.kafka.common.utils.Time
 
 import scala.math._
 
+/**
+ * 环形双向链表，使用 TimerTaskEntry 封装定时任务，对应时间轮中的一格
+ *
+ * @param taskCounter 任务计数器，记录各层级时间轮中的任务总数
+ */
 @threadsafe
 private[timer] class TimerTaskList(taskCounter: AtomicInteger) extends Delayed {
 
-    // TimerTaskList forms a doubly linked cyclic list using a dummy root entry
-    // root.next points to the head
-    // root.prev points to the tail
-    private[this] val root = new TimerTaskEntry(null, -1)
+    private[this] val root = new TimerTaskEntry(null, -1) // 根节点
     root.next = root
     root.prev = root
 
+    /** 记录当前时间格的超时时间 */
     private[this] val expiration = new AtomicLong(-1L)
 
-    // Set the bucket's expiration time
-    // Returns true if the expiration time is changed
     def setExpiration(expirationMs: Long): Boolean = {
         expiration.getAndSet(expirationMs) != expirationMs
     }
 
-    // Get the bucket's expiration time
     def getExpiration: Long = {
         expiration.get()
     }
 
     /**
-     * Apply the supplied function to each of tasks in this list
+     * 遍历处理当前格子中的是任务
      *
      * @param f
      */
@@ -58,38 +58,35 @@ private[timer] class TimerTaskList(taskCounter: AtomicInteger) extends Delayed {
             var entry = root.next
             while (entry ne root) {
                 val nextEntry = entry.next
-
+                // 如果对应的任务未被取消，则应用给定的函数 f
                 if (!entry.cancelled) f(entry.timerTask)
-
                 entry = nextEntry
             }
         }
     }
 
     /**
-     * Add a timer task entry to this list
+     * 添加 entry 到当前时间格中
      *
      * @param timerTaskEntry
      */
     def add(timerTaskEntry: TimerTaskEntry): Unit = {
         var done = false
         while (!done) {
-            // Remove the timer task entry if it is already in any other list
-            // We do this outside of the sync block below to avoid deadlocking.
-            // We may retry until timerTaskEntry.list becomes null.
+            // 从格子中移除当前任务（如果存在的话）
             timerTaskEntry.remove()
 
             synchronized {
                 timerTaskEntry.synchronized {
                     if (timerTaskEntry.list == null) {
-                        // put the timer task entry to the end of the list. (root.prev points to the tail entry)
+                        // 将当前任务添加到时间格的尾部
                         val tail = root.prev
                         timerTaskEntry.next = root
                         timerTaskEntry.prev = tail
                         timerTaskEntry.list = this
                         tail.next = timerTaskEntry
                         root.prev = timerTaskEntry
-                        taskCounter.incrementAndGet()
+                        taskCounter.incrementAndGet() // 任务计数加 1
                         done = true
                     }
                 }
@@ -98,7 +95,7 @@ private[timer] class TimerTaskList(taskCounter: AtomicInteger) extends Delayed {
     }
 
     /**
-     * Remove the specified timer task entry from this list
+     * 从时间格中移除指定的任务
      *
      * @param timerTaskEntry
      */
@@ -111,14 +108,14 @@ private[timer] class TimerTaskList(taskCounter: AtomicInteger) extends Delayed {
                     timerTaskEntry.next = null
                     timerTaskEntry.prev = null
                     timerTaskEntry.list = null
-                    taskCounter.decrementAndGet()
+                    taskCounter.decrementAndGet() // 任务计数减 1
                 }
             }
         }
     }
 
     /**
-     * Remove all task entries and apply the supplied function to each of them
+     * 遍历移除所有的定时任务，并对任务应用函数 f
      *
      * @param f
      */
@@ -126,22 +123,26 @@ private[timer] class TimerTaskList(taskCounter: AtomicInteger) extends Delayed {
         synchronized {
             var head = root.next
             while (head ne root) {
-                remove(head)
-                f(head)
+                remove(head) // 移除任务
+                f(head) // 应用函数 f
                 head = root.next
             }
             expiration.set(-1L)
         }
     }
 
+    /**
+     * 获取剩余的过期时间
+     *
+     * @param unit
+     * @return
+     */
     def getDelay(unit: TimeUnit): Long = {
         unit.convert(max(getExpiration - Time.SYSTEM.hiResClockMs, 0), TimeUnit.MILLISECONDS)
     }
 
     def compareTo(d: Delayed): Int = {
-
         val other = d.asInstanceOf[TimerTaskList]
-
         if (getExpiration < other.getExpiration) -1
         else if (getExpiration > other.getExpiration) 1
         else 0
@@ -149,6 +150,12 @@ private[timer] class TimerTaskList(taskCounter: AtomicInteger) extends Delayed {
 
 }
 
+/**
+ * 封装定时任务
+ *
+ * @param timerTask    对应的定时任务
+ * @param expirationMs 过期时间戳
+ */
 private[timer] class TimerTaskEntry(val timerTask: TimerTask, val expirationMs: Long) extends Ordered[TimerTaskEntry] {
 
     @volatile
@@ -156,8 +163,9 @@ private[timer] class TimerTaskEntry(val timerTask: TimerTask, val expirationMs: 
     var next: TimerTaskEntry = _
     var prev: TimerTaskEntry = _
 
-    // if this timerTask is already held by an existing timer task entry,
-    // setTimerTaskEntry will remove it.
+    /**
+     * 封装定时任务，如果之前添加过，则先移除历史记录
+     */
     if (timerTask != null) timerTask.setTimerTaskEntry(this)
 
     def cancelled: Boolean = {
@@ -166,9 +174,11 @@ private[timer] class TimerTaskEntry(val timerTask: TimerTask, val expirationMs: 
 
     def remove(): Unit = {
         var currentList = list
-        // If remove is called when another thread is moving the entry from a task entry list to another,
-        // this may fail to remove the entry due to the change of value of list. Thus, we retry until the list becomes null.
-        // In a rare case, this thread sees null and exits the loop, but the other thread insert the entry to another list later.
+        /*
+         * If remove is called when another thread is moving the entry from a task entry list to another,
+         * this may fail to remove the entry due to the change of value of list. Thus, we retry until the list becomes null.
+         * In a rare case, this thread sees null and exits the loop, but the other thread insert the entry to another list later.
+         */
         while (currentList != null) {
             currentList.remove(this)
             currentList = list
