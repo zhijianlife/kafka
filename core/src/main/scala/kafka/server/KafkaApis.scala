@@ -387,7 +387,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         authorizer.forall(_.authorize(session, operation, resource))
 
     /**
-     * Handle a produce request
+     * 处理 ProduceRequest 请求
      */
     def handleProducerRequest(request: RequestChannel.Request) {
         val produceRequest = request.body.asInstanceOf[ProduceRequest]
