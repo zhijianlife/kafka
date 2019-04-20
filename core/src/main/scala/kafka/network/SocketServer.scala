@@ -54,7 +54,7 @@ class SocketServer(val config: KafkaConfig,
                    val time: Time,
                    val credentialProvider: CredentialProvider) extends Logging with KafkaMetricsGroup {
 
-    /** 封装服务器对应的多张网卡信息，kafka 可以同时监听这些 IP 和端口，每个 EndPoint 对应一个 Acceptor */
+    /** 封装服务器对应的多张网卡，kafka 可以同时监听这些 IP 和端口，每个 EndPoint 对应一个 Acceptor */
     private val endpoints: Map[ListenerName, EndPoint] = config.listeners.map(l => l.listenerName -> l).toMap
     /** Processor 对应的线程数 */
     private val numProcessorThreads = config.numNetworkThreads
@@ -62,19 +62,19 @@ class SocketServer(val config: KafkaConfig,
     private val totalProcessorThreads = numProcessorThreads * endpoints.size
     /** 请求队列中缓存的最大请求个数 */
     private val maxQueuedRequests = config.queuedMaxRequests
-    /** 每个 IP 上能够创建的最大连接数 */
+    /** 每个 IP 允许创建的最大连接数 */
     private val maxConnectionsPerIp = config.maxConnectionsPerIp
-    /** 针对特定 IP 指定的能够创建的最大连接数，会覆盖 maxConnectionsPerIp 配置 */
+    /** 针对特定 IP 指定的允许创建的最大连接数，会覆盖 maxConnectionsPerIp 配置 */
     private val maxConnectionsPerIpOverrides = config.maxConnectionsPerIpOverrides
 
     this.logIdent = "[Socket Server on Broker " + config.brokerId + "], "
 
-    /** Processor 线程与 Handler 线程之间交换数据的队列 */
+    /** Processor 线程与 Handler 线程之间交换数据的通道 */
     val requestChannel = new RequestChannel(totalProcessorThreads, maxQueuedRequests)
 
     /** Acceptor 对象集合，每个 EndPoint 对应一个 Acceptor */
     private[network] val acceptors = mutable.Map[EndPoint, Acceptor]()
-    /** Processor 对象集合，包含所有 EndPoint 对应的 Processor 对象 */
+    /** Processor 对象集合，封装所有的 Processor 对象 */
     private val processors = new Array[Processor](totalProcessorThreads)
     /** 用于控制每个 IP 上的最大连接数 */
     private var connectionQuotas: ConnectionQuotas = _
@@ -91,6 +91,7 @@ class SocketServer(val config: KafkaConfig,
     def startup() {
         synchronized {
 
+            // 创建控制 IP 最大连接数的 ConnectionQuotas 对象
             connectionQuotas = new ConnectionQuotas(maxConnectionsPerIp, maxConnectionsPerIpOverrides)
 
             // 指定 socket send buffer 的大小（对应 socket.send.buffer.bytes 配置）
@@ -114,13 +115,14 @@ class SocketServer(val config: KafkaConfig,
                 for (i <- processorBeginIndex until processorEndIndex)
                     processors(i) = this.newProcessor(i, connectionQuotas, listenerName, securityProtocol)
 
-                // 为当前 EndPoint 创建一个 Acceptor 对象
+                // 为当前 EndPoint 创建并绑定一个 Acceptor 对象
                 val acceptor = new Acceptor(endpoint, sendBufferSize, recvBufferSize, brokerId,
                     processors.slice(processorBeginIndex, processorEndIndex), connectionQuotas)
-                // 记录 EndPoint 与 Acceptor 之间的映射关系
                 acceptors.put(endpoint, acceptor)
+
                 // 启动 Acceptor 线程
                 Utils.newThread(s"kafka-socket-acceptor-$listenerName-$securityProtocol-${endpoint.port}", acceptor, false).start()
+
                 // 主线程等待 Acceptor 线程启动完成
                 acceptor.awaitStartup()
 
@@ -303,17 +305,17 @@ private[kafka] abstract class AbstractServerThread(connectionQuotas: ConnectionQ
  *
  * Thread that accepts and configures new connections. There is one of these per endpoint.
  */
-private[kafka] class Acceptor(val endPoint: EndPoint,
-                              val sendBufferSize: Int,
-                              val recvBufferSize: Int,
-                              brokerId: Int,
-                              processors: Array[Processor],
-                              connectionQuotas: ConnectionQuotas)
-        extends AbstractServerThread(connectionQuotas) with KafkaMetricsGroup {
+private[kafka] class Acceptor(val endPoint: EndPoint, // 对应的网卡信息
+                              val sendBufferSize: Int, // socket send buffer size
+                              val recvBufferSize: Int, // socket receive buffer size
+                              brokerId: Int, // broker id
+                              processors: Array[Processor], // 绑定的 Processor 集合
+                              connectionQuotas: ConnectionQuotas // 控制 IP 连接数的对象
+                             ) extends AbstractServerThread(connectionQuotas) with KafkaMetricsGroup {
 
-    /** 创建 NIO Selector 对象 */
+    /** NIO Selector */
     private val nioSelector = NSelector.open()
-    /** 创建 ServerSocketChannel 对象 */
+    /** ServerSocketChannel 对象，监听对应网卡的指定端口 */
     val serverChannel: ServerSocketChannel = this.openServerSocket(endPoint.host, endPoint.port)
 
     synchronized {
@@ -331,7 +333,7 @@ private[kafka] class Acceptor(val endPoint: EndPoint,
     def run() {
         // 注册监听 OP_ACCEPT 事件
         serverChannel.register(nioSelector, SelectionKey.OP_ACCEPT)
-        // 标记当前线程启动完成
+        // 标记当前线程启动完成，以便 SocketServer 能够继续为另外的网卡创建对应的 Acceptor
         this.startupComplete()
         try {
             var currentProcessor = 0 // 当前生效的 processor 编号

@@ -213,10 +213,10 @@ object RequestChannel extends Logging {
  * @param queueSize     请求队列大小
  */
 class RequestChannel(val numProcessors: Int, // Processor 数目
-                     val queueSize: Int // 请求队列的最大长度
+                     val queueSize: Int // 请求队列的大小
                     ) extends KafkaMetricsGroup {
 
-    /** 响应监听器列表，用于在 Handler 往响应队列中防止响应时唤醒对应的 Processor */
+    /** 响应监听器列表，当 Handler 往响应队列写回响应时唤醒对应的 Processor 进行处理 */
     private var responseListeners: List[Int => Unit] = Nil
 
     /** 请求队列 */
