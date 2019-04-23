@@ -472,9 +472,9 @@ private[kafka] class Processor(val id: Int,
         override def toString: String = s"$localHost:$localPort-$remoteHost:$remotePort"
     }
 
-    /** 缓存当前 Processor 待处理的 SocketChannel 对象 */
+    /** 记录分配给当前 Processor 的待处理的 SocketChannel 对象 */
     private val newConnections = new ConcurrentLinkedQueue[SocketChannel]()
-    /** 缓存未发送给客户端的响应，由于客户端不会进行确认，所以服务端在发送响应成功之后即将其移除 */
+    /** 缓存未发送给客户端的响应，由于客户端不会进行确认，所以服务端在发送成功之后会将其移除 */
     private val inflightResponses = mutable.Map[String, RequestChannel.Response]()
 
     private val metricTags = Map("networkProcessor" -> id.toString).asJava
@@ -504,31 +504,34 @@ private[kafka] class Processor(val id: Int,
         this.startupComplete()
         while (isRunning) {
             try {
-                // 1. 遍历从队首获取缓存的 SocketChannel 对象，注册 OP_READ 事件
+                // 1. 遍历队列获取分配给当前 Processor 的 SocketChannel 对象，注册 OP_READ 事件
                 this.configureNewConnections()
 
                 // 2. 遍历处理当前 Processor 的响应队列，依据响应类型进行处理
                 this.processNewResponses()
 
-                // 3. 读取并发送之前缓存的响应给客户端
+                // 3. 发送之前缓存的响应给客户端
                 this.poll()
 
                 /*
+                 * 4.
                  * 遍历处理 poll 操作放置在 Selector 的 completedReceives 队列中的请求，
                  * 封装请求信息为 Request 对象，并记录到请求队列中，等待 Handler 线程处理，
-                 * 同时标记当前 KSelector 暂时不再接收数据
+                 * 同时标记当前 Selector 暂时不再接收新的请求
                  */
                 this.processCompletedReceives()
 
                 /*
-                 * 遍历处理 poll 操作放置在 KSelector 的 completedSends 队列中的请求，
-                 * 将其中 inflightResponses 集合中移除，并标记当前 KSelector 继续读取数据
+                 * 5.
+                 * 遍历处理 poll 操作放置在 Selector 的 completedSends 队列中的请求，
+                 * 将其从 inflightResponses 集合中移除，并标记当前 Selector 可以继续读取数据
                  */
                 this.processCompletedSends()
 
                 /*
-                 * 遍历处理 poll 操作放置在 KSelector 的 disconnected 集合中的断开的连接，
-                 * 将连接对应的所有响应从 inflightResponses 中移除，同时更新记录的连接数
+                 * 6.
+                 * 遍历处理 poll 操作放置在 Selector 的 disconnected 集合中的断开的连接，
+                 * 将连接对应的所有响应从 inflightResponses 中移除，同时更新对应的连接数
                  */
                 this.processDisconnected()
             } catch {
@@ -554,10 +557,8 @@ private[kafka] class Processor(val id: Int,
             try {
                 // 依据响应类型对响应进行处理
                 curr.responseAction match {
-                    // 暂时没有响应需要发送，如果对应的通道未被关闭，则继续注册 OP_READ 事件
+                    // 暂时没有响应需要发送，如果对应的通道未被关闭，则继续注册 OP_READ 事件读取请求数据
                     case RequestChannel.NoOpAction =>
-                        // There is no response to send to the client,
-                        // we need to read more pipelined requests that are sitting in the server's socket buffer
                         curr.request.updateRequestMetrics()
                         trace("Socket server received empty response to send, registering for read: " + curr)
                         val channelId = curr.request.connectionId
@@ -575,7 +576,7 @@ private[kafka] class Processor(val id: Int,
                         this.close(selector, curr.request.connectionId)
                 }
             } finally {
-                // 获取缓存的下一个响应
+                // 获取下一个待处理的响应
                 curr = requestChannel.receiveResponse(id)
             }
         }
@@ -642,7 +643,7 @@ private[kafka] class Processor(val id: Int,
                     securityProtocol = securityProtocol)
                 // 将请求对象放入请求队列中，等待 Handler 线程处理
                 requestChannel.sendRequest(req)
-                // 取消注册的 OP_READ 事件，处理期间不再读取数据
+                // 取消注册的 OP_READ 事件，处理期间不再接收新的请求（即不读取请求对应的数据）
                 selector.mute(receive.source)
             } catch {
                 case e@(_: InvalidRequestException | _: SchemaException) =>
@@ -664,7 +665,7 @@ private[kafka] class Processor(val id: Int,
                 throw new IllegalStateException(s"Send for ${send.destination} completed, but not in `inflightResponses`")
             }
             resp.request.updateRequestMetrics()
-            // 注册 OP_READ 事件，继续读取数据
+            // 注册 OP_READ 事件，继续读取请求数据
             selector.unmute(send.destination)
         }
     }
@@ -681,7 +682,7 @@ private[kafka] class Processor(val id: Int,
             }.remoteHost
             // 将连接对应的所有响应从 inflightResponses 中移除
             inflightResponses.remove(connectionId).foreach(_.request.updateRequestMetrics())
-            // 对应的通道已经被关闭，所以需要减少对应的连接数
+            // 对应的通道已经被关闭，所以需要减少对应 IP 上的连接数
             connectionQuotas.dec(InetAddress.getByName(remoteHost))
         }
     }
@@ -701,7 +702,7 @@ private[kafka] class Processor(val id: Int,
      */
     private def configureNewConnections() {
         while (!newConnections.isEmpty) {
-            // 获取队首的待处理 SocketChannel 对象
+            // 获取待处理 SocketChannel 对象
             val channel = newConnections.poll()
             try {
                 debug(s"Processor $id listening to new connection from ${channel.socket.getRemoteSocketAddress}")
