@@ -129,8 +129,7 @@ class KafkaApis(val requestChannel: RequestChannel,
                 } else {
                     val response = request.body.getErrorResponse(e)
 
-                    /* If request doesn't have a default error response, we just close the connection.
-                       For example, when produce request has acks set to 0 */
+                    /* If request doesn't have a default error response, we just close the connection. For example, when produce request has acks set to 0 */
                     if (response == null)
                         requestChannel.closeConnection(request.processor, request)
                     else
@@ -642,9 +641,9 @@ class KafkaApis(val requestChannel: RequestChannel,
             try {
                 // ensure leader exists
                 val localReplica = if (offsetRequest.replicaId != ListOffsetRequest.DEBUGGING_REPLICA_ID)
-                                       replicaManager.getLeaderReplicaIfLocal(topicPartition)
-                                   else
-                                       replicaManager.getReplicaOrException(topicPartition)
+                    replicaManager.getLeaderReplicaIfLocal(topicPartition)
+                else
+                    replicaManager.getReplicaOrException(topicPartition)
                 val offsets = {
                     val allOffsets = fetchOffsets(replicaManager.logManager,
                         topicPartition,
@@ -704,9 +703,9 @@ class KafkaApis(val requestChannel: RequestChannel,
 
                     // ensure leader exists
                     val localReplica = if (offsetRequest.replicaId != ListOffsetRequest.DEBUGGING_REPLICA_ID)
-                                           replicaManager.getLeaderReplicaIfLocal(topicPartition)
-                                       else
-                                           replicaManager.getReplicaOrException(topicPartition)
+                        replicaManager.getLeaderReplicaIfLocal(topicPartition)
+                    else
+                        replicaManager.getReplicaOrException(topicPartition)
 
                     val found = {
                         if (fromConsumer && timestamp == ListOffsetRequest.LATEST_TIMESTAMP)
@@ -1275,9 +1274,9 @@ class KafkaApis(val requestChannel: RequestChannel,
         // with client authentication which is performed at an earlier stage of the connection where the
         // ApiVersionRequest is not available.
         val responseBody = if (Protocol.apiVersionSupported(ApiKeys.API_VERSIONS.id, request.header.apiVersion))
-                               ApiVersionsResponse.API_VERSIONS_RESPONSE
-                           else
-                               ApiVersionsResponse.fromError(Errors.UNSUPPORTED_VERSION)
+            ApiVersionsResponse.API_VERSIONS_RESPONSE
+        else
+            ApiVersionsResponse.fromError(Errors.UNSUPPORTED_VERSION)
         requestChannel.sendResponse(new RequestChannel.Response(request, responseBody))
     }
 
