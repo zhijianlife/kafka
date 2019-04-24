@@ -394,7 +394,7 @@ class Partition(val topic: String, // 分区所属的主题
      * fully caught up to the (local) leader's offset corresponding to this produce request before we acknowledge the
      * produce request.
      *
-     * 检测参数 offset 对应的消息是否已经被 ISR 集合中所有的 follower 副本同步
+     * 检测当前分区对应 offset 的消息是否已经被 ISR 集合中所有的 follower 副本同步
      */
     def checkEnoughReplicasReachOffset(requiredOffset: Long): (Boolean, Errors) = {
         // 获取 leader 副本对应的 Replica 对象

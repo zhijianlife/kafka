@@ -191,21 +191,22 @@ public class ProduceRequest extends AbstractRequest {
 
     /**
      * Returns the partition records or throws IllegalStateException if clearPartitionRecords() has been invoked.
+     *
+     * 获取每个 topic 分区对应的消息集合
      */
     public Map<TopicPartition, MemoryRecords> partitionRecordsOrFail() {
         // Store it in a local variable to protect against concurrent updates
         Map<TopicPartition, MemoryRecords> partitionRecords = this.partitionRecords;
         if (partitionRecords == null) {
-            throw new IllegalStateException("The partition records are no longer available because " +
-                    "clearPartitionRecords() has been invoked.");
+            throw new IllegalStateException(
+                    "The partition records are no longer available because clearPartitionRecords() has been invoked.");
         }
         return partitionRecords;
     }
 
     public void clearPartitionRecords() {
         partitionRecords = null;
-        // It would be better to make this null, but the change is too large for 0.10.2. In trunk, the struct field
-        // was removed
+        // It would be better to make this null, but the change is too large for 0.10.2. In trunk, the struct field was removed
         struct.clear();
     }
 

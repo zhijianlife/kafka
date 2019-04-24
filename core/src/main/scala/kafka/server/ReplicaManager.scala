@@ -138,7 +138,8 @@ class ReplicaManager(val config: KafkaConfig,
     private val localBrokerId = config.brokerId
 
     /** 保存了当前 broker 分配的所有分区信息 */
-    private val allPartitions = new Pool[TopicPartition, Partition](valueFactory = Some(tp => new Partition(tp.topic, tp.partition, time, this)))
+    private val allPartitions = new Pool[TopicPartition, Partition](
+        valueFactory = Some(tp => new Partition(tp.topic, tp.partition, time, this)))
     private val replicaStateChangeLock = new Object
 
     /** 管理多个向 leader 副本发送 FetchRequest 请求的 ReplicaFetcherThread */
@@ -364,6 +365,8 @@ class ReplicaManager(val config: KafkaConfig,
     /**
      * Append messages to leader replicas of the partition, and wait for them to be replicated to other replicas;
      * the callback function will be triggered either when timeout or the required acks are satisfied
+     *
+     * 追加消息到 leader 副本，并依据 acks 参数等待指定数量的 follower 副本复制
      */
     def appendRecords(timeout: Long,
                       requiredAcks: Short,
@@ -371,11 +374,14 @@ class ReplicaManager(val config: KafkaConfig,
                       entriesPerPartition: Map[TopicPartition, MemoryRecords],
                       responseCallback: Map[TopicPartition, PartitionResponse] => Unit) {
 
-        if (isValidRequiredAcks(requiredAcks)) {
+        // 如果 acks 参数合法
+        if (this.isValidRequiredAcks(requiredAcks)) {
             val sTime = time.milliseconds
-            val localProduceResults = appendToLocalLog(internalTopicsAllowed, entriesPerPartition, requiredAcks)
+            // 将消息追加到 Log 对象中
+            val localProduceResults = this.appendToLocalLog(internalTopicsAllowed, entriesPerPartition, requiredAcks)
             debug("Produce to local log in %d ms".format(time.milliseconds - sTime))
 
+            // 对结果进行转换
             val produceStatus = localProduceResults.map { case (topicPartition, result) =>
                 topicPartition ->
                         ProducePartitionStatus(
@@ -383,40 +389,45 @@ class ReplicaManager(val config: KafkaConfig,
                             new PartitionResponse(result.error, result.info.firstOffset, result.info.logAppendTime)) // response status
             }
 
-            if (delayedRequestRequired(requiredAcks, entriesPerPartition, localProduceResults)) {
-                // create delayed produce operation
+            // 如果需要生成 DelayedProduce 延时任务
+            if (this.delayedRequestRequired(requiredAcks, entriesPerPartition, localProduceResults)) {
+                // 创建 DelayedProduce 对象
                 val produceMetadata = ProduceMetadata(requiredAcks, produceStatus)
                 val delayedProduce = new DelayedProduce(timeout, produceMetadata, this, responseCallback)
 
-                // create a list of (topic, partition) pairs to use as keys for this delayed produce operation
+                // 创建一系列 TopicPartitionOperationKey 对象，作为延时任务 watch 的 key
                 val producerRequestKeys = entriesPerPartition.keys.map(new TopicPartitionOperationKey(_)).toSeq
 
-                // try to complete the request immediately, otherwise put it into the purgatory
-                // this is because while the delayed produce operation is being created, new
-                // requests may arrive and hence make this operation completable.
+                // 尝试执行延时任务，如果还未到期则将任务交由炼狱管理
                 delayedProducePurgatory.tryCompleteElseWatch(delayedProduce, producerRequestKeys)
 
             } else {
-                // we can respond immediately
+                // 无需生成 DelayedProduce 延时任务，可以立即响应
                 val produceResponseStatus = produceStatus.mapValues(status => status.responseStatus)
                 responseCallback(produceResponseStatus)
             }
         } else {
-            // If required.acks is outside accepted range, something is wrong with the client
-            // Just return an error and don't handle the request at all
+            // 对应的 acks 参数错误，构造 INVALID_REQUIRED_ACKS 响应
             val responseStatus = entriesPerPartition.map { case (topicPartition, _) =>
-                topicPartition -> new PartitionResponse(Errors.INVALID_REQUIRED_ACKS,
-                    LogAppendInfo.UnknownLogAppendInfo.firstOffset, Record.NO_TIMESTAMP)
+                topicPartition -> new PartitionResponse(
+                    Errors.INVALID_REQUIRED_ACKS, LogAppendInfo.UnknownLogAppendInfo.firstOffset, Record.NO_TIMESTAMP)
             }
             responseCallback(responseStatus)
         }
     }
 
-    // If all the following conditions are true, we need to put a delayed produce request and wait for replication to complete
-    //
-    // 1. required acks = -1
-    // 2. there is data to append
-    // 3. at least one partition append was successful (fewer errors than partitions)
+    /**
+     * If all the following conditions are true, we need to put a delayed produce request and wait for replication to complete
+     *
+     * 1. required acks = -1
+     * 2. there is data to append
+     * 3. at least one partition append was successful (fewer errors than partitions)
+     *
+     * @param requiredAcks
+     * @param entriesPerPartition
+     * @param localProduceResults
+     * @return
+     */
     private def delayedRequestRequired(requiredAcks: Short,
                                        entriesPerPartition: Map[TopicPartition, MemoryRecords],
                                        localProduceResults: Map[TopicPartition, LogAppendResult]): Boolean = {

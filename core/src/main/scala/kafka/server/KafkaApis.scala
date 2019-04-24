@@ -387,29 +387,38 @@ class KafkaApis(val requestChannel: RequestChannel,
 
     /**
      * 处理 ProduceRequest 请求
+     *
+     * @param request
      */
     def handleProducerRequest(request: RequestChannel.Request) {
         val produceRequest = request.body.asInstanceOf[ProduceRequest]
         val numBytesAppended = request.header.sizeOf + produceRequest.sizeOf
 
+        // 区分 topic 以及消息集合，将已授权且真实存在的 topic 分为一组，另外的分为一组
         val (existingAndAuthorizedForDescribeTopics, nonExistingOrUnauthorizedForDescribeTopics) =
             produceRequest.partitionRecordsOrFail.asScala.partition { case (tp, _) =>
                 authorize(request.session, Describe, new Resource(auth.Topic, tp.topic)) && metadataCache.contains(tp.topic)
             }
 
+        // 将已授权的 topic 分区分为一组，未授权的分为另外一组
         val (authorizedRequestInfo, unauthorizedForWriteRequestInfo) = existingAndAuthorizedForDescribeTopics.partition {
             case (tp, _) => authorize(request.session, Write, new Resource(auth.Topic, tp.topic))
         }
 
-        // the callback for sending a produce response
+        /**
+         * 构造并发送 ProduceResponse 响应
+         *
+         * @param responseStatus
+         */
         def sendResponseCallback(responseStatus: Map[TopicPartition, PartitionResponse]) {
 
+            // 合并对于正常处理的请求、topic 未授权的请求，以及 topic 不存在的请求的 PartitionResponse 对象
             val mergedResponseStatus = responseStatus ++
                     unauthorizedForWriteRequestInfo.mapValues(_ => new PartitionResponse(Errors.TOPIC_AUTHORIZATION_FAILED)) ++
                     nonExistingOrUnauthorizedForDescribeTopics.mapValues(_ => new PartitionResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION))
 
+            // 标识请求处理过程中是否出现异常
             var errorInResponse = false
-
             mergedResponseStatus.foreach { case (topicPartition, status) =>
                 if (status.error != Errors.NONE) {
                     errorInResponse = true
@@ -422,24 +431,27 @@ class KafkaApis(val requestChannel: RequestChannel,
             }
 
             def produceResponseCallback(delayTimeMs: Int) {
+                // 客户端不要求服务端对消息进行确认
                 if (produceRequest.acks == 0) {
-                    // no operation needed if producer request.required.acks = 0; however, if there is any error in handling
-                    // the request, since no response is expected by the producer, the server will close socket server so that
-                    // the producer client will know that some error has happened and will refresh its metadata
+                    /*
+                     * no operation needed if producer request.required.acks = 0; however, if there is any error in handling the request,
+                     * since no response is expected by the producer, the server will close socket server so that the producer client will
+                     * know that some error has happened and will refresh its metadata
+                     */
                     if (errorInResponse) {
                         val exceptionsSummary = mergedResponseStatus.map { case (topicPartition, status) =>
                             topicPartition -> status.error.exceptionName
                         }.mkString(", ")
-                        info(
-                            s"Closing connection due to error during produce request with correlation id ${request.header.correlationId} " +
-                                    s"from client id ${request.header.clientId} with ack=0\n" +
-                                    s"Topic and partition to exceptions: $exceptionsSummary"
-                        )
+                        info(s"Closing connection due to error during produce request with correlation id ${request.header.correlationId} " +
+                                s"from client id ${request.header.clientId} with ack=0\nTopic and partition to exceptions: $exceptionsSummary")
+                        // 处理请求过程中出现异常，则往对应 Processor 的响应队列中添加 RequestChannel.CloseConnectionAction 类型响应
                         requestChannel.closeConnection(request.processor, request)
                     } else {
+                        // 处理请求过程中未出现异常，则往对应 Processor 的响应队列中添加 RequestChannel.NoOpAction 类型响应
                         requestChannel.noOperation(request.processor, request)
                     }
                 } else {
+                    // 客户端需要服务端对消息进行确认
                     val respBody = request.header.apiVersion match {
                         case 0 => new ProduceResponse(mergedResponseStatus.asJava)
                         case version@(1 | 2) => new ProduceResponse(mergedResponseStatus.asJava, delayTimeMs, version)
@@ -448,6 +460,7 @@ class KafkaApis(val requestChannel: RequestChannel,
                         case version => throw new IllegalArgumentException(s"Version `$version` of ProduceRequest is not handled. Code must be updated.")
                     }
 
+                    // 往对应 Processor 的响应队列中添加对应的响应对象，这些响应会发送给客户端
                     requestChannel.sendResponse(new RequestChannel.Response(request, respBody))
                 }
             }
@@ -460,14 +473,15 @@ class KafkaApis(val requestChannel: RequestChannel,
                 request.header.clientId,
                 numBytesAppended,
                 produceResponseCallback)
-        }
+        } // ~ end of sendResponseCallback
 
         if (authorizedRequestInfo.isEmpty)
+        // 如果没有授权的 topic 信息，则返回空的响应
             sendResponseCallback(Map.empty)
         else {
             val internalTopicsAllowed = request.header.clientId == AdminUtils.AdminClientId
 
-            // call the replica manager to append messages to the replicas
+            // 调用 ReplicaManager#appendRecords 方法追加消息
             replicaManager.appendRecords(
                 produceRequest.timeout.toLong,
                 produceRequest.acks,
@@ -641,9 +655,9 @@ class KafkaApis(val requestChannel: RequestChannel,
             try {
                 // ensure leader exists
                 val localReplica = if (offsetRequest.replicaId != ListOffsetRequest.DEBUGGING_REPLICA_ID)
-                    replicaManager.getLeaderReplicaIfLocal(topicPartition)
-                else
-                    replicaManager.getReplicaOrException(topicPartition)
+                                       replicaManager.getLeaderReplicaIfLocal(topicPartition)
+                                   else
+                                       replicaManager.getReplicaOrException(topicPartition)
                 val offsets = {
                     val allOffsets = fetchOffsets(replicaManager.logManager,
                         topicPartition,
@@ -703,9 +717,9 @@ class KafkaApis(val requestChannel: RequestChannel,
 
                     // ensure leader exists
                     val localReplica = if (offsetRequest.replicaId != ListOffsetRequest.DEBUGGING_REPLICA_ID)
-                        replicaManager.getLeaderReplicaIfLocal(topicPartition)
-                    else
-                        replicaManager.getReplicaOrException(topicPartition)
+                                           replicaManager.getLeaderReplicaIfLocal(topicPartition)
+                                       else
+                                           replicaManager.getReplicaOrException(topicPartition)
 
                     val found = {
                         if (fromConsumer && timestamp == ListOffsetRequest.LATEST_TIMESTAMP)
@@ -1274,9 +1288,9 @@ class KafkaApis(val requestChannel: RequestChannel,
         // with client authentication which is performed at an earlier stage of the connection where the
         // ApiVersionRequest is not available.
         val responseBody = if (Protocol.apiVersionSupported(ApiKeys.API_VERSIONS.id, request.header.apiVersion))
-            ApiVersionsResponse.API_VERSIONS_RESPONSE
-        else
-            ApiVersionsResponse.fromError(Errors.UNSUPPORTED_VERSION)
+                               ApiVersionsResponse.API_VERSIONS_RESPONSE
+                           else
+                               ApiVersionsResponse.fromError(Errors.UNSUPPORTED_VERSION)
         requestChannel.sendResponse(new RequestChannel.Response(request, responseBody))
     }
 
