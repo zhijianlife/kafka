@@ -23,6 +23,12 @@ import java.util.concurrent.atomic.AtomicInteger
 import kafka.utils.nonthreadsafe
 
 /**
+ * 分层时间轮算法，相对于时间复杂度为 O(log(n)) 的 DelayQueue 和 Timer，
+ * 具备 O(1) 获取执行任务的时间复杂度，插入任务的时间复杂度是 O(m)，删除任务的时间复杂度是 O(1)，
+ * 普通时间轮算法仅支持在一个时间轮区间的延时任务调度，而分层时间轮算法能够解决这一缺点。
+ *
+ *
+ *
  * Hierarchical（分级） Timing Wheels
  *
  * A simple timing wheel is a circular list of buckets of timer tasks. Let u be the time unit.
