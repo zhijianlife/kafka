@@ -109,21 +109,21 @@ import kafka.utils.nonthreadsafe
 private[timer] class TimingWheel(tickMs: Long, // 当前时间轮中一格的时间跨度
                                  wheelSize: Int, // 时间轮的格数
                                  startMs: Long, // 当前时间轮的创建时间
-                                 taskCounter: AtomicInteger, // 各层级时间轮中的任务总数计数器
+                                 taskCounter: AtomicInteger, // 各层级时间轮共用的任务计数器，用于记录时间轮中总的任务数
                                  queue: DelayQueue[TimerTaskList] // 整个层级时间轮共用一个任务队列
                                 ) {
 
+    /** 时间轮指针，将时间轮划分为到期部分和未到期部分 */
+    private[this] var currentTime = startMs - (startMs % tickMs) // 修剪成 tickMs 的倍数，近似等于创建时间
+
     /**
-     * 当前时间轮的时间跨度
-     * 当前时间轮只能处理时间范围在 [currentTime, currentTime + interval] 之间的定时任务，超过该范围则需要将任务添加到上层时间轮中
+     * 当前时间轮的时间跨度，
+     * 只能处理时间范围在 [currentTime, currentTime + interval] 之间的延时任务，超过该范围则需要将任务添加到上层时间轮中
      */
     private[this] val interval = tickMs * wheelSize
 
     /** 每一项都对应时间轮中的一格 */
     private[this] val buckets = Array.tabulate[TimerTaskList](wheelSize) { _ => new TimerTaskList(taskCounter) }
-
-    /** 时间轮指针，将时间轮划分为到期部分和未到期部分 */
-    private[this] var currentTime = startMs - (startMs % tickMs) // 修剪成 tickMs 的倍数，近似等于创建时间
 
     /** 对于上层时间轮的引用 */
     @volatile private[this] var overflowWheel: TimingWheel = _
@@ -153,22 +153,24 @@ private[timer] class TimingWheel(tickMs: Long, // 当前时间轮中一格的时
      * @return
      */
     def add(timerTaskEntry: TimerTaskEntry): Boolean = {
-        // 获取任务的过期时间
+        // 获取任务的到期时间戳
         val expiration = timerTaskEntry.expirationMs
         if (timerTaskEntry.cancelled) {
-            // 任务已经被取消
+            // 任务已经被取消，则不应该被添加
             false
         } else if (expiration < currentTime + tickMs) {
-            // 任务已经过期
+            // 任务已经到期，则不应该被添加
             false
         } else if (expiration < currentTime + interval) {
-            // 任务正好位于当前时间轮的跨度范围内
-            // 依据任务的到期时间查找此任务隶属的时间格，并将任务添加到对应的 TimerTaskList 中
+            /*
+             * 任务正好位于当前时间轮的时间跨度范围内，
+             * 依据任务的到期时间查找此任务隶属的时间格，并将任务添加到对应的时间格中
+             */
             val virtualId = expiration / tickMs
             val bucket = buckets((virtualId % wheelSize.toLong).toInt)
             bucket.add(timerTaskEntry)
 
-            // 设置时间格的到期时间，并在到期时间发生变化时将时间格记录到队列中
+            // 更新对应时间格的时间区间上界，如果是第一次往对应时间格中添加延时任务，则需要将时间格记录到全局任务队列中
             if (bucket.setExpiration(virtualId * tickMs)) {
                 queue.offer(bucket)
             }
@@ -188,10 +190,10 @@ private[timer] class TimingWheel(tickMs: Long, // 当前时间轮中一格的时
      */
     def advanceClock(timeMs: Long): Unit = {
         if (timeMs >= currentTime + tickMs) {
-            // 尝试移动表针，可能会往前推进多格
+            // 尝试推动指针，可能会往前推进多个时间格
             currentTime = timeMs - (timeMs % tickMs)
 
-            // 尝试推动上层时间轮的表针
+            // 尝试推动上层时间轮指针
             if (overflowWheel != null)
                 overflowWheel.advanceClock(currentTime)
         }

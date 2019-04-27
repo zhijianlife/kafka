@@ -18,25 +18,35 @@
 package kafka.utils.timer
 
 /**
- * 定时任务
+ * 延时任务
  */
 trait TimerTask extends Runnable {
 
     /** 当前任务的延迟时长（单位：毫秒） */
     val delayMs: Long
 
+    /** 封装当前定时任务的链表节点 */
     private[this] var timerTaskEntry: TimerTaskEntry = _
 
+    /**
+     * 取消当前延时任务
+     */
     def cancel(): Unit = {
         synchronized {
+            // 从时间格中移除封装当前定时任务的结点
             if (timerTaskEntry != null) timerTaskEntry.remove()
             timerTaskEntry = null
         }
     }
 
+    /**
+     * 绑定当前任务与对应的结点
+     *
+     * @param entry
+     */
     private[timer] def setTimerTaskEntry(entry: TimerTaskEntry): Unit = {
         synchronized {
-            // 如果对应的 entry 之前被添加过，则先移除之前的添加记录
+            // 如果对应的结点之前被添加过，则先移除之前的添加记录
             if (timerTaskEntry != null && timerTaskEntry != entry) {
                 timerTaskEntry.remove()
             }
@@ -44,6 +54,11 @@ trait TimerTask extends Runnable {
         }
     }
 
+    /**
+     * 获取当前延时任务对应的结点
+     *
+     * @return
+     */
     private[timer] def getTimerTaskEntry: TimerTaskEntry = {
         timerTaskEntry
     }

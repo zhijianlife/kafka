@@ -33,13 +33,20 @@ import scala.math._
 @threadsafe
 private[timer] class TimerTaskList(taskCounter: AtomicInteger) extends Delayed {
 
-    private[this] val root = new TimerTaskEntry(null, -1) // 根节点
+    /** 根结点 */
+    private[this] val root = new TimerTaskEntry(null, -1)
     root.next = root
     root.prev = root
 
-    /** 记录当前时间格的超时时间 */
+    /** 记录当前时间格对应时间区间上界 */
     private[this] val expiration = new AtomicLong(-1L)
 
+    /**
+     * 设置当前时间格对应的时间区间上界
+     *
+     * @param expirationMs
+     * @return true 表示往当前时间格中第一次添加延时任务
+     */
     def setExpiration(expirationMs: Long): Boolean = {
         expiration.getAndSet(expirationMs) != expirationMs
     }
@@ -151,27 +158,39 @@ private[timer] class TimerTaskList(taskCounter: AtomicInteger) extends Delayed {
 }
 
 /**
- * 封装定时任务
+ * 封装延时任务
  *
- * @param timerTask    对应的定时任务
- * @param expirationMs 过期时间戳
+ * @param timerTask    对应的延时任务
+ * @param expirationMs 延时时间戳，即延时任务的延时时间 + 当前时间戳
  */
-private[timer] class TimerTaskEntry(val timerTask: TimerTask, val expirationMs: Long) extends Ordered[TimerTaskEntry] {
+private[timer] class TimerTaskEntry(val timerTask: TimerTask, // 封装的延时任务
+                                    val expirationMs: Long // 延时时间戳，即延时任务的延时时间 + 当前时间戳
+                                   ) extends Ordered[TimerTaskEntry] {
 
-    @volatile
-    var list: TimerTaskList = _
+    /** 所属时间格 */
+    @volatile var list: TimerTaskList = _
+    /** 后置指针 */
     var next: TimerTaskEntry = _
+    /** 前置指针 */
     var prev: TimerTaskEntry = _
 
     /**
-     * 封装定时任务，如果之前添加过，则先移除历史记录
+     * 绑定延时任务，如果之前添加过，则先移除历史记录
      */
     if (timerTask != null) timerTask.setTimerTaskEntry(this)
 
+    /**
+     * 判断当前延时任务是否已经被取消
+     *
+     * @return
+     */
     def cancelled: Boolean = {
         timerTask.getTimerTaskEntry != this
     }
 
+    /**
+     * 从时间格中移除当前延时任务，即移除对应的节点即可
+     */
     def remove(): Unit = {
         var currentList = list
         /*

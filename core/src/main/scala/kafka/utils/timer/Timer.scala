@@ -70,18 +70,18 @@ class SystemTimer(executorName: String,
                   wheelSize: Int = 20, // 默认时间格大小为 20
                   startMs: Long = Time.SYSTEM.hiResClockMs) extends Timer {
 
-    /** 定时任务执行线程池 */
+    /** 延时任务执行线程池 */
     private[this] val taskExecutor = Executors.newFixedThreadPool(1, new ThreadFactory() {
         def newThread(runnable: Runnable): Thread = Utils.newThread("executor-" + executorName, runnable, false)
     })
 
-    /** 各个层级时间轮共用的队列 */
+    /** 各个层级时间轮共用的延时任务队列 */
     private[this] val delayQueue = new DelayQueue[TimerTaskList]()
 
-    /** 各个层级时间轮共用的任务个数计数器 */
+    /** 各个层级时间轮共用的任务计数器 */
     private[this] val taskCounter = new AtomicInteger(0)
 
-    /** 层级时间轮中最底层的时间轮 */
+    /** 分层时间轮中最底层的时间轮 */
     private[this] val timingWheel = new TimingWheel(
         tickMs = tickMs,
         wheelSize = wheelSize,
@@ -111,15 +111,15 @@ class SystemTimer(executorName: String,
     }
 
     private def addTimerTaskEntry(timerTaskEntry: TimerTaskEntry): Unit = {
-        // 往时间轮中添加定时任务，同时检测添加的任务是否已经过期
+        // 往时间轮中添加延时任务，同时检测添加的任务是否已经到期
         if (!timingWheel.add(timerTaskEntry)) {
-            // 任务过期但未被取消，则立即提交执行
+            // 任务到期但未被取消，则立即提交执行
             if (!timerTaskEntry.cancelled)
                 taskExecutor.submit(timerTaskEntry.timerTask)
         }
     }
 
-    /** 将定时任务重新添加到时间轮中 */
+    /** 将延时任务重新添加到时间轮中 */
     private[this] val reinsert = (timerTaskEntry: TimerTaskEntry) => this.addTimerTaskEntry(timerTaskEntry)
 
     /**
@@ -128,15 +128,14 @@ class SystemTimer(executorName: String,
     def advanceClock(timeoutMs: Long): Boolean = {
         // 超时等待获取时间格对象
         var bucket = delayQueue.poll(timeoutMs, TimeUnit.MILLISECONDS)
-        // 如果有到期的时间格
         if (bucket != null) {
             writeLock.lock()
             try {
                 while (bucket != null) {
-                    // 推进时间轮指针
+                    // 推进时间轮指针，对应的时间戳为当前时间格时间区间上界
                     timingWheel.advanceClock(bucket.getExpiration)
                     /*
-                     * 遍历处理当前时间格中的任务列表，提交执行到期但未被取消的任务，
+                     * 遍历处理当前时间格中的延时任务，提交执行到期但未被取消的任务，
                      * 对于未到期的任务重新添加到时间轮中继续等待被执行，期间可能会对任务在层级上执行降级
                      */
                     bucket.flush(reinsert)
