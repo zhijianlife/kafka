@@ -27,31 +27,29 @@ import org.apache.kafka.common.utils.{Time, Utils}
 trait Timer {
 
     /**
-     * Add a new task to this executor. It will be executed after the task's delay
-     * (beginning from the time of submission)
+     * 添加延时任务，如果任务到期则会立即触发执行
      *
-     * @param timerTask the task to add
+     * @param timerTask
      */
     def add(timerTask: TimerTask): Unit
 
     /**
-     * Advance the internal clock, executing any tasks whose expiration has been
-     * reached within the duration of the passed timeout.
+     * 推动时间轮指针，期间会执行已经到期的任务
      *
      * @param timeoutMs
-     * @return whether or not any tasks were executed
+     * @return 是否有任务被执行
      */
     def advanceClock(timeoutMs: Long): Boolean
 
     /**
-     * Get the number of tasks pending execution
+     * 获取时间轮中等待被调度的任务数
      *
-     * @return the number of tasks
+     * @return
      */
     def size: Int
 
     /**
-     * Shutdown the timer service, leaving pending tasks unexecuted
+     * 关闭定时器，丢弃未执行的延时任务
      */
     def shutdown(): Unit
 }
@@ -68,7 +66,8 @@ trait Timer {
 class SystemTimer(executorName: String,
                   tickMs: Long = 1, // 默认时间格时间为 1 毫秒
                   wheelSize: Int = 20, // 默认时间格大小为 20
-                  startMs: Long = Time.SYSTEM.hiResClockMs) extends Timer {
+                  startMs: Long = Time.SYSTEM.hiResClockMs // 时间轮启动时间戳
+                 ) extends Timer {
 
     /** 延时任务执行线程池 */
     private[this] val taskExecutor = Executors.newFixedThreadPool(1, new ThreadFactory() {
@@ -100,7 +99,7 @@ class SystemTimer(executorName: String,
      *
      * @param timerTask the task to add
      */
-    def add(timerTask: TimerTask): Unit = {
+    override def add(timerTask: TimerTask): Unit = {
         readLock.lock()
         try {
             // 将 TimerTask 封装成 TimerTaskEntry，并添加到时间轮中
@@ -125,7 +124,7 @@ class SystemTimer(executorName: String,
     /**
      * 推进时间轮指针，同时处理时间格中到期的任务
      */
-    def advanceClock(timeoutMs: Long): Boolean = {
+    override def advanceClock(timeoutMs: Long): Boolean = {
         // 超时等待获取时间格对象
         var bucket = delayQueue.poll(timeoutMs, TimeUnit.MILLISECONDS)
         if (bucket != null) {
@@ -150,7 +149,7 @@ class SystemTimer(executorName: String,
         }
     }
 
-    def size: Int = taskCounter.get
+    override def size: Int = taskCounter.get
 
     override def shutdown() {
         taskExecutor.shutdown()
