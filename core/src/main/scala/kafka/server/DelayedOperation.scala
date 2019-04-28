@@ -35,8 +35,8 @@ import scala.collection._
  * a delayed fetch operation could be waiting for a given number of bytes to accumulate.
  *
  * The logic upon completing a delayed operation is defined in onComplete() and will be called exactly once.
- * Once an operation is completed, isCompleted() will return true. onComplete() can be triggered by either
- * forceComplete(), which forces calling onComplete() after delayMs if the operation is not yet completed,
+ * Once an operation is completed, isCompleted() will return true.
+ * onComplete() can be triggered by either forceComplete(), which forces calling onComplete() after delayMs if the operation is not yet completed,
  * or tryComplete(), which first checks if the operation can be completed or not now, and if yes calls forceComplete().
  *
  * A subclass of DelayedOperation needs to provide an implementation of both onComplete() and tryComplete().
@@ -49,7 +49,7 @@ abstract class DelayedOperation(override val delayMs: Long) extends TimerTask wi
     private val completed = new AtomicBoolean(false)
 
     /**
-     * 如果延迟操作没有完成，则现将任务从时间轮中删除，然后调用 onComplete() 方法执行具体的逻辑
+     * 如果延迟操作没有完成，则先将任务从时间轮中删除，然后调用 onComplete() 方法执行具体的逻辑
      *
      * Force completing the delayed operation, if not already completed.
      * This function can be triggered when
@@ -64,9 +64,9 @@ abstract class DelayedOperation(override val delayMs: Long) extends TimerTask wi
      */
     def forceComplete(): Boolean = {
         if (completed.compareAndSet(false, true)) { // CAS 操作修改 completed 字段
-            // 将当前延时任务从时间格中删除
+            // 将当前延时任务从时间轮中移除
             this.cancel()
-            // 执行延时任务的具体业务
+            // 立即触发执行延时任务
             this.onComplete()
             true
         } else {
@@ -136,23 +136,19 @@ object DelayedOperationPurgatory {
  * 辅助类，提供了管理 DelayedOperation，以及处理到期 DelayedOperation 的功能
  */
 class DelayedOperationPurgatory[T <: DelayedOperation](purgatoryName: String,
-                                                       timeoutTimer: Timer,
-                                                       brokerId: Int = 0,
+                                                       timeoutTimer: Timer, // 定时器
+                                                       brokerId: Int = 0, // 所在 broker 节点 ID
                                                        purgeInterval: Int = 1000, // 执行清理操作的阈值
-                                                       reaperEnabled: Boolean = true)
-        extends Logging with KafkaMetricsGroup {
+                                                       reaperEnabled: Boolean = true // 是否启用后台指针推进器
+                                                      ) extends Logging with KafkaMetricsGroup {
 
-    /**
-     * 用于管理 DelayedOperation，其中 key 是 Watcher 中的 DelayedOperation 集合所关心的对象
-     */
+    /** 用于管理 DelayedOperation，其中 key 是 Watcher 中的 DelayedOperation 集合所关心的对象 */
     private val watchersForKey = new Pool[Any, Watchers](Some((key: Any) => new Watchers(key)))
 
     /** watchersForKey 读写锁 */
     private val removeWatchersLock = new ReentrantReadWriteLock()
 
-    /**
-     * 记录当前 DelayedOperationPurgatory 中延时任务的个数
-     */
+    /** 记录当前 DelayedOperationPurgatory 中延时任务的个数 */
     private[this] val estimatedTotalOperations = new AtomicInteger(0)
 
     /**
@@ -213,7 +209,7 @@ class DelayedOperationPurgatory[T <: DelayedOperation](purgatoryName: String,
             if (operation.isCompleted)
                 return false
 
-            // 添加延时任务添加到对应 key 的 Watcher 集合中
+            // 添加延时任务添加到对应 key 的 Watcher 集合中，用于从时间维度以外的维度触发延时任务执行
             this.watchForOperation(key, operation)
 
             if (!watchCreated) {
@@ -228,7 +224,7 @@ class DelayedOperationPurgatory[T <: DelayedOperation](purgatoryName: String,
         if (isCompletedByMe)
             return true
 
-        // 4. 对于未执行的延时任务，尝试添加到 SystemTimer 中
+        // 4. 对于未执行的延时任务，尝试添加到 SystemTimer 中，用于从时间维度触发延时任务执行
         if (!operation.isCompleted) {
             timeoutTimer.add(operation)
             // 再次检测延时任务的执行情况，如果已经完成则从 SystemTimer 中移除
