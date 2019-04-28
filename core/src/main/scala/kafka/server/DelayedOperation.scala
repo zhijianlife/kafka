@@ -200,21 +200,21 @@ class DelayedOperationPurgatory[T <: DelayedOperation](purgatoryName: String,
         // 1. 调用延时任务的 tryComplete 方法，尝试完成延迟操作
         var isCompletedByMe = operation.safeTryComplete()
         if (isCompletedByMe)
-            return true // 已经执行完成，则直接返回
+            return true // 如果延时任务已经执行完成，则直接返回
 
-        // 2. 遍历处理 watchKeys，将 key 对应的 DelayedOperation 添加到 key 对应的 Watcher 中
+        // 2. 遍历处理 watchKeys，将延时任务添加其关心的 key 对应的 Watchers 中
         var watchCreated = false
         for (key <- watchKeys) {
             // 如果待添加的延时任务已经执行完成，则放弃添加
             if (operation.isCompleted)
                 return false
 
-            // 添加延时任务添加到对应 key 的 Watcher 集合中，用于从时间维度以外的维度触发延时任务执行
+            // 添加延时任务添加到对应 key 的 Watchers 集合中，用于从时间维度以外的维度触发延时任务执行
             this.watchForOperation(key, operation)
 
             if (!watchCreated) {
                 watchCreated = true
-                // 延时任务计数加 1，一个延时任务可能会被添加到多个 key 对应的 Watcher 集合中，但是任务计数只会增加 1 次
+                // 延时任务计数加 1，一个延时任务可能会被添加到多个 key 对应的 Watchers 集合中，但是任务计数只会增加 1 次
                 estimatedTotalOperations.incrementAndGet()
             }
         }
@@ -224,10 +224,10 @@ class DelayedOperationPurgatory[T <: DelayedOperation](purgatoryName: String,
         if (isCompletedByMe)
             return true
 
-        // 4. 对于未执行的延时任务，尝试添加到 SystemTimer 中，用于从时间维度触发延时任务执行
+        // 4. 对于未执行的延时任务，尝试添加到定时器中，用于从时间维度触发延时任务执行
         if (!operation.isCompleted) {
             timeoutTimer.add(operation)
-            // 再次检测延时任务的执行情况，如果已经完成则从 SystemTimer 中移除
+            // 再次检测延时任务的执行情况，如果已经完成则从定时器中移除
             if (operation.isCompleted) {
                 operation.cancel()
             }
@@ -242,12 +242,12 @@ class DelayedOperationPurgatory[T <: DelayedOperation](purgatoryName: String,
      * @return the number of completed operations during this process
      */
     def checkAndComplete(key: Any): Int = {
-        // 获取 key 对应的 Watcher 集合
+        // 获取 key 对应的 Watchers 对象
         val watchers = inReadLock(removeWatchersLock) {
             watchersForKey.get(key)
         }
         if (watchers == null) 0
-        // 如果存在对应的 Watcher 集合，则对该集合中未完成的任务尝试触发执行，并移除已经执行完成的任务
+        // 如果存在对应的 Watchers 对象，则对记录在其中待执行的延时任务尝试触发执行，并移除已经执行完成的任务
         else watchers.tryCompleteWatched()
     }
 
@@ -357,11 +357,11 @@ class DelayedOperationPurgatory[T <: DelayedOperation](purgatoryName: String,
         def tryCompleteWatched(): Int = {
             var completed = 0
 
-            // 遍历处理当前 Watcher 集合中的延时任务
+            // 遍历处理当前 Watchers 对象中的延时任务
             val iter = operations.iterator()
             while (iter.hasNext) {
                 val curr = iter.next()
-                // 如果对应的延时任务已经执行完成，则从 Watcher 集合中移除
+                // 如果对应的延时任务已经执行完成，则从 Watchers 中移除
                 if (curr.isCompleted) {
                     iter.remove()
                 }
@@ -372,7 +372,7 @@ class DelayedOperationPurgatory[T <: DelayedOperation](purgatoryName: String,
                 }
             }
 
-            // 如果 key 对应的 Watcher 集合已空，则将 key 从 watchersForKey 中移除
+            // 如果 key 对应的 Watchers 已空，则将 key 从 watchersForKey 中移除，防止内存泄露
             if (operations.isEmpty) removeKeyIfEmpty(key, this)
 
             completed
