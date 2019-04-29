@@ -25,7 +25,11 @@ import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.utils.Time
 
 /**
- * 表示一个副本
+ * 表示一个副本，每个 topic 分区存在多个副本（AR: Assigned Replica），分为一个 leader 和多个 follower，
+ * 其中 leader 会维护自身以及所有 follower 副本的相关状态，而 follower 只维护自己的状态。
+ *
+ * 副本区分本地副本和远程副本，本地副本是指副本对应的 Log 位于当前 broker 节点上，而远程副本的 Log 则位于
+ * 其他 broker 节点上。
  *
  * @param brokerId
  * @param partition
@@ -33,27 +37,24 @@ import org.apache.kafka.common.utils.Time
  * @param initialHighWatermarkValue
  * @param log
  */
-class Replica(val brokerId: Int, // 当前副本所在的 broker 的 ID，可以将该 ID 与当前所在 broker 的 ID 比对来区分当前副本是本地副本还是远程副本
-              val partition: Partition, // 当前副本对应的分区
+class Replica(val brokerId: Int, // 当前副本所在的 broker 节点的 ID，可以将该 ID 与当前所在 broker 的 ID 比对来区分当前副本是本地副本还是远程副本
+              val partition: Partition, // 当前副本对应的 topic 分区对象
               time: Time = Time.SYSTEM,
               initialHighWatermarkValue: Long = 0L,
               val log: Option[Log] = None // 本地副本对应的 Log 对象，对于远程副本来说，该字段为空，通过该字段可以区分是本地副本还是远程副本
              ) extends Logging {
 
     /**
-     * the high watermark offset value, in non-leader replicas only its message offsets are kept
-     *
-     * 记录 HW 值，消费者只能读取 HW 之前的消息，其后的消息对消费者是不可见的，
-     * 此字段由 leader 副本负责更新和维护，更新时机是消息被 ISR 集合中所有副本成功同步，即消息被成功提交
+     * 记录副本的 HW 值，消费者只能读取 HW 之前的消息，之后的消息对消费者是不可见的，
+     * 此字段由 leader 副本负责更新和维护，当消息被 ISR 集合中所有副本成功同步时更新该字段。
      */
     @volatile private[this] var highWatermarkMetadata = new LogOffsetMetadata(initialHighWatermarkValue)
 
     /**
-     * the log end offset value, kept in all replicas;
-     * for local replica it is the log's end offset, for remote replicas its value is only updated by follower fetch
+     * Log 最后一条消息的 offset 值：
      *
-     * - 对于本地副本，此字段记录的是追加到 Log 中的最新消息的 offset，可以直接从 Log#nextOffsetMetadata 字段中获取；
-     * - 对于远程副本，字段含义相同，但是由其它 broker 发送请求来更新该值，不能从本地获取到
+     * - 对于本地副本，可以直接从 Log#nextOffsetMetadata 字段中获取；
+     * - 对于远程副本，则由其它 broker 发送请求来更新该值，不能从本地获取到。
      */
     @volatile private[this] var logEndOffsetMetadata = LogOffsetMetadata.UnknownOffsetMetadata
 
@@ -96,7 +97,7 @@ class Replica(val brokerId: Int, // 当前副本所在的 broker 的 ID，可以
         if (logReadResult.info.fetchOffsetMetadata.messageOffset >= logReadResult.leaderLogEndOffset)
             _lastCaughtUpTimeMs = math.max(_lastCaughtUpTimeMs, logReadResult.fetchTimeMs)
         else if (logReadResult.info.fetchOffsetMetadata.messageOffset >= lastFetchLeaderLogEndOffset)
-            _lastCaughtUpTimeMs = math.max(_lastCaughtUpTimeMs, lastFetchTimeMs)
+                 _lastCaughtUpTimeMs = math.max(_lastCaughtUpTimeMs, lastFetchTimeMs)
 
         // 更新 LEO
         logEndOffset = logReadResult.info.fetchOffsetMetadata
