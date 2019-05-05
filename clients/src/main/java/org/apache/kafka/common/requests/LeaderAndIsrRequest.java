@@ -45,6 +45,7 @@ public class LeaderAndIsrRequest extends AbstractRequest {
     private static final String LIVE_LEADERS_KEY_NAME = "live_leaders";
 
     // partition_states key names
+
     private static final String TOPIC_KEY_NAME = "topic";
     private static final String PARTITION_KEY_NAME = "partition";
     private static final String LEADER_KEY_NAME = "leader";
@@ -54,6 +55,7 @@ public class LeaderAndIsrRequest extends AbstractRequest {
     private static final String REPLICAS_KEY_NAME = "replicas";
 
     // live_leaders key names
+
     private static final String END_POINT_ID_KEY_NAME = "id";
     private static final String HOST_KEY_NAME = "host";
     private static final String PORT_KEY_NAME = "port";

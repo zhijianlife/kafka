@@ -22,7 +22,8 @@ import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.utils.Time
 
 /**
- * 实现 follower 副本与 leader 副本之间的同步工作
+ * 用于管理 ReplicaFetcherThread 线程，
+ * ReplicaFetcherThread 会向 leader 副本发送 FetchRequest 请求，实现 follower 副本与 leader 副本之间的数据同步工作
  *
  * @param brokerConfig
  * @param replicaMgr
@@ -35,10 +36,10 @@ class ReplicaFetcherManager(brokerConfig: KafkaConfig,
                             replicaMgr: ReplicaManager,
                             metrics: Metrics, time: Time,
                             threadNamePrefix: Option[String] = None,
-                            quotaManager: ReplicationQuotaManager)
-        extends AbstractFetcherManager(
-            "ReplicaFetcherManager on broker " + brokerConfig.brokerId,
-            "Replica", brokerConfig.numReplicaFetchers) {
+                            quotaManager: ReplicationQuotaManager
+                           ) extends AbstractFetcherManager(
+    "ReplicaFetcherManager on broker " + brokerConfig.brokerId,
+    "Replica", brokerConfig.numReplicaFetchers) {
 
     override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): AbstractFetcherThread = {
         val threadName = threadNamePrefix match {

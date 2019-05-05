@@ -723,6 +723,8 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的 topic 分区目
     /**
      * Given a message offset, find its corresponding offset metadata in the log.
      * If the message offset is out of range, return unknown offset metadata
+     *
+     * 获取给定 offset 对应的 LogOffsetMetadata 信息
      */
     def convertToOffsetMetadata(offset: Long): LogOffsetMetadata = {
         try {

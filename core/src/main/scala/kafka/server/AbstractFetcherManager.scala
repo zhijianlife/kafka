@@ -28,8 +28,8 @@ import scala.collection.{Map, Set, mutable}
 
 abstract class AbstractFetcherManager(protected val name: String,
                                       clientId: String,
-                                      numFetchers: Int = 1)
-        extends Logging with KafkaMetricsGroup {
+                                      numFetchers: Int = 1
+                                     ) extends Logging with KafkaMetricsGroup {
 
     /**
      * 管理 AbstractFetcherThread
