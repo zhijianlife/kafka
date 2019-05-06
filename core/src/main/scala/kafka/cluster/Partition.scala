@@ -44,10 +44,10 @@ import scala.collection.JavaConverters._
  *
  * 分区对象，负责管理每个副本对应的 Replica 对象，进行 leader 切换，ISR 集合的管理，以及调用日志存储子系统完成写入消息
  */
-class Partition(val topic: String, // 分区所属的主题
+class Partition(val topic: String, // 分区所属的 topic
                 val partitionId: Int, // 分区编号
-                time: Time,
-                replicaManager: ReplicaManager
+                time: Time, // 时间戳工具
+                replicaManager: ReplicaManager // 副本管理员
                ) extends Logging with KafkaMetricsGroup {
 
     val topicPartition = new TopicPartition(topic, partitionId)
@@ -72,19 +72,13 @@ class Partition(val topic: String, // 分区所属的主题
     /** Leader 副本的年代信息 */
     @volatile private var leaderEpoch: Int = LeaderAndIsr.initialLeaderEpoch - 1
 
-    /** 分区 leader 副本的 ID */
+    /** Leader 副本的 ID */
     @volatile var leaderReplicaIdOpt: Option[Int] = None
 
     /** 当前分区的 ISR 集合 */
     @volatile var inSyncReplicas: Set[Replica] = Set.empty[Replica]
 
-    /**
-     * Epoch of the controller that last changed the leader. This needs to be initialized correctly upon broker startup.
-     * One way of doing that is through the controller's start replica state change command. When a new broker starts up
-     * the controller sends it a start replica command containing the leader for each partition that the broker hosts.
-     * In addition to the leader, the controller can also send the epoch of the controller that elected the leader for
-     * each partition.
-     */
+    /** 当前 KafkaController 的年代信息，会在切换副本角色时进行更新 */
     private var controllerEpoch: Int = KafkaController.InitialControllerEpoch - 1
 
     this.logIdent = "Partition [%s,%d] on broker %d: ".format(topic, partitionId, localBrokerId)
@@ -128,8 +122,7 @@ class Partition(val topic: String, // 分区所属的主题
 
     private def isLeaderReplicaLocal: Boolean = leaderReplicaIfLocal.isDefined
 
-    def isUnderReplicated: Boolean =
-        isLeaderReplicaLocal && inSyncReplicas.size < assignedReplicas.size
+    def isUnderReplicated: Boolean = isLeaderReplicaLocal && inSyncReplicas.size < assignedReplicas.size
 
     /**
      * 负责在 AR 集合中查找指定副本 ID 对应的 Replica 对象，如果不存在则创建并添加到 AR 集合中，

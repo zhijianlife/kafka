@@ -116,19 +116,19 @@ object ReplicaManager {
  * @param quotaManager
  * @param threadNamePrefix
  */
-class ReplicaManager(val config: KafkaConfig,
+class ReplicaManager(val config: KafkaConfig, // 相关配置对象
                      metrics: Metrics,
-                     time: Time,
-                     val zkUtils: ZkUtils,
+                     time: Time, // 时间戳工具
+                     val zkUtils: ZkUtils, // ZK 工具类
                      scheduler: Scheduler, // 定时任务调度器
                      val logManager: LogManager, // 用于对分区日志执行读写操作
-                     val isShuttingDown: AtomicBoolean,
+                     val isShuttingDown: AtomicBoolean, // 标记 kafka 服务是否正在执行关闭操作
                      quotaManager: ReplicationQuotaManager,
                      threadNamePrefix: Option[String] = None) extends Logging with KafkaMetricsGroup {
 
     /**
      * 记录 KafkaController 的年代信息，当重新选择 Controller Leader 时会递增该字段，
-     * 当有来自 KafkaController 的请求时会校验年代信息，防止处理来自老的 Controller 的请求
+     * 用于校验来自 KafkaController 的请求的年代信息，防止处理来自老的 Controller 的请求
      */
     @volatile var controllerEpoch: Int = KafkaController.InitialControllerEpoch - 1
 
@@ -143,13 +143,14 @@ class ReplicaManager(val config: KafkaConfig,
     /** 管理向 leader 副本发送 FetchRequest 请求的 ReplicaFetcherThread 线程 */
     val replicaFetcherManager = new ReplicaFetcherManager(config, this, metrics, time, threadNamePrefix, quotaManager)
 
+    /** 标记 highwatermark-checkpoint 定时任务是否已经启动 */
     private val highWatermarkCheckPointThreadStarted = new AtomicBoolean(false)
 
     /** 记录 log 目录与对应 OffsetCheckpoint 对象之间的映射关系 */
-    val highWatermarkCheckpoints: Predef.Map[String, OffsetCheckpoint] = config.logDirs.map(
-        dir => (new File(dir).getAbsolutePath, new OffsetCheckpoint(new File(dir, ReplicaManager.HighWatermarkFilename)))).toMap
+    val highWatermarkCheckpoints: Predef.Map[String, OffsetCheckpoint] = config.logDirs.map(dir =>
+        (new File(dir).getAbsolutePath, new OffsetCheckpoint(new File(dir, ReplicaManager.HighWatermarkFilename)))).toMap
 
-    /** 表示 highwatermark-checkpoint 定时任务是否已经启动 */
+    /** 标记 highwatermark-checkpoint 定时任务是否已经启动 */
     private var hwThreadInitialized = false
 
     this.logIdent = "[Replica Manager on Broker " + localBrokerId + "]: "

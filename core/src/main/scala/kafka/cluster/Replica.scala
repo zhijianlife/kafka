@@ -36,41 +36,34 @@ import org.apache.kafka.common.utils.Time
  * @param initialHighWatermarkValue
  * @param log
  */
-class Replica(val brokerId: Int, // 当前副本所在的 broker 节点的 ID，可以将该 ID 与当前所在 broker 的 ID 比对来区分当前副本是本地副本还是远程副本
-              val partition: Partition, // 当前副本对应的 topic 分区对象
-              time: Time = Time.SYSTEM,
+class Replica(val brokerId: Int, // 当前副本所在的 broker 的 ID
+              val partition: Partition, // 当前副本所属的 topic 分区对象
+              time: Time = Time.SYSTEM, // 时间戳工具
               initialHighWatermarkValue: Long = 0L, // 初始 HW 值
-              val log: Option[Log] = None // 本地副本对应的 Log 对象，对于远程副本来说，该字段为空，通过该字段可以区分是本地副本还是远程副本
+              val log: Option[Log] = None // 当前副本所属的 Log 对象，如果是远程副本，该字段为空，通过该字段可以区分是本地副本还是远程副本
              ) extends Logging {
 
     /**
-     * 记录副本的 HW 值，消费者只能读取 HW 之前的消息，之后的消息对消费者是不可见的，
-     * 此字段由 leader 副本负责更新和维护，当消息被 ISR 集合中所有副本成功同步时更新该字段。
+     * 记录副本的 HW 值，消费者只能读取 HW 之前的消息，之后的消息对消费者不可见，
+     * 由 leader 副本维护，当消息被 ISR 集合中所有副本成功同步时更新该字段。
      */
     @volatile private[this] var highWatermarkMetadata = new LogOffsetMetadata(initialHighWatermarkValue)
 
     /**
-     * 记录 Log 最后一条消息的 offset 值：
+     * 记录副本所属 Log 对象最后一条消息的 offset 值：
      *
      * - 如果是本地副本，可以直接从 Log#nextOffsetMetadata 字段中获取；
      * - 如果是远程副本，则由其它 broker 发送请求来更新该值。
      */
     @volatile private[this] var logEndOffsetMetadata = LogOffsetMetadata.UnknownOffsetMetadata
 
-    /**
-     * The log end offset value at the time the leader received the last FetchRequest from this follower.
-     * This is used to determine the lastCaughtUpTimeMs of the follower
-     */
+    /** 缓存上次从 leader 拉取消息时 leader 副本的 LEO 值 */
     @volatile private[this] var lastFetchLeaderLogEndOffset = 0L
 
-    // The time when the leader received the last FetchRequest from this follower
-    // This is used to determine the lastCaughtUpTimeMs of the follower
+    /** 记录上次从 leader 拉取消息的时间戳 */
     @volatile private[this] var lastFetchTimeMs = 0L
 
-    /**
-     * the largest time t such that the offset of most recent FetchRequest from this follower >= the LEO of leader at time t.
-     * This is used to determine the lag of this follower and ISR of this partition.
-     */
+    /** 记录当前 follower 从 leader 拉取消息的最近一次时间戳，用于标识当前 follower 滞后 leader 的程度 */
     @volatile private[this] var _lastCaughtUpTimeMs = 0L
 
     val topicPartition: TopicPartition = partition.topicPartition
@@ -103,9 +96,11 @@ class Replica(val brokerId: Int, // 当前副本所在的 broker 节点的 ID，
         else if (logReadResult.info.fetchOffsetMetadata.messageOffset >= lastFetchLeaderLogEndOffset)
                  _lastCaughtUpTimeMs = math.max(_lastCaughtUpTimeMs, lastFetchTimeMs)
 
-        // 更新 LEO
+        // 如果当前副本是远程副本，则更新当前副本的 LEO 值
         logEndOffset = logReadResult.info.fetchOffsetMetadata
+        // 更新本地记录的从 leader 拉取消息时 leader 副本的 LEO 值
         lastFetchLeaderLogEndOffset = logReadResult.leaderLogEndOffset
+        // 更新本地记录的从 leader 拉取消息的时间戳
         lastFetchTimeMs = logReadResult.fetchTimeMs
     }
 
@@ -125,7 +120,7 @@ class Replica(val brokerId: Int, // 当前副本所在的 broker 节点的 ID，
             // 如果是本地副本，不能直接更新 LEO，而是由对应 Log 对象的 Log#logEndOffsetMetadata 字段决定
             throw new KafkaException(s"Should not set log end offset on partition $topicPartition's local replica $brokerId")
         } else {
-            // 如果是远程副本，LEO 是通过请求进行更新的
+            // 如果当前副本是远程副本，则更新副本的 LEO 值
             logEndOffsetMetadata = newLogEndOffset
             trace(s"Setting log end offset for replica $brokerId for partition $topicPartition to [$logEndOffsetMetadata]")
         }
@@ -136,12 +131,13 @@ class Replica(val brokerId: Int, // 当前副本所在的 broker 节点的 ID，
      *
      * @return
      */
-    def logEndOffset: LogOffsetMetadata =
-        if (isLocal)
-            log.get.logEndOffsetMetadata
-        else
-            logEndOffsetMetadata
+    def logEndOffset: LogOffsetMetadata = if (isLocal) log.get.logEndOffsetMetadata else logEndOffsetMetadata
 
+    /**
+     * 如果是本地副本则更新对应的 HW 值
+     *
+     * @param newHighWatermark
+     */
     def highWatermark_=(newHighWatermark: LogOffsetMetadata) {
         if (isLocal) {
             // 如果是本地副本，则更新对应的 HW
@@ -153,18 +149,18 @@ class Replica(val brokerId: Int, // 当前副本所在的 broker 节点的 ID，
     }
 
     /**
-     * 获取 HW
+     * 获取当前副本的 HW 值
      *
      * @return
      */
     def highWatermark: LogOffsetMetadata = highWatermarkMetadata
 
     /**
-     * 更新 HW offset 对应的 LogOffsetMetadata 对象
+     * 更新 HW 对应的 LogOffsetMetadata 对象
      */
     def convertHWToLocalOffsetMetadata(): Unit = {
         if (isLocal) {
-            // 如果是本地副本，则更新对应 HW offset 对应的 LogOffsetMetadata 对象
+            // 如果是本地副本，则更新对应 HW 的 LogOffsetMetadata 对象
             highWatermarkMetadata = log.get.convertToOffsetMetadata(highWatermarkMetadata.messageOffset)
         } else {
             throw new KafkaException(s"Should not construct complete high watermark on partition $topicPartition's non-local replica $brokerId")
