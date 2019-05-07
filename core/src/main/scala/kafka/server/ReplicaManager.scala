@@ -246,9 +246,9 @@ class ReplicaManager(val config: KafkaConfig, // 相关配置对象
     def getLog(topicPartition: TopicPartition): Option[Log] = logManager.getLog(topicPartition)
 
     /**
-     * Try to complete some delayed produce requests with the request key;
-     * this can be triggered when:
+     * 尝试执行监听给定 key 的 DelayedProduce 延时任务
      *
+     * this can be triggered when:
      * 1. The partition HW has changed (for acks = -1)
      * 2. A follower replica's fetch operation is received (for acks > 1)
      */
@@ -258,9 +258,9 @@ class ReplicaManager(val config: KafkaConfig, // 相关配置对象
     }
 
     /**
-     * Try to complete some delayed fetch requests with the request key;
-     * this can be triggered when:
+     * 尝试执行监听给定 key 的 DelayedFetch 延时任务
      *
+     * this can be triggered when:
      * 1. The partition HW has changed (for regular fetch)
      * 2. A new message set is appended to the local log (for follower fetch)
      */

@@ -17,6 +17,9 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 
+/**
+ * 记录分区状态信息
+ */
 public class PartitionState {
 
     public final int controllerEpoch;

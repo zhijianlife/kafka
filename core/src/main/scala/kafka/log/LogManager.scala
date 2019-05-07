@@ -423,18 +423,19 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
      */
     def createLog(topicPartition: TopicPartition, config: LogConfig): Log = {
         logCreationOrDeletionLock synchronized {
-            // create the log if it has not already been created in another thread
+            // 获取指定 topic 分区对应的 Log 对象
             getLog(topicPartition).getOrElse {
-                val dataDir = nextLogDir()
+                // 如果存在多个 log 目录，则选择 Log 数目最少的目录
+                val dataDir = this.nextLogDir()
+                // 创建当前 topic 分区对应的日志目录
                 val dir = new File(dataDir, topicPartition.topic + "-" + topicPartition.partition)
                 dir.mkdirs()
+                // 创建 Log 对象
                 val log = new Log(dir, config, recoveryPoint = 0L, scheduler, time)
+                // 记录到本地
                 logs.put(topicPartition, log)
                 info("Created log for partition [%s,%d] in %s with properties {%s}."
-                        .format(topicPartition.topic,
-                            topicPartition.partition,
-                            dataDir.getAbsolutePath,
-                            config.originals.asScala.mkString(", ")))
+                        .format(topicPartition.topic, topicPartition.partition, dataDir.getAbsolutePath, config.originals.asScala.mkString(", ")))
                 log
             }
         }
@@ -473,8 +474,7 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
     }
 
     /**
-     * Rename the directory of the given topic-partition "logdir" as "logdir.uuid.delete" and
-     * add it in the queue for deletion.
+     * Rename the directory of the given topic-partition "logdir" as "logdir.uuid.delete" and add it in the queue for deletion.
      *
      * @param topicPartition TopicPartition that needs to be deleted
      */
