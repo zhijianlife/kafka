@@ -157,11 +157,9 @@ object ZkUtils {
         getTopicPath(topic) + "/partitions"
     }
 
-    def getTopicPartitionPath(topic: String, partitionId: Int): String =
-        getTopicPartitionsPath(topic) + "/" + partitionId
+    def getTopicPartitionPath(topic: String, partitionId: Int): String = getTopicPartitionsPath(topic) + "/" + partitionId
 
-    def getTopicPartitionLeaderAndIsrPath(topic: String, partitionId: Int): String =
-        getTopicPartitionPath(topic, partitionId) + "/" + "state"
+    def getTopicPartitionLeaderAndIsrPath(topic: String, partitionId: Int): String = getTopicPartitionPath(topic, partitionId) + "/" + "state"
 
     def getEntityConfigRootPath(entityType: String): String = ZkUtils.ConfigPath + "/" + entityType
 
