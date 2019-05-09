@@ -56,12 +56,10 @@ case class LogAppendResult(info: LogAppendInfo, exception: Option[Throwable] = N
 /**
  * Result metadata of a log read operation on the log
  *
- * @param info             @FetchDataInfo returned by the @Log read
- * @param hw               high watermark of the local replica
- * @param readSize         amount of data that was read from the log i.e. size of the fetch
- * @param isReadFromLogEnd true if the request read up to the log end offset snapshot
- *                         when the read was initiated, false otherwise
- * @param exception        Exception if error encountered while reading from the log
+ * @param info      @FetchDataInfo returned by the @Log read
+ * @param hw        high watermark of the local replica
+ * @param readSize  amount of data that was read from the log i.e. size of the fetch
+ * @param exception Exception if error encountered while reading from the log
  */
 case class LogReadResult(info: FetchDataInfo,
                          hw: Long,
@@ -121,21 +119,21 @@ class ReplicaManager(val config: KafkaConfig, // 相关配置对象
                      time: Time, // 时间戳工具
                      val zkUtils: ZkUtils, // ZK 工具类
                      scheduler: Scheduler, // 定时任务调度器
-                     val logManager: LogManager, // 用于对分区日志执行读写操作
+                     val logManager: LogManager, // 用于对分区日志数据执行读写操作
                      val isShuttingDown: AtomicBoolean, // 标记 kafka 服务是否正在执行关闭操作
                      quotaManager: ReplicationQuotaManager,
                      threadNamePrefix: Option[String] = None) extends Logging with KafkaMetricsGroup {
 
     /**
-     * 记录 KafkaController 的年代信息，当重新选择 Controller Leader 时会递增该字段，
-     * 用于校验来自 KafkaController 的请求的年代信息，防止处理来自老的 Controller 的请求
+     * 记录 kafka controller 的年代信息，当重新选择 controller leader 时会递增该字段，
+     * 用于校验来自 controller 的请求的年代信息，防止处理来自老的 controller 的请求
      */
     @volatile var controllerEpoch: Int = KafkaController.InitialControllerEpoch - 1
 
     /** 本地 broker 的 ID */
     private val localBrokerId = config.brokerId
 
-    /** 记录当前 broker 管理的所有分区信息，当检索不到对应 topic 分区的 Partition 对象时会自动创建 */
+    /** 记录当前 broker 管理的所有分区信息，如果不存在则创建 */
     private val allPartitions = new Pool[TopicPartition, Partition](Some(tp => new Partition(tp.topic, tp.partition, time, this)))
 
     private val replicaStateChangeLock = new Object
@@ -146,7 +144,7 @@ class ReplicaManager(val config: KafkaConfig, // 相关配置对象
     /** 标记 highwatermark-checkpoint 定时任务是否已经启动 */
     private val highWatermarkCheckPointThreadStarted = new AtomicBoolean(false)
 
-    /** 记录 log 目录与对应 OffsetCheckpoint 对象之间的映射关系 */
+    /** 记录每个 log 目录与对应 topic 分区 HW 值的映射关系 */
     val highWatermarkCheckpoints: Predef.Map[String, OffsetCheckpoint] = config.logDirs.map(dir =>
         (new File(dir).getAbsolutePath, new OffsetCheckpoint(new File(dir, ReplicaManager.HighWatermarkFilename)))).toMap
 
@@ -201,9 +199,9 @@ class ReplicaManager(val config: KafkaConfig, // 相关配置对象
      * 并保存到 log 目录的 replication-offset-checkpoint 文件中
      */
     def startHighWaterMarksCheckPointThread(): Unit = {
-        // 保证启动一次
         if (highWatermarkCheckPointThreadStarted.compareAndSet(false, true))
-            scheduler.schedule("highwatermark-checkpoint",
+            scheduler.schedule(
+                "highwatermark-checkpoint",
                 checkpointHighWatermarks,
                 period = config.replicaHighWatermarkCheckpointIntervalMs,
                 unit = TimeUnit.MILLISECONDS)
@@ -227,15 +225,15 @@ class ReplicaManager(val config: KafkaConfig, // 相关配置对象
         val now = System.currentTimeMillis()
         isrChangeSet synchronized {
             /*
-             * isr-change-propagation 任务会定期将 ISR 发生变化的分区记录到 ZK，KafkaController 对相应路径添加了 Watcher，
-             * 当 Watcher 被触发后会向管理的 broker 发送 UpdateMetadataRequest，下面的 if 筛选是为防止频繁触发 Watcher
+             * 定期将 ISR 发生变化的分区记录到 ZK，kafka controller 对相应 ZK 路径添加了 Watcher，
+             * 当 Watcher 被触发后会向所管理的 broker 节点发送 UpdateMetadataRequest 请求
              */
             if (isrChangeSet.nonEmpty &&
                     // 最后一次有 ISR 集合发生变化的时间距离现在已经超过 5 秒
                     (lastIsrChangeMs.get() + ReplicaManager.IsrChangePropagationBlackOut < now
                             // 上次写入 ZK 的时间距离现在已经超过 1 分钟
                             || lastIsrPropagationMs.get() + ReplicaManager.IsrChangePropagationInterval < now)) {
-                // 将 isrChangeSet 写 ZK
+                // 将 ISR 集合发生变更的 topic 分区信息记录到 ZK
                 ReplicationUtils.propagateIsrChanges(zkUtils, isrChangeSet)
                 isrChangeSet.clear()
                 lastIsrPropagationMs.set(now)
@@ -272,12 +270,18 @@ class ReplicaManager(val config: KafkaConfig, // 相关配置对象
     def startup() {
         // start ISR expiration thread
         // A follower can lag behind leader for up to config.replicaLagTimeMaxMs x 1.5 before it is removed from ISR
-        // 周期性调用 maybeShrinkIsr 方法检测每个分区是否需要缩减 ISR 集合
+        // 定时检测当前 broker 节点管理的每个分区是否需要缩减 ISR 集合，并执行缩减操作
         scheduler.schedule("isr-expiration", maybeShrinkIsr, period = config.replicaLagTimeMaxMs / 2, unit = TimeUnit.MILLISECONDS)
-        // 周期性将 ISR 集合发生变化的分区记录到 ZK
+        // 定时将 ISR 集合发生变化的 topic 分区记录到 ZK
         scheduler.schedule("isr-change-propagation", maybePropagateIsrChanges, period = 2500L, unit = TimeUnit.MILLISECONDS)
     }
 
+    /**
+     *
+     * @param topicPartition
+     * @param deletePartition
+     * @return
+     */
     def stopReplica(topicPartition: TopicPartition, deletePartition: Boolean): Short = {
         stateChangeLogger.trace(s"Broker $localBrokerId handling stop replica (delete=$deletePartition) for partition $topicPartition")
         val errorCode = Errors.NONE.code
@@ -307,7 +311,7 @@ class ReplicaManager(val config: KafkaConfig, // 相关配置对象
     }
 
     /**
-     * 当收到 KafkaController 的 StopReplicaRequest 请求时，会关闭指定的副本，
+     * 当收到 kafka controller 的 StopReplicaRequest 请求时，会关闭指定的副本，
      * 并根据 StopReplicaRequest 中的字段决定是否删除副本对应的 Log。
      *
      * @param stopReplicaRequest
@@ -316,13 +320,14 @@ class ReplicaManager(val config: KafkaConfig, // 相关配置对象
     def stopReplicas(stopReplicaRequest: StopReplicaRequest): (mutable.Map[TopicPartition, Short], Short) = {
         replicaStateChangeLock synchronized {
             val responseMap = new collection.mutable.HashMap[TopicPartition, Short]
-            // 校验请求中的 controllerEpoch 信息
+            // 校验 controller 的年代信息，避免处理来自已经过期的 controller 的请求
             if (stopReplicaRequest.controllerEpoch() < controllerEpoch) {
                 stateChangeLogger.warn("Broker %d received stop replica request from an old controller epoch %d. Latest known controller epoch is %d"
                         .format(localBrokerId, stopReplicaRequest.controllerEpoch, controllerEpoch))
                 (responseMap, Errors.STALE_CONTROLLER_EPOCH.code)
             } else {
                 val partitions = stopReplicaRequest.partitions.asScala
+                // 更新本地记录的 kafka controller leader 的年代信息
                 controllerEpoch = stopReplicaRequest.controllerEpoch
                 // First stop fetchers for all partitions, then stop the corresponding replicas
                 // 停止对指定分区的 fetch 操作
@@ -341,12 +346,24 @@ class ReplicaManager(val config: KafkaConfig, // 相关配置对象
 
     def getPartition(topicPartition: TopicPartition): Option[Partition] = Option(allPartitions.get(topicPartition))
 
+    /**
+     * 获取指定分区位于当前 broker 节点上的本地副本对象，如果不存在则抛出异常
+     *
+     * @param topicPartition
+     * @return
+     */
     def getReplicaOrException(topicPartition: TopicPartition): Replica = {
         getReplica(topicPartition).getOrElse {
             throw new ReplicaNotAvailableException(s"Replica $localBrokerId is not available for partition $topicPartition")
         }
     }
 
+    /**
+     * 如果指定分区的 leader 副本位于当前 broker 上，则返回该副本对象
+     *
+     * @param topicPartition
+     * @return
+     */
     def getLeaderReplicaIfLocal(topicPartition: TopicPartition): Replica = {
         val partitionOpt = getPartition(topicPartition)
         partitionOpt match {
@@ -361,6 +378,13 @@ class ReplicaManager(val config: KafkaConfig, // 相关配置对象
         }
     }
 
+    /**
+     * 获取指定分区的指定副本对象
+     *
+     * @param topicPartition
+     * @param replicaId
+     * @return
+     */
     def getReplica(topicPartition: TopicPartition, replicaId: Int = localBrokerId): Option[Replica] =
         getPartition(topicPartition).flatMap(_.getReplica(replicaId))
 
@@ -701,11 +725,19 @@ class ReplicaManager(val config: KafkaConfig, // 相关配置对象
     def getMagic(topicPartition: TopicPartition): Option[Byte] =
         getReplica(topicPartition).flatMap(_.log.map(_.config.messageFormatVersion.messageFormatVersion))
 
+    /**
+     * 更新所有分区的状态信息，并返回需要被移除的分区集合
+     *
+     * @param correlationId
+     * @param updateMetadataRequest
+     * @param metadataCache
+     * @return
+     */
     def maybeUpdateMetadataCache(correlationId: Int,
                                  updateMetadataRequest: UpdateMetadataRequest,
                                  metadataCache: MetadataCache): Seq[TopicPartition] = {
         replicaStateChangeLock synchronized {
-            // 校验 controllerEpoch
+            // 校验 controller 的年代信息，避免处理来自已经过期的 controller 的请求
             if (updateMetadataRequest.controllerEpoch < controllerEpoch) {
                 val stateControllerEpochErrorMessage = ("Broker %d received update metadata request with correlation id %d from an " +
                         "old controller %d with epoch %d. Latest known controller epoch is %d").format(localBrokerId,
@@ -713,8 +745,9 @@ class ReplicaManager(val config: KafkaConfig, // 相关配置对象
                 stateChangeLogger.warn(stateControllerEpochErrorMessage)
                 throw new ControllerMovedException(stateControllerEpochErrorMessage)
             } else {
-                // 更新 MetadataCache
+                // 更新所有分区的状态信息，并返回需要被移除的分区集合
                 val deletedPartitions = metadataCache.updateCache(correlationId, updateMetadataRequest)
+                // 更新本地缓存的 controller 年代信息
                 controllerEpoch = updateMetadataRequest.controllerEpoch
                 deletedPartitions
             }
@@ -741,78 +774,76 @@ class ReplicaManager(val config: KafkaConfig, // 相关配置对象
                             leaderAndISRRequest.controllerId, leaderAndISRRequest.controllerEpoch, topicPartition.topic, topicPartition.partition))
         }
         replicaStateChangeLock synchronized {
-            // 记录每个分区角色切换的状态码
-            val responseMap = new mutable.HashMap[TopicPartition, Short]
-            // 校验 KafkaController 年代信息，忽略来自已经过期的 KafkaController 的请求
+            val responseMap = new mutable.HashMap[TopicPartition, Short] // 记录每个分区角色切换操作的状态码
+            // 校验 controller 的年代信息，避免处理来自已经过期的 controller 的请求
             if (leaderAndISRRequest.controllerEpoch < controllerEpoch) {
                 stateChangeLogger.warn(("Broker %d ignoring LeaderAndIsr request from controller %d with correlation id %d since " +
                         "its controller epoch %d is old. Latest known controller epoch is %d").format(localBrokerId, leaderAndISRRequest.controllerId, correlationId, leaderAndISRRequest.controllerEpoch, controllerEpoch))
                 BecomeLeaderOrFollowerResult(responseMap, Errors.STALE_CONTROLLER_EPOCH.code)
             } else {
                 val controllerId = leaderAndISRRequest.controllerId
+                // 1. 更新本地缓存的 kafka controller leader 的年代信息
                 controllerEpoch = leaderAndISRRequest.controllerEpoch
 
-                // 校验请求的 leader 副本的年代信息，以及是否由当前 broker 管理，将满足条件的分区信息记录到 partitionState 中
+                // 2. 校验请求的 leader 副本的年代信息，以及是否由当前 broker 管理，将满足条件的分区信息记录到 partitionState 集合中
                 val partitionState = new mutable.HashMap[Partition, PartitionState]()
-                leaderAndISRRequest.partitionStates.asScala.foreach {
-                    case (topicPartition, stateInfo) =>
-                        // 从当前 broker 管理的所有分区信息中检索给定 topic 分区对应的 Partition 对象，没有则创建
-                        val partition = getOrCreatePartition(topicPartition)
-                        // 获取 leader 副本的年代信息
-                        val partitionLeaderEpoch = partition.getLeaderEpoch
-                        // If the leader epoch is valid record the epoch of the controller that made the leadership decision.
-                        // This is useful while updating the isr to maintain the decision maker controller's epoch in the zookeeper path
-                        // 校验 leader 副本的年代信息，需要保证请求中的 leader 副本的年代信息大于本地缓存的 topic 分区 leader 的年代信息
-                        if (partitionLeaderEpoch < stateInfo.leaderEpoch) {
-                            // 如果请求的分区确实被分配给了当前 broker，则记录到 partitionState 中
-                            if (stateInfo.replicas.contains(localBrokerId))
-                                partitionState.put(partition, stateInfo)
-                            else {
-                                stateChangeLogger.warn(("Broker %d ignoring LeaderAndIsr request from controller %d with correlation id %d " +
-                                        "epoch %d for partition [%s,%d] as itself is not in assigned replica list %s")
-                                        .format(localBrokerId, controllerId, correlationId, leaderAndISRRequest.controllerEpoch,
-                                            topicPartition.topic, topicPartition.partition, stateInfo.replicas.asScala.mkString(",")))
-                                responseMap.put(topicPartition, Errors.UNKNOWN_TOPIC_OR_PARTITION.code)
-                            }
-                        } else {
-                            // 请求中的 leader 副本的年代信息小于等于本地记录的对应 topic 分区 leader 的年代信息
+                leaderAndISRRequest.partitionStates.asScala.foreach { case (topicPartition, stateInfo) =>
+                    // 获取/创建指定 topic 分区的 Partition 对象
+                    val partition = this.getOrCreatePartition(topicPartition)
+                    // 获取 leader 副本的年代信息
+                    val partitionLeaderEpoch = partition.getLeaderEpoch
+                    // 校验 leader 副本的年代信息，需要保证请求中的 leader 副本的年代信息大于本地缓存的 topic 分区 leader 副本的年代信息
+                    if (partitionLeaderEpoch < stateInfo.leaderEpoch) {
+                        // 如果请求的分区确实被分配给了当前 broker，则记录到 partitionState 集合中
+                        if (stateInfo.replicas.contains(localBrokerId))
+                            partitionState.put(partition, stateInfo)
+                        else {
                             stateChangeLogger.warn(("Broker %d ignoring LeaderAndIsr request from controller %d with correlation id %d " +
-                                    "epoch %d for partition [%s,%d] since its associated leader epoch %d is not higher than the current leader epoch %d")
+                                    "epoch %d for partition [%s,%d] as itself is not in assigned replica list %s")
                                     .format(localBrokerId, controllerId, correlationId, leaderAndISRRequest.controllerEpoch,
-                                        topicPartition.topic, topicPartition.partition, stateInfo.leaderEpoch, partitionLeaderEpoch))
-                            responseMap.put(topicPartition, Errors.STALE_CONTROLLER_EPOCH.code)
+                                        topicPartition.topic, topicPartition.partition, stateInfo.replicas.asScala.mkString(",")))
+                            responseMap.put(topicPartition, Errors.UNKNOWN_TOPIC_OR_PARTITION.code)
                         }
+                    } else {
+                        // 请求中的 leader 副本的年代信息小于等于本地记录的对应 topic 分区 leader 副本的年代信息
+                        stateChangeLogger.warn(("Broker %d ignoring LeaderAndIsr request from controller %d with correlation id %d " +
+                                "epoch %d for partition [%s,%d] since its associated leader epoch %d is not higher than the current leader epoch %d")
+                                .format(localBrokerId, controllerId, correlationId, leaderAndISRRequest.controllerEpoch,
+                                    topicPartition.topic, topicPartition.partition, stateInfo.leaderEpoch, partitionLeaderEpoch))
+                        responseMap.put(topicPartition, Errors.STALE_CONTROLLER_EPOCH.code)
+                    }
                 }
 
-                // 将请求的分区集合分割成 leader 和 follower 两类
+                // 3. 将请求对象中的分区集合分割成 leader 和 follower 两类，并执行角色切换
                 val partitionsTobeLeader = partitionState.filter { case (_, stateInfo) => stateInfo.leader == localBrokerId }
                 val partitionsToBeFollower = partitionState -- partitionsTobeLeader.keys
 
-                // 将指定分区的副本切换成 leader 副本
+                // 将指定分区的副本切换成 leader 角色
                 val partitionsBecomeLeader = if (partitionsTobeLeader.nonEmpty)
-                                                 makeLeaders(controllerId, controllerEpoch, partitionsTobeLeader, correlationId, responseMap)
+                                                 this.makeLeaders(controllerId, controllerEpoch, partitionsTobeLeader, correlationId, responseMap)
                                              else
                                                  Set.empty[Partition]
 
-                // 将指定分区的副本切换成 follower 副本
+                // 将指定分区的副本切换成 follower 角色
                 val partitionsBecomeFollower = if (partitionsToBeFollower.nonEmpty)
                                                    makeFollowers(controllerId, controllerEpoch, partitionsToBeFollower, correlationId, responseMap, metadataCache)
                                                else
                                                    Set.empty[Partition]
 
-                // we initialize highwatermark thread after the first leaderisrrequest. This ensures that all the partitions
-                // have been completely populated before starting the checkpointing there by avoiding weird race conditions
+                // 4. 如果 highwatermark-checkpoint 定时任务尚未启动，则执行启动
                 if (!hwThreadInitialized) {
                     // 启动 highwatermark-checkpoint 定时任务
-                    startHighWaterMarksCheckPointThread()
+                    this.startHighWaterMarksCheckPointThread()
                     hwThreadInitialized = true
                 }
 
-                // 关闭空闲的 fetcher 线程
+                // 5. 关闭空闲的 fetcher 线程
                 replicaFetcherManager.shutdownIdleFetcherThreads()
 
-                // 回调函数
+                // 6. 执行回调函数
                 onLeadershipChange(partitionsBecomeLeader, partitionsBecomeFollower)
+
+                // 7. 封装结果对象返回
                 BecomeLeaderOrFollowerResult(responseMap, Errors.NONE.code)
             }
         }
@@ -833,7 +864,7 @@ class ReplicaManager(val config: KafkaConfig, // 相关配置对象
      */
     private def makeLeaders(controllerId: Int,
                             epoch: Int,
-                            partitionState: Map[Partition, PartitionState], // 记录需要成为 leader 的分区副本信息
+                            partitionState: Map[Partition, PartitionState], // 记录需要切换成 leader 角色的分区副本信息
                             correlationId: Int,
                             responseMap: mutable.Map[TopicPartition, Short]): Set[Partition] = {
 
@@ -848,9 +879,8 @@ class ReplicaManager(val config: KafkaConfig, // 相关配置对象
             responseMap.put(partition.topicPartition, Errors.NONE.code)
 
         val partitionsToMakeLeaders: mutable.Set[Partition] = mutable.Set()
-
         try {
-            // 如果对应的副本当前是 follower，需要要先暂停这些副本的 fetch 操作
+            // 如果对应的副本当前是 follower 角色，需要要先暂停这些副本的 fetch 操作
             replicaFetcherManager.removeFetcherForPartitions(partitionState.keySet.map(_.topicPartition))
 
             // 遍历处理 partitionState 集合，将其中记录的分区转换成 leader 角色
@@ -1031,6 +1061,9 @@ class ReplicaManager(val config: KafkaConfig, // 相关配置对象
         partitionsToMakeFollower
     }
 
+    /**
+     * 遍历当前 broker 节点管理的分区，并尝试对分区 ISR 集合执行缩减操作
+     */
     private def maybeShrinkIsr(): Unit = {
         trace("Evaluating ISR list of partitions to see which replicas can be removed from the ISR")
         allPartitions.values.foreach(partition => partition.maybeShrinkIsr(config.replicaLagTimeMaxMs))
@@ -1080,13 +1113,13 @@ class ReplicaManager(val config: KafkaConfig, // 相关配置对象
      * Flushes the highwatermark value for all partitions to the highwatermark file
      */
     def checkpointHighWatermarks() {
-        // 获取全部的 Replica 对象
+        // 获取所有分区全部的本地副本 Replica 对象
         val replicas = allPartitions.values.flatMap(_.getReplica(localBrokerId))
         // 按照副本所在的 log 目录进行分组
         val replicasByDir = replicas.filter(_.log.isDefined).groupBy(_.log.get.dir.getParentFile.getAbsolutePath)
-        // 遍历处理
+        // 遍历将位于相同 log 目录下的分区 HW 值，写入到对应的 replication-offset-checkpoint 文件中
         for ((dir, reps) <- replicasByDir) {
-            // 收集当前 log 目录下全部副本的 HW
+            // 获取每个 topic 分区对应的 HW 值
             val hwms: Map[TopicPartition, Long] = reps.map(r => r.partition.topicPartition -> r.highWatermark.messageOffset).toMap
             try {
                 // 更新对应 log 目录下的 replication-offset-checkpoint 文件

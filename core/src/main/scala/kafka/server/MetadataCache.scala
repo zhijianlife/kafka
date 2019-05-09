@@ -38,22 +38,24 @@ import scala.collection.{Seq, Set, mutable}
  * This cache is updated through UpdateMetadataRequest from the controller.
  * Every broker maintains the same cache, asynchronously.
  *
- * Broker 使用 MetadataCache 来缓存整个集群上全部分区的状态，
- * 通过 controller 发送来的 UpdateMetadataRequest 请求维护更新，所有的 broker 维护的 cache 是一致的
+ * Broker 使用 MetadataCache 来缓存整个集群上全部分区的状态信息，
+ * 通过 controller 发送来的 UpdateMetadataRequest 请求进行维护，所有的 broker 维护的 cache 是一致的
  */
 private[server] class MetadataCache(brokerId: Int) extends Logging {
 
     private val stateChangeLogger = KafkaController.stateChangeLogger
 
-    /** 缓存每个分区的状态 */
+    /** 缓存每个分区的状态信息 */
     private val cache = mutable.Map[String, mutable.Map[Int, PartitionStateInfo]]()
+
+    /** kafka controller leader 的 ID */
     private var controllerId: Option[Int] = None
 
     /** 记录当前可用的 broker 信息 */
     private val aliveBrokers = mutable.Map[Int, Broker]()
-
-    /** 记录可用的节点信息 */
+    /** 记录当前可用的 broker 节点信息 */
     private val aliveNodes = mutable.Map[Int, collection.Map[ListenerName, Node]]()
+
     private val partitionMetadataLock = new ReentrantReadWriteLock()
 
     this.logIdent = s"[Kafka Metadata Cache on broker $brokerId] "
@@ -204,13 +206,13 @@ private[server] class MetadataCache(brokerId: Int) extends Logging {
      */
     def updateCache(correlationId: Int, updateMetadataRequest: UpdateMetadataRequest): Seq[TopicPartition] = {
         inWriteLock(partitionMetadataLock) {
-            // 更新 controllerId
+            // 更新本地缓存的 kafka controller 的 ID
             controllerId = updateMetadataRequest.controllerId match {
                 case id if id < 0 => None
                 case id => Some(id)
             }
 
-            // 清除 aliveNodes 和 aliveBrokers，并由 UpdateMetadataRequest.liveBrokers 重新构建
+            // 清除本地缓存的 aliveNodes 和 aliveBrokers 信息，并由 UpdateMetadataRequest 请求重新构建
             aliveNodes.clear()
             aliveBrokers.clear()
             updateMetadataRequest.liveBrokers.asScala.foreach { broker =>
@@ -227,22 +229,24 @@ private[server] class MetadataCache(brokerId: Int) extends Logging {
                 aliveNodes(broker.id) = nodes.asScala
             }
 
-            // 基于 UpdateMetadataRequest.partitionStates 更新缓存的每个分区的状态
+            // 基于 UpdateMetadataRequest 请求更新每个分区的状态信息，并返回需要被移除的分区集合
             val deletedPartitions = new mutable.ArrayBuffer[TopicPartition]
             updateMetadataRequest.partitionStates.asScala.foreach {
                 case (tp, info) =>
                     val controllerId = updateMetadataRequest.controllerId
                     val controllerEpoch = updateMetadataRequest.controllerEpoch
+                    //
                     if (info.leader == LeaderAndIsr.LeaderDuringDelete) {
-                        // 删除对应分区的 PartitionStateInfo
-                        removePartitionInfo(tp.topic, tp.partition)
+                        // 删除对应分区的状态信息
+                        this.removePartitionInfo(tp.topic, tp.partition)
                         stateChangeLogger.trace(s"Broker $brokerId deleted partition $tp from metadata cache in response to UpdateMetadata " +
                                 s"request sent by controller $controllerId epoch $controllerEpoch with correlation id $correlationId")
                         deletedPartitions += tp
                     } else {
-                        val partitionInfo = partitionStateToPartitionStateInfo(info)
-                        // 更新对应分区的 PartitionStateInfo
-                        addOrUpdatePartitionInfo(tp.topic, tp.partition, partitionInfo)
+                        // PartitionState -> PartitionStateInfo
+                        val partitionInfo = this.partitionStateToPartitionStateInfo(info)
+                        // 更新对应分区的状态信息
+                        this.addOrUpdatePartitionInfo(tp.topic, tp.partition, partitionInfo)
                         stateChangeLogger.trace(s"Broker $brokerId cached leader info $partitionInfo for partition $tp in response to " +
                                 s"UpdateMetadata request sent by controller $controllerId epoch $controllerEpoch with correlation id $correlationId")
                     }

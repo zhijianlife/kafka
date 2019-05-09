@@ -55,8 +55,7 @@ case class LeaderAndIsr(var leader: Int,
  * @param allReplicas AR 集合
  */
 case class PartitionStateInfo(leaderIsrAndControllerEpoch: LeaderIsrAndControllerEpoch,
-                              allReplicas: Set[Int]
-                             ) {
+                              allReplicas: Set[Int]) {
 
     def replicationFactor: Int = allReplicas.size
 
