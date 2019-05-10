@@ -504,7 +504,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         val clientId = request.header.clientId
 
         val (clusterAuthorizedTopics, clusterUnauthorizedTopics) =
-            if (fetchRequest.isFromFollower() && !authorize(request.session, ClusterAction, Resource.ClusterResource)) {
+            if (fetchRequest.isFromFollower && !authorize(request.session, ClusterAction, Resource.ClusterResource)) {
                 (Seq.empty, fetchRequest.fetchData.asScala.toSeq)
             } else {
                 (fetchRequest.fetchData.asScala.toSeq, Seq.empty)

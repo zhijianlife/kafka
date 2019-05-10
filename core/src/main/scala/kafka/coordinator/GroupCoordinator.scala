@@ -674,6 +674,11 @@ class GroupCoordinator(val brokerId: Int,
         }
     }
 
+    /**
+     * 当 broker 成为 offset topic 分区的 leader 副本时会回调该方法执行加载工作
+     *
+     * @param offsetTopicPartitionId
+     */
     def handleGroupImmigration(offsetTopicPartitionId: Int) {
         groupManager.loadGroupsForPartition(offsetTopicPartitionId, onGroupLoaded)
     }
