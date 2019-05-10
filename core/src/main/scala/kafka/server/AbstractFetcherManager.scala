@@ -26,13 +26,20 @@ import org.apache.kafka.common.utils.Utils
 
 import scala.collection.{Map, Set, mutable}
 
+/**
+ * 管理对应的 AbstractFetcherThread 线程
+ *
+ * @param name
+ * @param clientId
+ * @param numFetchers
+ */
 abstract class AbstractFetcherManager(protected val name: String,
                                       clientId: String,
                                       numFetchers: Int = 1
                                      ) extends Logging with KafkaMetricsGroup {
 
     /**
-     * 管理 AbstractFetcherThread
+     * 管理 AbstractFetcherThread，其中 key 是线程操作的目标 broker 节点，value 是 fetch 线程对象
      *
      * map of (source broker_id, fetcher_id per source broker) => fetcher
      */
@@ -70,15 +77,28 @@ abstract class AbstractFetcherManager(protected val name: String,
         Map("clientId" -> clientId)
     )
 
+    /**
+     * 计算 fetcher 线程 ID
+     *
+     * @param topic
+     * @param partitionId
+     * @return
+     */
     private def getFetcherId(topic: String, partitionId: Int): Int = {
         Utils.abs(31 * topic.hashCode() + partitionId) % numFetchers
     }
 
-    // to be defined in subclass to create a specific fetcher
+    /**
+     * to be defined in subclass to create a specific fetcher
+     *
+     * @param fetcherId
+     * @param sourceBroker
+     * @return
+     */
     def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): AbstractFetcherThread
 
     /**
-     * 让 follower 副本从指定的 offset 开始与 leader 副本进行同步
+     * 将需要同步的 topic 分区分组，并为每个组创建并启动一个同步线程，从指定的 offset 开始与 leader 副本进行同步
      *
      * @param partitionAndOffsets
      */
@@ -87,31 +107,28 @@ abstract class AbstractFetcherManager(protected val name: String,
             val partitionsPerFetcher = partitionAndOffsets.groupBy {
                 case (topicPartition, brokerAndInitialOffset) =>
                     /*
-                     * 通过分区所属的 topic 和分区编号计算得到对应的 fetcher 线程 ID，然后与 broker 的网络位置信息组成 key，并进行分组。
-                     * 每组对应相同的 fetcher 线程。每个线程只连接一个 broker，但可以为多个分区的 follower 副本执行同步操作
+                     * 由分区所属的 topic 和分区编号计算得到对应的 fetcher 线程 ID，并与 broker 的网络位置信息组成 key，然后按 key 进行分组。
+                     * 后面会为每组分配一个 fetcher 线程，每个线程只连接一个 broker，可以同时为组内多个分区的 follower 副本执行同步操作
                      */
-                    BrokerAndFetcherId(brokerAndInitialOffset.broker, getFetcherId(topicPartition.topic, topicPartition.partition))
+                    BrokerAndFetcherId(brokerAndInitialOffset.broker, this.getFetcherId(topicPartition.topic, topicPartition.partition))
             }
 
-            // 按照 key 查找对应的 fetcher 线程，查找不到就创建新的 fetcher 线程并启动
+            // 启动所有的的 fetcher 线程，如果对应线程不存在，则创建并启动
             for ((brokerAndFetcherId, partitionAndOffsets) <- partitionsPerFetcher) {
                 var fetcherThread: AbstractFetcherThread = null
                 fetcherThreadMap.get(brokerAndFetcherId) match {
-                    // 找到对应的 fether 线程
                     case Some(f) => fetcherThread = f
-                    // 没有找到，创建并启动新的 fetcher 线程
                     case None =>
-                        fetcherThread = createFetcherThread(brokerAndFetcherId.fetcherId, brokerAndFetcherId.broker)
-                        // 添加到 fetcherThreadMap 中进行管理
+                        // 新建 ReplicaFetcherThread 线程对象，并记录到 fetcherThreadMap 集合中
+                        fetcherThread = this.createFetcherThread(brokerAndFetcherId.fetcherId, brokerAndFetcherId.broker)
                         fetcherThreadMap.put(brokerAndFetcherId, fetcherThread)
-                        fetcherThread.start()
+                        fetcherThread.start() // 启动线程
                 }
 
-                // 将分区信息以及同步起始位置传递给 fetcher 线程，并唤醒 fetcher 线程，开始同步
-                fetcherThreadMap(brokerAndFetcherId).addPartitions(
-                    partitionAndOffsets.map {
-                        case (tp, brokerAndInitOffset) => tp -> brokerAndInitOffset.initOffset
-                    })
+                // 将 topic 分区和同步起始位置传递给 fetcher 线程，并唤醒 fetcher 线程开始同步
+                fetcherThreadMap(brokerAndFetcherId).addPartitions(partitionAndOffsets.map {
+                    case (tp, brokerAndInitOffset) => tp -> brokerAndInitOffset.initOffset
+                })
             }
         }
 
@@ -121,13 +138,13 @@ abstract class AbstractFetcherManager(protected val name: String,
     }
 
     /**
-     * 停止指定 follower 副本的同步操作
+     * 停止对指定 topic 分区的同步操作
      *
      * @param partitions
      */
     def removeFetcherForPartitions(partitions: Set[TopicPartition]) {
         mapLock synchronized {
-            // 将 TP 信息从 fetcher 线程中移除
+            // 将指定的 topic 分区集合从 fetcher 线程中移除
             for (fetcher <- fetcherThreadMap.values)
                 fetcher.removePartitions(partitions)
         }
