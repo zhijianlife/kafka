@@ -742,7 +742,7 @@ class ReplicaManager(val config: KafkaConfig, // 相关配置对象
             } else {
                 // 更新所有分区的状态信息，并返回需要被移除的分区集合
                 val deletedPartitions = metadataCache.updateCache(correlationId, updateMetadataRequest)
-                // 更新本地缓存的 controller 年代信息
+                // 更新本地缓存的 controller 的年代信息
                 controllerEpoch = updateMetadataRequest.controllerEpoch
                 deletedPartitions
             }
@@ -1070,10 +1070,10 @@ class ReplicaManager(val config: KafkaConfig, // 相关配置对象
             case (topicPartition, readResult) =>
                 getPartition(topicPartition) match {
                     case Some(partition) =>
-                        // 更新指定 follower 副本的状态，并尝试扩张对应分区的 ISR 集合
+                        // 更新指定 follower 副本的状态，并尝试扩张对应分区的 ISR 集合，以及后移 leader 副本的 HW 值
                         partition.updateReplicaLogReadResult(replicaId, readResult)
                         // 尝试执行 DelayedProduce 延时任务，因为此时对应 topic 分区下已经有新的消息成功写入
-                        tryCompleteDelayedProduce(new TopicPartitionOperationKey(topicPartition))
+                        this.tryCompleteDelayedProduce(new TopicPartitionOperationKey(topicPartition))
                     case None =>
                         warn("While recording the replica LEO, the partition %s hasn't been created.".format(topicPartition))
                 }

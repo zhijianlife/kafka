@@ -30,6 +30,7 @@ object LeaderAndIsr {
 }
 
 /**
+ * 封装分区 leader 和 ISR 集合信息
  *
  * @param leader      leader 副本 ID
  * @param leaderEpoch leader 的年代信息
@@ -50,12 +51,12 @@ case class LeaderAndIsr(var leader: Int,
 }
 
 /**
+ * 记录分区状态信息
  *
  * @param leaderIsrAndControllerEpoch
  * @param allReplicas AR 集合
  */
-case class PartitionStateInfo(leaderIsrAndControllerEpoch: LeaderIsrAndControllerEpoch,
-                              allReplicas: Set[Int]) {
+case class PartitionStateInfo(leaderIsrAndControllerEpoch: LeaderIsrAndControllerEpoch, allReplicas: Set[Int]) {
 
     def replicationFactor: Int = allReplicas.size
 
