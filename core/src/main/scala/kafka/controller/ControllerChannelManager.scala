@@ -52,7 +52,7 @@ class ControllerChannelManager(controllerContext: ControllerContext,
                                metrics: Metrics,
                                threadNamePrefix: Option[String] = None) extends Logging {
 
-    /** 管理集群中每个 broker 对应的 ControllerBrokerStateInfo 对象 */
+    /** 管理集群中每个 broker 对应与 leader 之间的连接信息 */
     protected val brokerStateInfo = new mutable.HashMap[Int, ControllerBrokerStateInfo]
     private val brokerLock = new Object
     this.logIdent = "[Channel manager on controller " + config.brokerId + "]: "

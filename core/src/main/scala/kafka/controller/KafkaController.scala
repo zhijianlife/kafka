@@ -50,11 +50,11 @@ import scala.collection._
  */
 class ControllerContext(val zkUtils: ZkUtils) {
 
-    /** 管理 controller 与集群中 broker 之间的连接 */
+    /** 管理 controller 与集群中其它 broker 之间的连接 */
     var controllerChannelManager: ControllerChannelManager = _
     val controllerLock: ReentrantLock = new ReentrantLock()
 
-    /** 正在关闭的 broker 集合 */
+    /** 记录正在关闭的 brokerId 集合 */
     var shuttingDownBrokerIds: mutable.Set[Int] = mutable.Set.empty
     val brokerShutdownLock: Object = new Object
 
@@ -189,7 +189,7 @@ class ControllerContext(val zkUtils: ZkUtils) {
         allTopics -= topic
     }
 
-}
+} // end of ControllerContext
 
 object KafkaController extends Logging {
     val stateChangeLogger = StateChangeLogger("state.change.logger")
@@ -233,32 +233,49 @@ object KafkaController extends Logging {
  * @param metrics
  * @param threadNamePrefix
  */
-class KafkaController(val config: KafkaConfig,
-                      zkUtils: ZkUtils,
-                      val brokerState: BrokerState,
-                      time: Time,
+class KafkaController(val config: KafkaConfig, // 配置信息
+                      zkUtils: ZkUtils, // ZK 交互工具类
+                      val brokerState: BrokerState, // 描述 broker 节点的状态
+                      time: Time, // 时间戳工具类
                       metrics: Metrics,
                       threadNamePrefix: Option[String] = None) extends Logging with KafkaMetricsGroup {
 
     this.logIdent = "[Controller " + config.brokerId + "]: "
+
+    /** 标识是否启动 */
     private var isRunning = true
+
     private val stateChangeLogger = KafkaController.stateChangeLogger
+
+    /** 维护上下文信息，缓存 ZK 中记录的整个集群的元数据信息 */
     val controllerContext = new ControllerContext(zkUtils)
+
+    /** 管理集群中所有分区状态的状态机 */
     val partitionStateMachine = new PartitionStateMachine(this)
+
+    /** 管理集群中所有副本状态的状态机 */
     val replicaStateMachine = new ReplicaStateMachine(this)
-    /** 用于故障转移 */
+
+    /** 用于故障转移，选举 leader */
     private val controllerElector = new ZookeeperLeaderElector(
         controllerContext, ZkUtils.ControllerPath, onControllerFailover, onControllerResignation, config.brokerId, time)
-    // have a separate scheduler for the controller to be able to start and stop independently of the
-    // kafka server
+
+    /** 分区自动均衡定时任务调度器 */
     private val autoRebalanceScheduler = new KafkaScheduler(1)
+
+    /** 用于对指定的 topic 执行删除操作 */
     var deleteTopicManager: TopicDeletionManager = _
+
+    /** Leader 副本选举策略 */
     val offlinePartitionSelector = new OfflinePartitionLeaderSelector(controllerContext, config)
     private val reassignedPartitionLeaderSelector = new ReassignedPartitionLeaderSelector(controllerContext)
     private val preferredReplicaPartitionLeaderSelector = new PreferredReplicaPartitionLeaderSelector(controllerContext)
     private val controlledShutdownPartitionLeaderSelector = new ControlledShutdownLeaderSelector(controllerContext)
+
+    /** 用于批量向 broker 发送请求 */
     private val brokerRequestBatch = new ControllerBrokerRequestBatch(this)
 
+    /** ZK 监听器 */
     private val partitionReassignedListener = new PartitionsReassignedListener(this)
     private val preferredReplicaElectionListener = new PreferredReplicaElectionListener(this)
     private val isrChangeNotificationListener = new IsrChangeNotificationListener(this)
