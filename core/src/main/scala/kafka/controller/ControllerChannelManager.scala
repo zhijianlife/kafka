@@ -52,12 +52,13 @@ class ControllerChannelManager(controllerContext: ControllerContext,
                                metrics: Metrics,
                                threadNamePrefix: Option[String] = None) extends Logging {
 
-    /** 管理集群中每个 broker 对应与 leader 之间的连接信息 */
+    /** 管理集群中每个 broker 节点与 controller 之间的连接信息 */
     protected val brokerStateInfo = new mutable.HashMap[Int, ControllerBrokerStateInfo]
     private val brokerLock = new Object
     this.logIdent = "[Channel manager on controller " + config.brokerId + "]: "
 
-    controllerContext.liveBrokers.foreach(addNewBroker)
+    // 遍历处理当前集群中可用的 broker 节点
+    controllerContext.liveBrokers.foreach(this.addNewBroker)
 
     def startup(): Unit = {
         brokerLock synchronized {
@@ -103,8 +104,13 @@ class ControllerChannelManager(controllerContext: ControllerContext,
         }
     }
 
+    /**
+     * 新建到指定 broker 节点的连接信息，并记录到本地 brokerStateInfo 集合中
+     *
+     * @param broker
+     */
     private def addNewBroker(broker: Broker) {
-        // 创建消息队列
+        // 创建消息队列，用于存放发往指定 broker 节点的请求
         val messageQueue = new LinkedBlockingQueue[QueueItem]
         debug("Controller %d trying to connect to broker %d".format(config.brokerId, broker.id))
         val brokerEndPoint = broker.getBrokerEndPoint(config.interBrokerListenerName)
@@ -141,14 +147,16 @@ class ControllerChannelManager(controllerContext: ControllerContext,
                 false
             )
         }
+
+        // 创建请求发送线程对象
         val threadName = threadNamePrefix match {
             case None => "Controller-%d-to-broker-%d-send-thread".format(config.brokerId, broker.id)
             case Some(name) => "%s:Controller-%d-to-broker-%d-send-thread".format(name, config.brokerId, broker.id)
         }
-
         val requestThread = new RequestSendThread(
             config.brokerId, controllerContext, messageQueue, networkClient, brokerNode, config, time, threadName)
         requestThread.setDaemon(false)
+
         // 记录到 brokerStateInfo 集合
         brokerStateInfo.put(broker.id, ControllerBrokerStateInfo(networkClient, brokerNode, messageQueue, requestThread))
     }
@@ -181,13 +189,25 @@ class ControllerChannelManager(controllerContext: ControllerContext,
 /**
  *
  * @param apiKey   请求类型
- * @param request  请求
- * @param callback 响应
+ * @param request  请求对象
+ * @param callback 响应回调函数
  */
 case class QueueItem(apiKey: ApiKeys,
                      request: AbstractRequest.Builder[_ <: AbstractRequest],
                      callback: AbstractResponse => Unit)
 
+/**
+ * 请求发送线程
+ *
+ * @param controllerId
+ * @param controllerContext
+ * @param queue
+ * @param networkClient
+ * @param brokerNode
+ * @param config
+ * @param time
+ * @param name
+ */
 class RequestSendThread(val controllerId: Int,
                         val controllerContext: ControllerContext,
                         val queue: BlockingQueue[QueueItem],
@@ -195,8 +215,8 @@ class RequestSendThread(val controllerId: Int,
                         val brokerNode: Node,
                         val config: KafkaConfig,
                         val time: Time,
-                        name: String)
-        extends ShutdownableThread(name = name) {
+                        name: String
+                       ) extends ShutdownableThread(name = name) {
 
     private val lock = new Object()
     private val stateChangeLogger = KafkaController.stateChangeLogger
@@ -206,25 +226,23 @@ class RequestSendThread(val controllerId: Int,
 
         def backoff(): Unit = CoreUtils.swallowTrace(Thread.sleep(100))
 
-        // 获取缓冲队列中的 QueueItem 对象
+        // 获取缓冲队列中的 QueueItem 对象，封装了请求类型、请求对象，以及响应回调函数
         val QueueItem(apiKey, requestBuilder, callback) = queue.take()
-        import NetworkClientBlockingOps._
+
+        import NetworkClientBlockingOps._ // 阻塞模式
+
         var clientResponse: ClientResponse = null
         try {
             lock synchronized {
-                var isSendSuccessful = false
+                var isSendSuccessful = false // 标识请求是否发送成功
                 while (isRunning.get() && !isSendSuccessful) {
-                    // if a broker goes down for a long time, then at some point the controller's zookeeper listener will trigger a
-                    // removeBroker which will invoke shutdown() on this thread. At that point, we will stop retrying.
-                    // 当 broker 宕机后，会触发 ZK 的监听器调用 removeBroker 方法停止当前线程，在停止前会一直尝试重试
+                    // 当 broker 节点宕机后，会触发 ZK 的监听器调用 removeBroker 方法停止当前线程，在停止前会一直尝试重试
                     try {
-                        // 阻塞等待符合发送的条件
+                        // 阻塞等待指定 broker 节点是否允许接收请求
                         if (!brokerReady()) {
                             isSendSuccessful = false
-                            // 等待 100 毫秒
-                            backoff()
-                        }
-                        else {
+                            backoff() // 等待 100 毫秒
+                        } else {
                             // 创建并发送请求，同时阻塞等待响应
                             val clientRequest = networkClient.newClientRequest(brokerNode.idString, requestBuilder, time.milliseconds(), true)
                             clientResponse = networkClient.blockingSendAndReceive(clientRequest)(time)
@@ -240,6 +258,8 @@ class RequestSendThread(val controllerId: Int,
                             backoff()
                     }
                 }
+
+                // 解析响应
                 if (clientResponse != null) {
                     // 解析请求类型
                     val api = ApiKeys.forId(clientResponse.requestHeader.apiKey)
@@ -252,7 +272,7 @@ class RequestSendThread(val controllerId: Int,
                     stateChangeLogger.trace("Controller %d epoch %d received response %s for a request sent to broker %s"
                             .format(controllerId, controllerContext.epoch, response.toString, brokerNode.toString))
 
-                    // 封装回调函数
+                    // 执行响应回调函数
                     if (callback != null) {
                         callback(response)
                     }
@@ -272,10 +292,8 @@ class RequestSendThread(val controllerId: Int,
             if (!networkClient.isReady(brokerNode)(time)) {
                 if (!networkClient.blockingReady(brokerNode, socketTimeoutMs)(time))
                     throw new SocketTimeoutException(s"Failed to connect within $socketTimeoutMs ms")
-
                 info("Controller %d connected to %s for sending state change requests".format(controllerId, brokerNode.toString))
             }
-
             true
         } catch {
             case e: Throwable =>

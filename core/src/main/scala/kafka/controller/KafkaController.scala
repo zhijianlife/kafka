@@ -105,7 +105,7 @@ class ControllerContext(val zkUtils: ZkUtils) {
     def liveOrShuttingDownBrokers: Set[Broker] = liveBrokersUnderlying
 
     /**
-     * 获取在指定 broker 有存在副本的分区集合
+     * 获取在指定 broker 节点上存在副本的 topic 分区集合
      *
      * @param brokerId
      * @return
@@ -117,7 +117,7 @@ class ControllerContext(val zkUtils: ZkUtils) {
     }
 
     /**
-     * 获取指定 broker 集合中保存的所有副本
+     * 获取指定 broker 节点上保存的所有副本对象
      *
      * @param brokerIds
      * @return
@@ -132,7 +132,7 @@ class ControllerContext(val zkUtils: ZkUtils) {
     }
 
     /**
-     * 获取指定 topic 的所有副本
+     * 获取指定 topic 的所有副本对象
      *
      * @param topic
      * @return
@@ -148,7 +148,7 @@ class ControllerContext(val zkUtils: ZkUtils) {
     }
 
     /**
-     * 获取指定 topic 的所有分区
+     * 获取指定 topic 的所有 topic 分区对象
      *
      * @param topic
      * @return
@@ -157,7 +157,7 @@ class ControllerContext(val zkUtils: ZkUtils) {
         partitionReplicaAssignment.keySet.filter(topicAndPartition => topicAndPartition.topic == topic)
 
     /**
-     * 获取所有可用的 broker 中保存的副本
+     * 获取所有可用的 broker 中保存的副本对象
      *
      * @return
      */
@@ -166,7 +166,7 @@ class ControllerContext(val zkUtils: ZkUtils) {
     }
 
     /**
-     * 获取指定分区集合的副本
+     * 获取指定 topic 分区集合的副本对象
      *
      * @param partitions
      * @return
