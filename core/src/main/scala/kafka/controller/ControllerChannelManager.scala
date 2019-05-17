@@ -312,13 +312,16 @@ class RequestSendThread(val controllerId: Int,
  */
 class ControllerBrokerRequestBatch(controller: KafkaController) extends Logging {
 
+    /** Controller 上下文信息 */
     val controllerContext: ControllerContext = controller.controllerContext
+
+    /** Controller 节点 ID */
     val controllerId: Int = controller.config.brokerId
 
-    /** 记录发往指定 broker 的 LeaderAndIsrRequest 请求所需的信息 */
+    /** 记录发往指定 broker 节点的 LeaderAndIsrRequest 请求所需的信息 */
     val leaderAndIsrRequestMap = mutable.Map.empty[Int, mutable.Map[TopicPartition, PartitionStateInfo]]
 
-    /** 记录发往指定 broker 的 StopReplicaRequest 请求所需的信息 */
+    /** 记录发往指定 broker 节点的 StopReplicaRequest 请求所需的信息 */
     val stopReplicaRequestMap = mutable.Map.empty[Int, Seq[StopReplicaRequestInfo]]
 
     /** UpdateMetadataRequest 请求对应的目标 brokerId 集合 */
@@ -326,10 +329,13 @@ class ControllerBrokerRequestBatch(controller: KafkaController) extends Logging 
 
     /** UpdateMetadataRequest 请求对应的请求信息 */
     val updateMetadataRequestPartitionInfoMap = mutable.Map.empty[TopicPartition, PartitionStateInfo]
+
     private val stateChangeLogger = KafkaController.stateChangeLogger
 
+    /**
+     * 校验相应的集合是否为空，如果不为空则说明上一次批请求还未完成，则抛出异常
+     */
     def newBatch() {
-        // raise error if the previous batch is not empty
         if (leaderAndIsrRequestMap.nonEmpty)
             throw new IllegalStateException("Controller to broker state change requests batch is not empty while creating " +
                     "a new one. Some LeaderAndIsr state changes %s might be lost ".format(leaderAndIsrRequestMap.toString()))
@@ -368,13 +374,14 @@ class ControllerBrokerRequestBatch(controller: KafkaController) extends Logging 
                                          callback: AbstractResponse => Unit = null) {
         val topicPartition = new TopicPartition(topic, partition)
 
+        // 封装 LeaderAndIsrRequest 请求所需信息到 leaderAndIsrRequestMap 集合中
         brokerIds.filter(_ >= 0).foreach { brokerId =>
             val result = leaderAndIsrRequestMap.getOrElseUpdate(brokerId, mutable.Map.empty)
             result.put(topicPartition, PartitionStateInfo(leaderIsrAndControllerEpoch, replicas.toSet))
         }
 
-        // 准备向所有可用的 broker 发送 UpdateMetadataRequest 请求
-        addUpdateMetadataRequestForBrokers(
+        // 准备向所有可用的 broker 节点发送 UpdateMetadataRequest 请求
+        this.addUpdateMetadataRequestForBrokers(
             controllerContext.liveOrShuttingDownBrokerIds.toSeq, Set(TopicAndPartition(topic, partition)))
     }
 
@@ -408,7 +415,7 @@ class ControllerBrokerRequestBatch(controller: KafkaController) extends Logging 
      * Send UpdateMetadataRequest to the given brokers for the given partitions and partitions that are being deleted
      *
      * @param brokerIds
-     * @param partitions
+     * @param partitions 需要更新的分区集合，如果不指定则表示需要更新所有的分区
      * @param callback
      */
     def addUpdateMetadataRequestForBrokers(brokerIds: Seq[Int],
@@ -417,31 +424,31 @@ class ControllerBrokerRequestBatch(controller: KafkaController) extends Logging 
 
         // 定义回调函数
         def updateMetadataRequestPartitionInfo(partition: TopicAndPartition, beingDeleted: Boolean) {
-            // 获取当前分区对应的 LeaderIsrAndControllerEpoch 信息
+            // 获取当前分区 leader 副本所在的 brokerId、ISR 集合，以及 controller 年代信息
             val leaderIsrAndControllerEpochOpt = controllerContext.partitionLeadershipInfo.get(partition)
             leaderIsrAndControllerEpochOpt match {
                 case Some(leaderIsrAndControllerEpoch) =>
                     // 获取分区的 AR 集合
                     val replicas = controllerContext.partitionReplicaAssignment(partition).toSet
-                    val partitionStateInfo = if (beingDeleted) {
+                    // 构建分区状态信息
+                    val partitionStateInfo = if (beingDeleted) { // 对应的分区需要被删除
                         val leaderAndIsr = new LeaderAndIsr(LeaderAndIsr.LeaderDuringDelete, leaderIsrAndControllerEpoch.leaderAndIsr.isr)
                         PartitionStateInfo(LeaderIsrAndControllerEpoch(leaderAndIsr, leaderIsrAndControllerEpoch.controllerEpoch), replicas)
                     } else {
                         PartitionStateInfo(leaderIsrAndControllerEpoch, replicas)
                     }
+                    // 记录 UpdateMetadataRequest 请求对应的请求信息
                     updateMetadataRequestPartitionInfoMap.put(new TopicPartition(partition.topic, partition.partition), partitionStateInfo)
+                // 对应分区还未分配 leader 副本
                 case None =>
                     info("Leader not yet assigned for partition %s. Skip sending UpdateMetadataRequest.".format(partition))
             }
         }
 
         val filteredPartitions = {
-            // 如果指定的分区集合为空，则需要更新全部分区
-            val givenPartitions = if (partitions.isEmpty)
-                                      controllerContext.partitionLeadershipInfo.keySet
-                                  else
-                                      partitions
-            // 过滤即将被删除的分区
+            // 如果指定的分区集合为空，则表示需要更新全部分区
+            val givenPartitions = if (partitions.isEmpty) controllerContext.partitionLeadershipInfo.keySet else partitions
+            // 过滤即将被删除的 topic 对应的分区
             if (controller.deleteTopicManager.partitionsToBeDeleted.isEmpty)
                 givenPartitions
             else
@@ -450,8 +457,7 @@ class ControllerBrokerRequestBatch(controller: KafkaController) extends Logging 
 
         updateMetadataRequestBrokerSet ++= brokerIds.filter(_ >= 0)
         // 将分区信息添加到 updateMetadataRequestPartitionInfoMap 集合中等待发送，beingDeleted 为 false
-        filteredPartitions.foreach(
-            partition => updateMetadataRequestPartitionInfo(partition, beingDeleted = false))
+        filteredPartitions.foreach(partition => updateMetadataRequestPartitionInfo(partition, beingDeleted = false))
         // 将即将被删除的分区信息添加到 updateMetadataRequestPartitionInfoMap 集合中等待发送，beingDeleted 为 true
         controller.deleteTopicManager.partitionsToBeDeleted.foreach(
             partition => updateMetadataRequestPartitionInfo(partition, beingDeleted = true))
@@ -493,9 +499,11 @@ class ControllerBrokerRequestBatch(controller: KafkaController) extends Logging 
             // 清空 leaderAndIsrRequestMap 集合
             leaderAndIsrRequestMap.clear()
 
+
+            // 构造 UpdateMetadataRequest 请求对象，并将请求缓存到队列中等待发送
+
             updateMetadataRequestPartitionInfoMap.foreach(p => stateChangeLogger.trace(("Controller %d epoch %d sending UpdateMetadata request %s " +
-                    "to brokers %s for partition %s").format(controllerId, controllerEpoch, p._2.leaderIsrAndControllerEpoch,
-                updateMetadataRequestBrokerSet.toString(), p._1)))
+                    "to brokers %s for partition %s").format(controllerId, controllerEpoch, p._2.leaderIsrAndControllerEpoch, updateMetadataRequestBrokerSet.toString(), p._1)))
             val partitionStates = updateMetadataRequestPartitionInfoMap.map { case (topicPartition, partitionStateInfo) =>
                 val LeaderIsrAndControllerEpoch(leaderIsr, controllerEpoch) = partitionStateInfo.leaderIsrAndControllerEpoch
                 val partitionState = new requests.PartitionState(controllerEpoch, leaderIsr.leader,
@@ -529,8 +537,7 @@ class ControllerBrokerRequestBatch(controller: KafkaController) extends Logging 
                     }
                 }
                 new UpdateMetadataRequest.Builder(
-                    controllerId, controllerEpoch, partitionStates.asJava, liveBrokers.asJava).
-                        setVersion(version)
+                    controllerId, controllerEpoch, partitionStates.asJava, liveBrokers.asJava).setVersion(version)
             }
 
             updateMetadataRequestBrokerSet.foreach { broker =>
@@ -539,13 +546,13 @@ class ControllerBrokerRequestBatch(controller: KafkaController) extends Logging 
             updateMetadataRequestBrokerSet.clear()
             updateMetadataRequestPartitionInfoMap.clear()
 
+            // 构造 StopReplicaRequest 请求，并添加到队列中等待发送
+
             stopReplicaRequestMap.foreach { case (broker, replicaInfoList) =>
                 val stopReplicaWithDelete = replicaInfoList.filter(_.deletePartition).map(_.replica).toSet
                 val stopReplicaWithoutDelete = replicaInfoList.filterNot(_.deletePartition).map(_.replica).toSet
-                debug("The stop replica request (delete = true) sent to broker %d is %s"
-                        .format(broker, stopReplicaWithDelete.mkString(",")))
-                debug("The stop replica request (delete = false) sent to broker %d is %s"
-                        .format(broker, stopReplicaWithoutDelete.mkString(",")))
+                debug("The stop replica request (delete = true) sent to broker %d is %s".format(broker, stopReplicaWithDelete.mkString(",")))
+                debug("The stop replica request (delete = false) sent to broker %d is %s".format(broker, stopReplicaWithoutDelete.mkString(",")))
 
                 val (replicasToGroup, replicasToNotGroup) = replicaInfoList.partition(r => !r.deletePartition && r.callback == null)
 
@@ -566,16 +573,14 @@ class ControllerBrokerRequestBatch(controller: KafkaController) extends Logging 
         } catch {
             case e: Throwable =>
                 if (leaderAndIsrRequestMap.nonEmpty) {
-                    error("Haven't been able to send leader and isr requests, current state of " +
-                            s"the map is $leaderAndIsrRequestMap. Exception message: $e")
+                    error(s"Haven't been able to send leader and isr requests, current state of the map is $leaderAndIsrRequestMap. Exception message: $e")
                 }
                 if (updateMetadataRequestBrokerSet.nonEmpty) {
                     error(s"Haven't been able to send metadata update requests to brokers $updateMetadataRequestBrokerSet, " +
                             s"current state of the partition info is $updateMetadataRequestPartitionInfoMap. Exception message: $e")
                 }
                 if (stopReplicaRequestMap.nonEmpty) {
-                    error("Haven't been able to send stop replica requests, current state of " +
-                            s"the map is $stopReplicaRequestMap. Exception message: $e")
+                    error(s"Haven't been able to send stop replica requests, current state of the map is $stopReplicaRequestMap. Exception message: $e")
                 }
                 throw new IllegalStateException(e)
         }

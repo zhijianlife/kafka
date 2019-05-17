@@ -70,9 +70,13 @@ import scala.collection._
  */
 class PartitionStateMachine(controller: KafkaController) extends Logging {
 
-    /** 用于维护 KafkaController 的上下文信息 */
+    /** Controller 的上下文信息 */
     private val controllerContext = controller.controllerContext
+
+    /** Controller 节点的 ID */
     private val controllerId = controller.config.brokerId
+
+    /** ZK 工具类 */
     private val zkUtils = controllerContext.zkUtils
 
     /** 记录每个分区对应的分区状态信息 */
@@ -80,6 +84,8 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
 
     /** 用于向指定的 broker 批量发送请求 */
     private val brokerRequestBatch = new ControllerBrokerRequestBatch(controller)
+
+    /** 表示分区状态机是否已经启动 */
     private val hasStarted = new AtomicBoolean(false)
 
     /** 默认 leader 副本选举器 */
@@ -91,7 +97,7 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
     /** 用于监听 topic 删除的 ZK 监听器 */
     private val deleteTopicsListener = new DeleteTopicsListener(controller)
 
-    /** 用于监听分区修改 */
+    /** 记录监听对应 topic 分区变化的监听器集合 */
     private val partitionModificationsListeners: mutable.Map[String, PartitionModificationsListener] = mutable.Map.empty
     private val stateChangeLogger = KafkaController.stateChangeLogger
 
@@ -103,12 +109,12 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
      * the OnlinePartition state change for all new or offline partitions.
      */
     def startup() {
-        // 初始化分区状态
-        initializePartitionState()
-        // 标识 PartitionStateMachine 已经启动
+        // 初始化本地记录的所有分区状态
+        this.initializePartitionState()
+        // 标识分区状态机已经启动
         hasStarted.set(true)
         // 尝试将分区切换到 OnlinePartition 状态
-        triggerOnlinePartitionStateChange()
+        this.triggerOnlinePartitionStateChange()
 
         info("Started partition state machine with initial state -> " + partitionState.toString())
     }
@@ -148,7 +154,7 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
      * This API invokes the OnlinePartition state change on all partitions in either the NewPartition or OfflinePartition state.
      * This is called on a successful controller election and on broker changes
      *
-     * 遍历 partitionState 中的全部分区，将 OfflinePartition 和 NewPartition 状态的分区转换成 OnlinePartition 状态，
+     * 遍历 partitionState 中的全部分区，尝试将 OfflinePartition 和 NewPartition 状态的分区转换成 OnlinePartition 状态，
      * 状态切换成功的分区即可对外提供服务
      */
     def triggerOnlinePartitionStateChange() {
@@ -157,11 +163,11 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
             brokerRequestBatch.newBatch()
             // try to move all partitions in NewPartition or OfflinePartition state to OnlinePartition state except partitions
             // that belong to topics to be deleted
-            for ((topicAndPartition, partitionState) <- partitionState
-                 if !controller.deleteTopicManager.isTopicQueuedUpForDeletion(topicAndPartition.topic)) {
-                // 调用 handleStateChange 方法对指定分区进行状态切换
+            // 遍历处理集群中所有的分区，不包含正在等待被删除的 topic 的分区
+            for ((topicAndPartition, partitionState) <- partitionState if !controller.deleteTopicManager.isTopicQueuedUpForDeletion(topicAndPartition.topic)) {
+                // 对于 OfflinePartition 或 NewPartition 状态的分区，尝试对应分区状态修改为 OnlinePartition 状态
                 if (partitionState.equals(OfflinePartition) || partitionState.equals(NewPartition))
-                    handleStateChange(
+                    this.handleStateChange(
                         topicAndPartition.topic,
                         topicAndPartition.partition,
                         OnlinePartition,
@@ -305,23 +311,22 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
     }
 
     /**
-     * Invoked on startup of the partition's state machine to set the initial state for all existing partitions in
-     * zookeeper
+     * Invoked on startup of the partition's state machine to set the initial state for all existing partitions in zookeeper
      */
     private def initializePartitionState() {
-        // 遍历集群的所有分区
+        // 遍历集群中的所有分区
         for (topicPartition <- controllerContext.partitionReplicaAssignment.keys) {
-            // check if leader and isr path exists for partition. If not, then it is in NEW state
+            // 获取对应分区 leader 副本所在的 brokerId、ISR 集合，以及 controller 年代信息
             controllerContext.partitionLeadershipInfo.get(topicPartition) match {
                 // 存在 leader 副本和 ISR 集合
                 case Some(currentLeaderIsrAndEpoch) =>
-                    // else, check if the leader for partition is alive. If yes, it is in Online state, else it is in Offline state
-                    // leader 副本所在的 broker 可用，初始化为 OnlinePartition 状态
+                    // 分区 leader 副本所在的 broker 可用，初始化分区为 OnlinePartition 状态
                     if (controllerContext.liveBrokerIds.contains(currentLeaderIsrAndEpoch.leaderAndIsr.leader))
                         partitionState.put(topicPartition, OnlinePartition)
-                    // leader 副本所在的 broker 不可用，初始化为 OfflinePartition 状态
+                    // 分区 leader 副本所在的 broker 不可用，初始化为 OfflinePartition 状态
                     else
                         partitionState.put(topicPartition, OfflinePartition)
+                // 如果不存在，则说明是一个新创建的分区，设置分区状态为 NewPartition
                 case None =>
                     partitionState.put(topicPartition, NewPartition)
             }
