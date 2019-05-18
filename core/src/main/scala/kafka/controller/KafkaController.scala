@@ -881,7 +881,9 @@ class KafkaController(val config: KafkaConfig, // 配置信息
         onControllerResignation()
     }
 
-    def sendRequest(brokerId: Int, apiKey: ApiKeys, request: AbstractRequest.Builder[_ <: AbstractRequest],
+    def sendRequest(brokerId: Int,
+                    apiKey: ApiKeys,
+                    request: AbstractRequest.Builder[_ <: AbstractRequest],
                     callback: AbstractResponse => Unit = null): Unit = {
         controllerContext.controllerChannelManager.sendRequest(brokerId, apiKey, request, callback)
     }
@@ -1670,8 +1672,7 @@ case class PartitionAndReplica(topic: String, partition: Int, replica: Int) {
     }
 }
 
-case class LeaderIsrAndControllerEpoch(leaderAndIsr: LeaderAndIsr,
-                                       controllerEpoch: Int) {
+case class LeaderIsrAndControllerEpoch(leaderAndIsr: LeaderAndIsr, controllerEpoch: Int) {
 
     override def toString: String = {
         val leaderAndIsrInfo = new StringBuilder
