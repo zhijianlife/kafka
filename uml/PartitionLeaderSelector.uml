@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Diagram>
+  <ID>JAVA</ID>
+  <OriginalElement>kafka.controller.PartitionLeaderSelector</OriginalElement>
+  <nodes>
+    <node x="1335.0" y="82.0">kafka.controller.ReassignedPartitionLeaderSelector</node>
+    <node x="0.0" y="82.0">kafka.controller.PreferredReplicaPartitionLeaderSelector</node>
+    <node x="417.0" y="82.0">kafka.controller.OfflinePartitionLeaderSelector</node>
+    <node x="981.0" y="82.0">kafka.controller.ControlledShutdownLeaderSelector</node>
+    <node x="753.0" y="82.0">kafka.controller.NoOpLeaderSelector</node>
+    <node x="730.5" y="0.0">kafka.controller.PartitionLeaderSelector</node>
+  </nodes>
+  <notes />
+  <edges>
+    <edge source="kafka.controller.OfflinePartitionLeaderSelector" target="kafka.controller.PartitionLeaderSelector">
+      <point x="0.0" y="-16.0" />
+      <point x="575.0" y="62.0" />
+      <point x="806.4" y="62.0" />
+      <point x="-50.60000000000002" y="16.0" />
+    </edge>
+    <edge source="kafka.controller.ReassignedPartitionLeaderSelector" target="kafka.controller.PartitionLeaderSelector">
+      <point x="0.0" y="-16.0" />
+      <point x="1506.5" y="52.0" />
+      <point x="958.1999999999999" y="52.0" />
+      <point x="101.19999999999993" y="16.0" />
+    </edge>
+    <edge source="kafka.controller.ControlledShutdownLeaderSelector" target="kafka.controller.PartitionLeaderSelector">
+      <point x="0.0" y="-16.0" />
+      <point x="1148.0" y="62.0" />
+      <point x="907.5999999999999" y="62.0" />
+      <point x="50.59999999999991" y="16.0" />
+    </edge>
+    <edge source="kafka.controller.PreferredReplicaPartitionLeaderSelector" target="kafka.controller.PartitionLeaderSelector">
+      <point x="0.0" y="-16.0" />
+      <point x="198.5" y="52.0" />
+      <point x="755.8" y="52.0" />
+      <point x="-101.20000000000005" y="16.0" />
+    </edge>
+    <edge source="kafka.controller.NoOpLeaderSelector" target="kafka.controller.PartitionLeaderSelector">
+      <point x="0.0" y="-16.0" />
+      <point x="0.0" y="16.0" />
+    </edge>
+  </edges>
+  <settings layout="Hierarchic Group" zoom="0.8822143698468787" x="839.0" y="57.0" />
+  <SelectedNodes />
+  <Categories />
+  <SCOPE>All</SCOPE>
+  <VISIBILITY>private</VISIBILITY>
+</Diagram>
+
