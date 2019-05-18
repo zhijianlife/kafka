@@ -861,7 +861,9 @@ class KafkaController(val config: KafkaConfig, // 配置信息
     def startup(): Unit = {
         inLock(controllerContext.controllerLock) {
             info("Controller starting up")
-            registerSessionExpirationListener()
+            // 注册 SessionExpirationListener 监听器，监听 controller 与 ZK 的连接状态
+            this.registerSessionExpirationListener()
+            // 标识当前 controller 已经启动，现在还是 follower 角色
             isRunning = true
             // 启动故障转移机制
             controllerElector.startup
@@ -1385,7 +1387,7 @@ class KafkaController(val config: KafkaConfig, // 配置信息
         def handleSessionEstablishmentError(error: Throwable): Unit = {
             //no-op handleSessionEstablishmentError in KafkaHealthCheck should handle this error in its handleSessionEstablishmentError
         }
-    }
+    } // end of SessionExpirationListener
 
     /**
      * 提供分区的自动均衡功能，对失衡的 broker 上的相关分区进行优先副本选举
