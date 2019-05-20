@@ -33,28 +33,27 @@ import org.apache.kafka.common.utils.Time
  *
  * 用于执行 controller leader 故障转移
  */
-class ZookeeperLeaderElector(controllerContext: ControllerContext,
-                             electionPath: String,
-                             onBecomingLeader: () => Unit, // KafkaController.onControllerFailover
-                             onResigningAsLeader: () => Unit,
-                             brokerId: Int,
-                             time: Time)
-        extends LeaderElector with Logging {
+class ZookeeperLeaderElector(controllerContext: ControllerContext, // Controller 上下文对象
+                             electionPath: String, // /controller
+                             onBecomingLeader: () => Unit, // KafkaController#onControllerFailover
+                             onResigningAsLeader: () => Unit, // KafkaController#onControllerResignation
+                             brokerId: Int, // broker 节点 ID
+                             time: Time // 时间戳工具类
+                            ) extends LeaderElector with Logging {
 
     /** 当前 controller leader 的 ID */
     var leaderId: Int = -1
 
     // create the election path in ZK, if one does not exist
     val index: Int = electionPath.lastIndexOf("/")
-    if (index > 0)
-        controllerContext.zkUtils.makeSurePersistentPathExists(electionPath.substring(0, index))
+    if (index > 0) controllerContext.zkUtils.makeSurePersistentPathExists(electionPath.substring(0, index))
 
     /** 监听 ZK 的 /controller 节点的数据变化 */
     val leaderChangeListener = new LeaderChangeListener
 
     def startup {
         inLock(controllerContext.controllerLock) {
-            // 注册 ZK 监听器，监听 /controller 路径
+            // 注册 ZK 监听器，监听 /controller 节点下的数据变更
             controllerContext.zkUtils.zkClient.subscribeDataChanges(electionPath, leaderChangeListener)
             // 执行 leader 选举
             elect
@@ -81,31 +80,27 @@ class ZookeeperLeaderElector(controllerContext: ControllerContext,
         val electString = Json.encode(Map("version" -> 1, "brokerid" -> brokerId, "timestamp" -> timestamp))
 
         // 获取 ZK 中记录的 controller leader 的 ID
-        leaderId = getControllerID
-        /*
-         * We can get here during the initial startup and the handleDeleted ZK callback. Because of the potential race condition,
-         * it's possible that the controller has already been elected when we get here. This check will prevent the following
-         * createEphemeralPath method from getting into an infinite loop if this broker is already the controller.
-         *
-         * 已经存在 controller leader，放弃选举
-         */
+        leaderId = this.getControllerID
+        // 已经存在 controller leader，放弃选举
         if (leaderId != -1) {
             debug("Broker %d has been elected as leader, so stopping the election process.".format(leaderId))
             return amILeader
         }
 
         try {
-            // 尝试创建临时节点，如果临时节点已经存在，则抛出异常
+            // 尝试创建 ZK 临时节点，如果临时节点已经存在，则抛出异常
             val zkCheckedEphemeral = new ZKCheckedEphemeral(electionPath,
                 electString,
                 controllerContext.zkUtils.zkConnection.getZookeeper,
                 JaasUtils.isZkSecurityEnabled)
             zkCheckedEphemeral.create()
             info(brokerId + " successfully elected as leader")
-            // 创建成功，更新 leader 节点
+            // 创建成功，更新 leader 节点 ID
             leaderId = brokerId
+            // 回调
             onBecomingLeader()
         } catch {
+            // Controller leader 已经存在
             case _: ZkNodeExistsException =>
                 // If someone else has written the path, then
                 leaderId = getControllerID
