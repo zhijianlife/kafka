@@ -60,6 +60,11 @@ class ZookeeperLeaderElector(controllerContext: ControllerContext, // Controller
         }
     }
 
+    /**
+     * 从 ZK 上获取当前的 Controller ID
+     *
+     * @return
+     */
     def getControllerID: Int = {
         controllerContext.zkUtils.readDataMaybeNull(electionPath)._1 match {
             case Some(controller) => KafkaController.parseControllerId(controller)
@@ -100,7 +105,7 @@ class ZookeeperLeaderElector(controllerContext: ControllerContext, // Controller
             // 回调
             onBecomingLeader()
         } catch {
-            // Controller leader 已经存在
+            // leader 已经存在
             case _: ZkNodeExistsException =>
                 // If someone else has written the path, then
                 leaderId = getControllerID
@@ -115,7 +120,7 @@ class ZookeeperLeaderElector(controllerContext: ControllerContext, // Controller
                 // 重置 leaderId，并删除 /controller 节点
                 resign()
         }
-        // 检测当前 broker 是否成为 leader
+        // 检测当前 broker 节点是否成为 leader
         amILeader
     }
 
@@ -144,16 +149,14 @@ class ZookeeperLeaderElector(controllerContext: ControllerContext, // Controller
         def handleDataChange(dataPath: String, data: Object) {
             val shouldResign = inLock(controllerContext.controllerLock) {
                 val amILeaderBeforeDataChange = amILeader
-                // 记录新的 controller leader 的 ID
+                // 更新本地记录的新的 controller leader 的 ID
                 leaderId = KafkaController.parseControllerId(data.toString)
                 info("New leader is %d".format(leaderId))
-                // The old leader needs to resign leadership if it is no longer the leader
+                // 之前是 leader，但是现在切换成了 follower 角色
                 amILeaderBeforeDataChange && !amILeader
             }
-
             // 如果当前 broker 由 leader 变为 follower，则需要执行相应的清理工作
-            if (shouldResign)
-                onResigningAsLeader()
+            if (shouldResign) onResigningAsLeader()
         }
 
         /**
@@ -169,10 +172,10 @@ class ZookeeperLeaderElector(controllerContext: ControllerContext, // Controller
                 amILeader
             }
 
-            if (shouldResign)
-                onResigningAsLeader()
+            // 如果 ZK 上记录的 leader 节点被删除，且当前节点之前是 leader，则需要执行相应的清理工作
+            if (shouldResign) onResigningAsLeader()
 
-            // 尝试执行信息的 controller leader 选举
+            // 尝试竞选成为新的 leader
             inLock(controllerContext.controllerLock) {
                 elect
             }

@@ -444,14 +444,13 @@ class KafkaController(val config: KafkaConfig, // 配置信息
     def onControllerFailover() {
         if (isRunning) {
             info("Broker %d starting become controller state transition".format(config.brokerId))
-            // 1. 从 ZK 读取 controller 年代信息，并更新 Controller 上下文
+            // 1. 从 ZK 读取历史 controller 年代信息，并更新 Controller 上下文
             this.readControllerEpochFromZookeeper()
-            // 2. 递增 controller 年代信息，并更新 ZK
+            // 2. 递增 controller 年代信息，并更新到 ZK
             this.incrementControllerEpoch(zkUtils.zkClient)
 
             /* 3. 注册 ZK 监听器 */
 
-            // before reading source of truth from zookeeper, register the listeners to get broker/topic callbacks
             this.registerReassignedPartitionsListener() // 注册 PartitionsReassignedListener
             this.registerIsrChangeNotificationListener() // 注册 IsrChangeNotificationListener
             this.registerPreferredReplicaElectionListener() // 注册 PreferredReplicaElectionListener
@@ -461,7 +460,7 @@ class KafkaController(val config: KafkaConfig, // 配置信息
             // 4. 初始化 Controller 上下文信息
             this.initializeControllerContext()
 
-            // 5. 向集群中所有可用的 broker 发送 UpdateMetadataRequest 请求，更新节点缓存的集群元数据
+            // 5. 向集群中所有可用的 broker 发送 UpdateMetadataRequest 请求，更新对应节点缓存的集群元数据
             this.sendUpdateMetadataRequest(controllerContext.liveOrShuttingDownBrokerIds.toSeq)
 
             // 6. 启动副本状态机，并初始化各个副本的状态
@@ -474,7 +473,7 @@ class KafkaController(val config: KafkaConfig, // 配置信息
             controllerContext.allTopics.foreach(topic => partitionStateMachine.registerPartitionChangeListener(topic))
             info("Broker %d is ready to serve as the new controller with epoch %d".format(config.brokerId, epoch))
 
-            // 9. 处理副本重新分配的分区
+            // 9. 处理副本需要重新分配的分区
             this.maybeTriggerPartitionReassignment()
 
             // 10. 处理需要进行优先副本选举的分区
@@ -492,7 +491,7 @@ class KafkaController(val config: KafkaConfig, // 配置信息
                     config.leaderImbalanceCheckIntervalSeconds.toLong,
                     TimeUnit.SECONDS)
             }
-            // 启动 TopicDeletionManager，用于对指定的 topic 执行删除操作
+            // 12. 启动 TopicDeletionManager，用于对指定的 topic 执行删除操作
             deleteTopicManager.start()
         } else
               info("Controller has been shut down, aborting startup/failover")
@@ -509,35 +508,32 @@ class KafkaController(val config: KafkaConfig, // 配置信息
         debug("Controller resigning, broker id %d".format(config.brokerId))
 
         // 取消 ZK 上的监听器
-        deregisterIsrChangeNotificationListener()
-        deregisterReassignedPartitionsListener()
-        deregisterPreferredReplicaElectionListener()
+        this.deregisterIsrChangeNotificationListener()
+        this.deregisterReassignedPartitionsListener()
+        this.deregisterPreferredReplicaElectionListener()
 
         // 关闭 TopicDeletionManager
-        if (deleteTopicManager != null)
-            deleteTopicManager.shutdown()
+        if (deleteTopicManager != null) deleteTopicManager.shutdown()
 
-        // 关闭 partition-rebalance 定时任务
-        if (config.autoLeaderRebalanceEnable)
-            autoRebalanceScheduler.shutdown()
+        // 关闭 partition-rebalance 分区自动均衡定时任务
+        if (config.autoLeaderRebalanceEnable) autoRebalanceScheduler.shutdown()
 
         inLock(controllerContext.controllerLock) {
-            // de-register partition ISR listener for on-going partition reassignment task
-            // 取消所有的 ReassignedPartitionsIsrChangeListener
-            deregisterReassignedPartitionsIsrChangeListeners()
+            // 取消所有的 ReassignedPartitionsIsrChangeListener 监听器
+            this.deregisterReassignedPartitionsIsrChangeListeners()
             // 关闭分区状态机
             partitionStateMachine.shutdown()
             // 关闭副本状态机
             replicaStateMachine.shutdown()
-            // 关闭 ControllerChannelManager，断开与集群中其他 broker 的连接
+            // 关闭 ControllerChannelManager，断开与集群中其他 broker 节点之间的连接
             if (controllerContext.controllerChannelManager != null) {
                 controllerContext.controllerChannelManager.shutdown()
                 controllerContext.controllerChannelManager = null
             }
-            // reset controller context
+            // 清除 controller 年代信息
             controllerContext.epoch = 0
             controllerContext.epochZkVersion = 0
-            // 切换 broker 状态
+            // 切换 broker 节点的状态
             brokerState.newState(RunningAsBroker)
 
             info("Broker %d resigned as the controller".format(config.brokerId))
@@ -1371,12 +1367,12 @@ class KafkaController(val config: KafkaConfig, // 配置信息
         @throws[Exception]
         def handleNewSession() {
             info("ZK expired; shut down all controller components and try to re-elect")
-            // 当前 controller leader 不是当前 broker 节点
+            // 如果 ZK 上记录的 controller leader 不是当前 broker 节点
             if (controllerElector.getControllerID != config.brokerId) {
-                // 负责清理 controller 依赖的对象
+                // 尝试清理 controller 之前的状态
                 onControllerResignation()
                 inLock(controllerContext.controllerLock) {
-                    // 尝试选举新的 controller leader
+                    // 尝试竞选成为新的 controller leader
                     controllerElector.elect
                 }
             } else {
