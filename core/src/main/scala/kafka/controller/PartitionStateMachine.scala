@@ -499,27 +499,27 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
             inLock(controllerContext.controllerLock) {
                 if (hasStarted.get) {
                     try {
-                        // 获取 /brokers/topics 路径下的子节点
+                        // 获取 /brokers/topics 路径下的子节点，即当前有效的 topic 集合
                         val currentChildren = {
                             debug("Topic change listener fired for path %s with children %s".format(parentPath, children.mkString(",")))
                             children.toSet
                         }
                         // 获取新添加的 topic 集合
                         val newTopics = currentChildren -- controllerContext.allTopics
-                        // 获取删除的 topic 集合
+                        // 获取已删除的 topic 集合
                         val deletedTopics = controllerContext.allTopics -- currentChildren
+                        // 更新本地记录的所有 topic 集合
                         controllerContext.allTopics = currentChildren
 
-                        // 从 ZK 加载新增分区的 AR 集合，路径：/brokers/topics/{topic_name}
+                        // 从 ZK 读取新增分区的 AR 集合，路径：/brokers/topics/{topic_name}
                         val addedPartitionReplicaAssignment = zkUtils.getReplicaAssignmentForTopics(newTopics.toSeq)
-                        // 更新 controllerContext 中每个分区对应的 AR 集合
+                        // 更新上下文中记录的每个分区对应的 AR 集合
                         controllerContext.partitionReplicaAssignment =
                                 controllerContext.partitionReplicaAssignment.filter(p => !deletedTopics.contains(p._1.topic))
-                        controllerContext.partitionReplicaAssignment.++=(addedPartitionReplicaAssignment)
-                        info("New topics: [%s], deleted topics: [%s], new partition replica assignment [%s]"
-                                .format(newTopics, deletedTopics, addedPartitionReplicaAssignment))
+                        controllerContext.partitionReplicaAssignment ++= addedPartitionReplicaAssignment
+                        info("New topics: [%s], deleted topics: [%s], new partition replica assignment [%s]".format(newTopics, deletedTopics, addedPartitionReplicaAssignment))
+                        // 处理新增的 topic，及其新增的分区
                         if (newTopics.nonEmpty)
-                        // 处理新增的 topic
                             controller.onNewTopicCreation(newTopics, addedPartitionReplicaAssignment.keySet)
                     } catch {
                         case e: Throwable => error("Error while handling new topic", e)
@@ -553,28 +553,28 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
                 // 从 ZK 获取待删除的 topic 集合
                 var topicsToBeDeleted = children.toSet
                 debug("Delete topics listener fired for topics %s to be deleted".format(topicsToBeDeleted.mkString(",")))
-                // 检查 topic 是否存在
+                // 检查 topic 是否存在，对于不存在的 topic，直接将其从 /admin/delete_topics 路径下删除
                 val nonExistentTopics = topicsToBeDeleted -- controllerContext.allTopics
                 if (nonExistentTopics.nonEmpty) {
                     warn("Ignoring request to delete non-existing topics " + nonExistentTopics.mkString(","))
-                    // 对于不存在的 topic，直接将其从 /admin/delete_topics 路径下删除
                     nonExistentTopics.foreach(topic => zkUtils.deletePathRecursive(getDeleteTopicPath(topic)))
                 }
-                // 过滤掉不存在的待删除的 topic
                 topicsToBeDeleted --= nonExistentTopics
+
+                // 如果允许删除 topic，对应 delete.topic.enable 配置
                 if (controller.config.deleteTopicEnable) {
                     if (topicsToBeDeleted.nonEmpty) {
                         info("Starting topic deletion for topics " + topicsToBeDeleted.mkString(","))
                         // mark topic ineligible for deletion if other state changes are in progress
                         // 检查待删除的 topic 是否处于不可删除的情况
                         topicsToBeDeleted.foreach { topic =>
-                            // 1. 检测 topic 是否有分区正在进行优先副本选举
+                            // 1. 检测待删除的 topic 是否有分区正在进行优先副本选举
                             val preferredReplicaElectionInProgress =
                                 controllerContext.partitionsUndergoingPreferredReplicaElection.map(_.topic).contains(topic)
-                            // 2. 检测 topic 是否有分区正在进行副本重新分配
+                            // 2. 检测待删除的 topic 是否有分区正在进行副本重新分配
                             val partitionReassignmentInProgress =
                                 controllerContext.partitionsBeingReassigned.keySet.map(_.topic).contains(topic)
-                            // 将 topic 标记为不可删除
+                            // 如果满足上述 2 个条件之一，则将 topic 标记为不可删除
                             if (preferredReplicaElectionInProgress || partitionReassignmentInProgress)
                                 controller.deleteTopicManager.markTopicIneligibleForDeletion(Set(topic))
                         }
@@ -582,7 +582,7 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
                         controller.deleteTopicManager.enqueueTopicsForDeletion(topicsToBeDeleted)
                     }
                 } else {
-                    // If delete topic is disabled remove entries under zookeeper path : /admin/delete_topics
+                    // 如果配置不允许删除 topic，则从 ZK 上删除对应的节点（/admin/delete_topics）
                     for (topic <- topicsToBeDeleted) {
                         info("Removing " + getDeleteTopicPath(topic) + " since delete topic is disabled")
                         zkUtils.zkClient.delete(getDeleteTopicPath(topic))

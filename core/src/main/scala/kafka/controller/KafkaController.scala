@@ -667,9 +667,10 @@ class KafkaController(val config: KafkaConfig, // 配置信息
      */
     def onNewTopicCreation(topics: Set[String], newPartitions: Set[TopicAndPartition]) {
         info("New topic creation callback for %s".format(newPartitions.mkString(",")))
-        // 为每个新增的 topic 注册一个 PartitionModificationsListener
+        // 为每个新增的 topic 注册一个 PartitionModificationsListener 监听器
         topics.foreach(topic => partitionStateMachine.registerPartitionChangeListener(topic))
-        onNewPartitionCreation(newPartitions)
+        // 切换新增分区及其副本状态
+        this.onNewPartitionCreation(newPartitions)
     }
 
     /**
@@ -682,11 +683,11 @@ class KafkaController(val config: KafkaConfig, // 配置信息
         info("New partition creation callback for %s".format(newPartitions.mkString(",")))
         // 将所有新增的分区状态转换为 NewPartition
         partitionStateMachine.handleStateChanges(newPartitions, NewPartition)
-        // 将指定分区的所有副本都转换为 NewReplica
+        // 将新增分区的所有副本都转换为 NewReplica，向副本所在 broker 节点发送 LeaderAndIsrRequest 请求，并发送 UpdateMetadataRequest 给所有可用的 broker 节点
         replicaStateMachine.handleStateChanges(controllerContext.replicasForPartition(newPartitions), NewReplica)
-        // 将所有新增的分区状态转换为 OnlinePartition
+        // 为所有新增的分区分配 leader 副本和 ISR 集合，并将分区状态转换为 OnlinePartition
         partitionStateMachine.handleStateChanges(newPartitions, OnlinePartition, offlinePartitionSelector)
-        // 将指定分区的所有副本状态转换为 OnlineReplica
+        // 将新增分区的所有副本状态转换为 OnlineReplica，并尝试将副本添加到 AR 集合中
         replicaStateMachine.handleStateChanges(controllerContext.replicasForPartition(newPartitions), OnlineReplica)
     }
 
@@ -794,34 +795,32 @@ class KafkaController(val config: KafkaConfig, // 配置信息
 
     def initiateReassignReplicasForTopicPartition(topicAndPartition: TopicAndPartition,
                                                   reassignedPartitionContext: ReassignedPartitionsContext) {
+        // 获取新分配的 AR 集合
         val newReplicas = reassignedPartitionContext.newReplicas
         val topic = topicAndPartition.topic
         val partition = topicAndPartition.partition
         try {
+            // 获取 topic 分区之前的 AR 集合
             val assignedReplicasOpt = controllerContext.partitionReplicaAssignment.get(topicAndPartition)
             assignedReplicasOpt match {
                 case Some(assignedReplicas) =>
-                    // 新旧副本分配方式完全一样
+                    // 新旧副本未发生变化
                     if (assignedReplicas == newReplicas) {
-                        throw new KafkaException("Partition %s to be reassigned is already assigned to replicas".format(topicAndPartition) +
-                                " %s. Ignoring request for partition reassignment".format(newReplicas.mkString(",")))
+                        throw new KafkaException("Partition %s to be reassigned is already assigned to replicas".format(topicAndPartition) + " %s. Ignoring request for partition reassignment".format(newReplicas.mkString(",")))
                     } else {
                         info("Handling reassignment of partition %s to new replicas %s".format(topicAndPartition, newReplicas.mkString(",")))
-                        // first register ISR change listener
-                        // 为分区注册一个 ReassignedPartitionsIsrChangeListener
-                        watchIsrChangesForReassignedPartition(topic, partition, reassignedPartitionContext)
+                        // 为分区注册一个 ReassignedPartitionsIsrChangeListener 监听器
+                        this.watchIsrChangesForReassignedPartition(topic, partition, reassignedPartitionContext)
                         controllerContext.partitionsBeingReassigned.put(topicAndPartition, reassignedPartitionContext)
-                        // mark topic ineligible for deletion for the partitions being reassigned
-                        // 标记 topic 为不可删除
+                        // 标记 topic 为不可删除，因为需要执行副本重新分配
                         deleteTopicManager.markTopicIneligibleForDeletion(Set(topic))
-                        // 执行副本的重新分配
-                        onPartitionReassignment(topicAndPartition, reassignedPartitionContext)
+                        // 重新分配副本
+                        this.onPartitionReassignment(topicAndPartition, reassignedPartitionContext)
                     }
                 case None => throw new KafkaException("Attempt to reassign partition %s that doesn't exist".format(topicAndPartition))
             }
         } catch {
             case e: Throwable => error("Error completing reassignment of partition %s".format(topicAndPartition), e)
-                // remove the partition from the admin path to unblock the admin client
                 removePartitionFromReassignedPartitions(topicAndPartition)
         }
     }
@@ -929,13 +928,13 @@ class KafkaController(val config: KafkaConfig, // 配置信息
     private def initializeControllerContext() {
         // 读取 /brokers/ids 节点，初始化可用的 broker 集合
         controllerContext.liveBrokers = zkUtils.getAllBrokersInCluster.toSet
-        // 读取 /brokers/topics 节点，初始化集群中全部的 topic 信息
+        // 读取 /brokers/topics 节点，初始化集群中全部的 topic 集合
         controllerContext.allTopics = zkUtils.getAllTopics.toSet
         // 读取 /brokers/topics/{topic_name}/partitions 节点，初始化每个分区的 AR 集合
         controllerContext.partitionReplicaAssignment = zkUtils.getReplicaAssignmentForTopics(controllerContext.allTopics.toSeq)
         controllerContext.partitionLeadershipInfo = new mutable.HashMap[TopicAndPartition, LeaderIsrAndControllerEpoch]
         controllerContext.shuttingDownBrokerIds = mutable.Set.empty[Int]
-        // 读取 /brokers/topics/{topic_name}/partition/{partitionId}/stat 节点，初始化每个 topic 分区的 leader 和 ISR 集合等信息
+        // 读取 /brokers/topics/{topic_name}/partition/{partitionId}/stat 节点，初始化每个 topic 分区的 leader 副本和 ISR 集合等信息
         this.updateLeaderAndIsrCache()
         // 启动 ControllerChannelManager，用于建立到集群中所有 broker 节点的连接，并与之通信
         this.startChannelManager()
@@ -1005,7 +1004,7 @@ class KafkaController(val config: KafkaConfig, // 配置信息
 
     private def maybeTriggerPartitionReassignment() {
         controllerContext.partitionsBeingReassigned.foreach { topicPartitionToReassign =>
-            initiateReassignReplicasForTopicPartition(topicPartitionToReassign._1, topicPartitionToReassign._2)
+            this.initiateReassignReplicasForTopicPartition(topicPartitionToReassign._1, topicPartitionToReassign._2)
         }
     }
 
