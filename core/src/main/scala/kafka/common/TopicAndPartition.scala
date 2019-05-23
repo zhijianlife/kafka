@@ -1,7 +1,6 @@
 package kafka.common
 
 import kafka.cluster.{Partition, Replica}
-import kafka.utils.Json
 import org.apache.kafka.common.TopicPartition
 
 /**
@@ -12,7 +11,7 @@ import org.apache.kafka.common.TopicPartition
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -26,15 +25,15 @@ import org.apache.kafka.common.TopicPartition
  */
 case class TopicAndPartition(topic: String, partition: Int) {
 
-  def this(tuple: (String, Int)) = this(tuple._1, tuple._2)
+    def this(tuple: (String, Int)) = this(tuple._1, tuple._2)
 
-  def this(partition: Partition) = this(partition.topic, partition.partitionId)
+    def this(partition: Partition) = this(partition.topic, partition.partitionId)
 
-  def this(topicPartition: TopicPartition) = this(topicPartition.topic, topicPartition.partition)
+    def this(topicPartition: TopicPartition) = this(topicPartition.topic, topicPartition.partition)
 
-  def this(replica: Replica) = this(replica.topicPartition)
+    def this(replica: Replica) = this(replica.topicPartition)
 
-  def asTuple = (topic, partition)
+    def asTuple: (String, Int) = (topic, partition)
 
-  override def toString = "[%s,%d]".format(topic, partition)
+    override def toString: String = "[%s,%d]".format(topic, partition)
 }

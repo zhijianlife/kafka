@@ -610,21 +610,21 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
             inLock(controllerContext.controllerLock) {
                 try {
                     info(s"Partition modification triggered $data for path $dataPath")
-                    // 从 ZK 获取 topic 的分区信息
+                    // 从 ZK 获取 topic 的分区和副本信息
                     val partitionReplicaAssignment = zkUtils.getReplicaAssignmentForTopics(List(topic))
-                    // 过滤出新增的分区记录
+                    // 筛选新增的分区和副本信息
                     val partitionsToBeAdded = partitionReplicaAssignment
                             .filter(p => !controllerContext.partitionReplicaAssignment.contains(p._1))
-                    // 如果 topic 正在进行删除
+                    // 如果 topic 待删除
                     if (controller.deleteTopicManager.isTopicQueuedUpForDeletion(topic))
-                        error("Skipping adding partitions %s for topic %s since it is currently being deleted"
-                                .format(partitionsToBeAdded.map(_._1.partition).mkString(","), topic))
+                        error("Skipping adding partitions %s for topic %s since it is currently being deleted".format(partitionsToBeAdded.map(_._1.partition).mkString(","), topic))
                     else {
+                        // 对于正常运行的 topic 的新增分区，更新分区的 AR 集合
                         if (partitionsToBeAdded.nonEmpty) {
                             info("New partitions to be added %s".format(partitionsToBeAdded))
                             // 将新增的分区信息添加到 controller 上下文中
-                            controllerContext.partitionReplicaAssignment.++=(partitionsToBeAdded)
-                            // 切换新增分区将其副本的状态，最终使其上线对外提供服务
+                            controllerContext.partitionReplicaAssignment ++= partitionsToBeAdded
+                            // 切换新增分区及其副本的状态，使其上线对外提供服务
                             controller.onNewPartitionCreation(partitionsToBeAdded.keySet)
                         }
                     }

@@ -566,39 +566,28 @@ class KafkaController(val config: KafkaConfig, // 配置信息
     def onBrokerStartup(newBrokers: Seq[Int]) {
         info("New broker startup callback for %s".format(newBrokers.mkString(",")))
         val newBrokersSet = newBrokers.toSet
-        // send update metadata request to all live and shutting down brokers. Old brokers will get to know of the new
-        // broker via this update.
-        // In cases of controlled shutdown leaders will not be elected when a new broker comes up. So at least in the
-        // common controlled shutdown case, the metadata will reach the new brokers faster
-        // 1. 向集群中所有的 broker 节点发送 UpdateMetadataRequest 请求，发送的是所有的分区信息，以此来了解新添加的 broker 信息
-        sendUpdateMetadataRequest(controllerContext.liveOrShuttingDownBrokerIds.toSeq)
 
-        // the very first thing to do when a new broker comes up is send it the entire list of partitions that it is
-        // supposed to host. Based on that the broker starts the high watermark threads for the input list of partitions
-        // 2. 将新增的 broker 上的副本状态设置为 OnlineReplica，期间会发送 LeaderAndIsrRequest 和 UpdateMetaRequest 请求
+        // 1. 向集群中所有可用的 broker 节点发送 UpdateMetadataRequest 请求，发送的是所有的分区信息，通知节点有新的 broker 加入
+        this.sendUpdateMetadataRequest(controllerContext.liveOrShuttingDownBrokerIds.toSeq)
+
+        // 2. 将新增的 broker 节点上的副本状态设置为 OnlineReplica，以上线对外提供服务
         val allReplicasOnNewBrokers = controllerContext.replicasOnBrokers(newBrokersSet)
         replicaStateMachine.handleStateChanges(allReplicasOnNewBrokers, OnlineReplica)
 
-        // when a new broker comes up, the controller needs to trigger leader election for all new and offline partitions
-        // to see if these brokers can become leaders for some/all of those
-        // 3. 将状态为 OfflinePartition 和 NewPartition 的分区设置为 OnlinePartition
+        // 3. 尝试将状态为 OfflinePartition 和 NewPartition 的分区设置为 OnlinePartition，以触发失效分区的 leader 选举操作
         partitionStateMachine.triggerOnlinePartitionStateChange()
 
-        // check if reassignment of some partitions need to be restarted
-        // 4. 检查进行副本重新分配
+        // 4. 检查需要重新分配副本的分区是否需要重新分配副本
         val partitionsWithReplicasOnNewBrokers = controllerContext.partitionsBeingReassigned.filter {
             case (_, reassignmentContext) => reassignmentContext.newReplicas.exists(newBrokersSet.contains)
         }
         partitionsWithReplicasOnNewBrokers.foreach(p => onPartitionReassignment(p._1, p._2))
 
-        // check if topic deletion needs to be resumed. If at least one replica that belongs to the topic being deleted exists
-        // on the newly restarted brokers, there is a chance that topic deletion can resume
-        // 如果新增 broker 上有待删除的 topic 副本，则唤醒 DeleteTopicsThread 线程进行删除
+        // 5. 如果新增 broker 上有待删除的 topic 的副本，则唤醒 DeleteTopicsThread 线程进行删除，因为对应 topic 之前可能因为该副本失效而被标记为不可删除
         val replicasForTopicsToBeDeleted = allReplicasOnNewBrokers.filter(p => deleteTopicManager.isTopicQueuedUpForDeletion(p.topic))
         if (replicasForTopicsToBeDeleted.nonEmpty) {
-            info(("Some replicas %s for topics scheduled for deletion %s are on the newly restarted brokers %s. " +
-                    "Signaling restart of topic deletion for these topics").format(replicasForTopicsToBeDeleted.mkString(","),
-                deleteTopicManager.topicsToBeDeleted.mkString(","), newBrokers.mkString(",")))
+            info("Some replicas %s for topics scheduled for deletion %s are on the newly restarted brokers %s. Signaling restart of topic deletion for these topics"
+                    .format(replicasForTopicsToBeDeleted.mkString(","), deleteTopicManager.topicsToBeDeleted.mkString(","), newBrokers.mkString(",")))
             deleteTopicManager.resumeDeletionForTopics(replicasForTopicsToBeDeleted.map(_.topic))
         }
     }
@@ -617,44 +606,33 @@ class KafkaController(val config: KafkaConfig, // 配置信息
      */
     def onBrokerFailure(deadBrokers: Seq[Int]) {
         info("Broker failure callback for %s".format(deadBrokers.mkString(",")))
-        // 移除正在关闭的 broker
-        val deadBrokersThatWereShuttingDown =
-            deadBrokers.filter(id => controllerContext.shuttingDownBrokerIds.remove(id))
+        // 移除正在关闭的 broker 节点
+        val deadBrokersThatWereShuttingDown = deadBrokers.filter(id => controllerContext.shuttingDownBrokerIds.remove(id))
         info("Removed %s from list of shutting down brokers.".format(deadBrokersThatWereShuttingDown))
         val deadBrokersSet = deadBrokers.toSet
-        // trigger OfflinePartition state for all partitions whose current leader is one amongst the dead brokers
-        // 1. 过滤得到 leader 副本在故障 broker 上的分区，设置其状态为 OfflinePartition
+        // 1. 如果分区 leader 副本在故障 broker 节点上，将分区状态设置为 OfflinePartition
         val partitionsWithoutLeader = controllerContext.partitionLeadershipInfo.filter(partitionAndLeader =>
             deadBrokersSet.contains(partitionAndLeader._2.leaderAndIsr.leader) &&
                     !deleteTopicManager.isTopicQueuedUpForDeletion(partitionAndLeader._1.topic)).keySet
         partitionStateMachine.handleStateChanges(partitionsWithoutLeader, OfflinePartition)
 
-        // trigger OnlinePartition state changes for offline or new partitions
-        // 2. 将 OfflinePartition 状态的分区切换成 OnlinePartition 状态
+        // 2. 尝试将 OfflinePartition 状态的分区切换成 OnlinePartition 状态
         partitionStateMachine.triggerOnlinePartitionStateChange()
 
-        // filter out the replicas that belong to topics that are being deleted
-        // 3. 过滤得到在故障 broker 上的副本，将这些副本设置为 OfflineReplica 状态
+        // 3. 获取分配给故障 broker 节点的副本集合，将这些副本设置为 OfflineReplica 状态
         val allReplicasOnDeadBrokers = controllerContext.replicasOnBrokers(deadBrokersSet)
         val activeReplicasOnDeadBrokers = allReplicasOnDeadBrokers.filterNot(p => deleteTopicManager.isTopicQueuedUpForDeletion(p.topic))
-        // handle dead replicas
         replicaStateMachine.handleStateChanges(activeReplicasOnDeadBrokers, OfflineReplica)
 
-        // check if topic deletion state for the dead replicas needs to be updated
-        // 4. 检查故障 broker 上是否有待删除的 topic 副本，如果存在则将其转换成 ReplicaDeletionIneligible 状态，并标记 topic 不可删除
+        // 4. 检查故障 broker 节点上是否有待删除的 topic 副本，如果存在则将其状态转换成 ReplicaDeletionIneligible 状态，并标记 topic 不可删除
         val replicasForTopicsToBeDeleted = allReplicasOnDeadBrokers.filter(p => deleteTopicManager.isTopicQueuedUpForDeletion(p.topic))
         if (replicasForTopicsToBeDeleted.nonEmpty) {
-            // it is required to mark the respective replicas in TopicDeletionFailed state since the replica cannot be
-            // deleted when the broker is down. This will prevent the replica from being in TopicDeletionStarted state indefinitely
-            // since topic deletion cannot be retried until at least one replica is in TopicDeletionStarted state
             deleteTopicManager.failReplicaDeletion(replicasForTopicsToBeDeleted)
         }
 
-        // If broker failure did not require leader re-election, inform brokers of failed broker
-        // Note that during leader re-election, brokers update their metadata
-        // 5. 发送 UpdateMetadataRequest 请求，更新所有的 broker 信息
+        // 5. 向所有可用 broker 节点发送 UpdateMetadataRequest 请求，通知部分分区已经失效
         if (partitionsWithoutLeader.isEmpty) {
-            sendUpdateMetadataRequest(controllerContext.liveOrShuttingDownBrokerIds.toSeq)
+            this.sendUpdateMetadataRequest(controllerContext.liveOrShuttingDownBrokerIds.toSeq)
         }
     }
 
@@ -1561,11 +1539,12 @@ class IsrChangeNotificationListener(protected val controller: KafkaController) e
         inLock(controller.controllerContext.controllerLock) {
             debug("ISR change notification listener fired")
             try {
+                // 从 ZK 上读取 ISR 集合发生变更的 topic 分区集合
                 val topicAndPartitions = currentChildren.flatMap(getTopicAndPartition).toSet
                 if (topicAndPartitions.nonEmpty) {
-                    // 从 ZK 读取指定分区的 leader 副本、ISR 集合等信息，更新 controller 上下文
+                    // 从 ZK 读取指定分区的 leader 副本、ISR 集合等信息，更新 Controller 上下文
                     controller.updateLeaderAndIsrCache(topicAndPartitions)
-                    // 向可用的 broker 发送 UpdateMetadataRequest 请求，更新对应的 MetadataCache
+                    // 向集群所有可用的 broker 节点发送 UpdateMetadataRequest 请求，更新对应 broker 节点缓存的集群元数据信息
                     processUpdateNotifications(topicAndPartitions)
                 }
             } finally {
@@ -1586,7 +1565,6 @@ class IsrChangeNotificationListener(protected val controller: KafkaController) e
         val (jsonOpt, _) = controller.controllerContext.zkUtils.readDataMaybeNull(changeZnode)
         if (jsonOpt.isDefined) {
             val json = Json.parseFull(jsonOpt.get)
-
             json match {
                 case Some(m) =>
                     val topicAndPartitions: mutable.Set[TopicAndPartition] = new mutable.HashSet[TopicAndPartition]()

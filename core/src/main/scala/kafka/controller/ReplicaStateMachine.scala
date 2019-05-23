@@ -452,28 +452,26 @@ class ReplicaStateMachine(controller: KafkaController) extends Logging {
                             val curBrokers = currentBrokerList.map(_.toInt).toSet.flatMap(zkUtils.getBrokerInfo)
                             val curBrokerIds = curBrokers.map(_.id)
                             val liveOrShuttingDownBrokerIds = controllerContext.liveOrShuttingDownBrokerIds
-                            // 过滤得到新增的 broker 列表
+                            // 筛选新增的 broker 节点列表
                             val newBrokerIds = curBrokerIds -- liveOrShuttingDownBrokerIds
-                            // 过滤得到故障的 broker 列表
+                            // 筛选故障的 broker 节点列表
                             val deadBrokerIds = liveOrShuttingDownBrokerIds -- curBrokerIds
                             val newBrokers = curBrokers.filter(broker => newBrokerIds(broker.id))
-                            // 更新 controller 上下文
+                            // 更新 Controller 上下文信息
                             controllerContext.liveBrokers = curBrokers
                             val newBrokerIdsSorted = newBrokerIds.toSeq.sorted
                             val deadBrokerIdsSorted = deadBrokerIds.toSeq.sorted
                             val liveBrokerIdsSorted = curBrokerIds.toSeq.sorted
                             info("Newly added brokers: %s, deleted brokers: %s, all live brokers: %s"
                                     .format(newBrokerIdsSorted.mkString(","), deadBrokerIdsSorted.mkString(","), liveBrokerIdsSorted.mkString(",")))
-                            // 创建 controller 与新增的 broker 的网络连接
+                            // 创建 controller 到新增的 broker 节点之间的网络连接，并启动请求发送线程
                             newBrokers.foreach(controllerContext.controllerChannelManager.addBroker)
-                            // 关闭 controller 与故障的 broker 的网络连接
+                            // 关闭 controller 到故障的 broker 节点之间的网络连接
                             deadBrokerIds.foreach(controllerContext.controllerChannelManager.removeBroker)
-                            if (newBrokerIds.nonEmpty)
-                            // 处理新增的 broker 节点
-                                controller.onBrokerStartup(newBrokerIdsSorted)
-                            if (deadBrokerIds.nonEmpty)
-                            // 下线故障的 broker 节点
-                                controller.onBrokerFailure(deadBrokerIdsSorted)
+                            // 如果存在新增的 broker 节点，通知集群中的其它 broker 节点，并上线新增的分区副本等
+                            if (newBrokerIds.nonEmpty) controller.onBrokerStartup(newBrokerIdsSorted)
+                            // 如果存在故障的 broker 节点，则下线故障 broker 节点上的分区和副本，并通知到集群中的其它 broker 节点
+                            if (deadBrokerIds.nonEmpty) controller.onBrokerFailure(deadBrokerIdsSorted)
                         } catch {
                             case e: Throwable => error("Error while handling broker changes", e)
                         }
