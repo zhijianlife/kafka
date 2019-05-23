@@ -473,7 +473,7 @@ class KafkaController(val config: KafkaConfig, // 配置信息
             controllerContext.allTopics.foreach(topic => partitionStateMachine.registerPartitionChangeListener(topic))
             info("Broker %d is ready to serve as the new controller with epoch %d".format(config.brokerId, epoch))
 
-            // 9. 处理副本需要重新分配的分区
+            // 9. 处理副本需要再分配的分区
             this.maybeTriggerPartitionReassignment()
 
             // 10. 处理需要进行优先副本选举的分区
@@ -711,52 +711,44 @@ class KafkaController(val config: KafkaConfig, // 配置信息
      * This way, if the controller crashes before that step, we can still recover.
      */
     def onPartitionReassignment(topicAndPartition: TopicAndPartition, reassignedPartitionContext: ReassignedPartitionsContext) {
+        // 获取新分配的副本集合 RAR
         val reassignedReplicas = reassignedPartitionContext.newReplicas
-        if (!areReplicasInIsr(topicAndPartition.topic, topicAndPartition.partition, reassignedReplicas)) {
-            info("New replicas %s for partition %s being ".format(reassignedReplicas.mkString(","), topicAndPartition) +
-                    "reassigned not yet caught up with the leader")
+        // 如果新分配的副本集合存在一个或多个不位于 ISR 集合中
+        if (!this.areReplicasInIsr(topicAndPartition.topic, topicAndPartition.partition, reassignedReplicas)) {
+            info("New replicas %s for partition %s being ".format(reassignedReplicas.mkString(","), topicAndPartition) + "reassigned not yet caught up with the leader")
+            // 获取新添加的副本集合：RAR - OAR
             val newReplicasNotInOldReplicaList = reassignedReplicas.toSet -- controllerContext.partitionReplicaAssignment(topicAndPartition).toSet
+            // 获取全部的副本集合：RAR + OAR
             val newAndOldReplicas = (reassignedPartitionContext.newReplicas ++ controllerContext.partitionReplicaAssignment(topicAndPartition)).toSet
-            // 1. Update AR in ZK with OAR + RAR.
-            // 1. 将分区在 ContextController 和 ZK 中的 AR 集合更新成“新 AR”和“旧 AR”
-            updateAssignedReplicasForPartition(topicAndPartition, newAndOldReplicas.toSeq)
-            // 2. Send LeaderAndIsr request to every replica in OAR + RAR (with AR as OAR + RAR).
-            // 2. 发送 LeaderAndIsrRequest 请求，递增 leader_epoch
-            updateLeaderEpochAndSendRequest(topicAndPartition, controllerContext.partitionReplicaAssignment(topicAndPartition), newAndOldReplicas.toSeq)
-            // 3. replicas in RAR - OAR -> NewReplica
-            // 3. 将 “新 AR - 旧 AR” 中的副本更新成 NewReplica 状态
-            startNewReplicasForReassignedPartition(topicAndPartition, reassignedPartitionContext, newReplicasNotInOldReplicaList)
+            // 1. 将 topic 的全部副本集合（OAR + RAR）更新到 Controller 上下文和 ZK
+            this.updateAssignedReplicasForPartition(topicAndPartition, newAndOldReplicas.toSeq)
+            // 2. 向 topic 的全部副本集合（OAR + RAR）所在的 broker 节点发送 LeaderAndIsrRequest 请求
+            this.updateLeaderEpochAndSendRequest(topicAndPartition, controllerContext.partitionReplicaAssignment(topicAndPartition), newAndOldReplicas.toSeq)
+            // 3. 将新增的副本（RAR - OAR）状态切换成 NewReplica
+            this.startNewReplicasForReassignedPartition(topicAndPartition, reassignedPartitionContext, newReplicasNotInOldReplicaList)
             info("Waiting for new replicas %s for partition %s being ".format(reassignedReplicas.mkString(","), topicAndPartition) + "reassigned to catch up with the leader")
-        } else {
-            // 4. Wait until all replicas in RAR are in sync with the leader.
-            // 4. 获取旧的 AR 集合
+        }
+        // 如果新分配的副本全部位于 ISR 集合中
+        else {
+            // 1. 获取旧的副本集合（OAR - RAR）
             val oldReplicas = controllerContext.partitionReplicaAssignment(topicAndPartition).toSet -- reassignedReplicas.toSet
-            // 5. replicas in RAR -> OnlineReplica
-            // 5. 将新 AR 集合中所有的副本都转换成 OnlineReplica 状态
+            // 2. 将新分配的副本集合（RAR）中所有副本的状态切换成 OnlineReplica 状态
             reassignedReplicas.foreach { replica =>
                 replicaStateMachine.handleStateChanges(Set(PartitionAndReplica(topicAndPartition.topic, topicAndPartition.partition, replica)), OnlineReplica)
             }
-            // 6. Set AR to RAR in memory.
-            // 7. Send LeaderAndIsr request with a potential new leader (if current leader not in RAR) and
-            //    a new AR (using RAR) and same isr to every broker in RAR
-            moveReassignedPartitionLeaderIfRequired(topicAndPartition, reassignedPartitionContext)
-            // 8. replicas in OAR - RAR -> Offline (force those replicas out of isr)
-            // 9. replicas in OAR - RAR -> NonExistentReplica (force those replicas to be deleted)
-            // 将 “旧 AR - 新 AR” 中的副本更新成 oldReplicas 状态
-            stopOldReplicasOfReassignedPartition(topicAndPartition, reassignedPartitionContext, oldReplicas)
-            // 10. Update AR in ZK with RAR.
-            // 更新 ZK 中记录的 AR 信息
-            updateAssignedReplicasForPartition(topicAndPartition, reassignedReplicas)
-            // 11. Update the /admin/reassign_partitions path in ZK to remove this partition.
-            // 将 TP 相关信息从 ZK 中移除
-            removePartitionFromReassignedPartitions(topicAndPartition)
+            // 3. 更新本地记录的分区 AR 集合（OAR -> RAR），同时按需选择新的 leader 副本，并通知到集群中相关节点
+            this.moveReassignedPartitionLeaderIfRequired(topicAndPartition, reassignedPartitionContext)
+            // 4. 将旧的副本状态切换成 NonExistentReplica
+            this.stopOldReplicasOfReassignedPartition(topicAndPartition, reassignedPartitionContext, oldReplicas)
+            // 5. 更新 ZK 中记录对应分区的 AR 集合（RAR）
+            this.updateAssignedReplicasForPartition(topicAndPartition, reassignedReplicas)
+            // 6. 将对应 topic 分区的副本再分配信息从 ZK 和上下文中移除
+            this.removePartitionFromReassignedPartitions(topicAndPartition)
             info("Removed partition %s from the list of reassigned partitions in zookeeper".format(topicAndPartition))
             controllerContext.partitionsBeingReassigned.remove(topicAndPartition)
-            // 12. After electing leader, the replicas and isr information changes, so resend the update metadata request to every broker
-            // 向所有可用的 broker 发送 UpdateMetadataRequest 请求
-            sendUpdateMetadataRequest(controllerContext.liveOrShuttingDownBrokerIds.toSeq, Set(topicAndPartition))
-            // signal delete topic thread if reassignment for some partitions belonging to topics being deleted just completed
-            // 尝试取消相关 topic 的不可删除标记，并唤醒 DeleteTopicsThread 线程
+            // 7. 向所有可用的 broker 节点发送 UpdateMetadataRequest 请求，通知副本再分配后的集群状态信息
+            this.sendUpdateMetadataRequest(controllerContext.liveOrShuttingDownBrokerIds.toSeq, Set(topicAndPartition))
+            // 8. 取消相关 topic 的不可删除标记，并唤醒 DeleteTopicsThread 线程
             deleteTopicManager.resumeDeletionForTopics(Set(topicAndPartition.topic))
         }
     }
@@ -771,18 +763,17 @@ class KafkaController(val config: KafkaConfig, // 配置信息
         zkUtils.zkClient.subscribeDataChanges(getTopicPartitionLeaderAndIsrPath(topic, partition), isrChangeListener)
     }
 
-    def initiateReassignReplicasForTopicPartition(topicAndPartition: TopicAndPartition,
-                                                  reassignedPartitionContext: ReassignedPartitionsContext) {
-        // 获取新分配的 AR 集合
+    def initiateReassignReplicasForTopicPartition(topicAndPartition: TopicAndPartition, reassignedPartitionContext: ReassignedPartitionsContext) {
+        // 获取新分配的 AR 集合：RAR
         val newReplicas = reassignedPartitionContext.newReplicas
         val topic = topicAndPartition.topic
         val partition = topicAndPartition.partition
         try {
-            // 获取 topic 分区之前的 AR 集合
+            // 获取指定 topic 分区之前的 AR 集合：OAR
             val assignedReplicasOpt = controllerContext.partitionReplicaAssignment.get(topicAndPartition)
             assignedReplicasOpt match {
                 case Some(assignedReplicas) =>
-                    // 新旧副本未发生变化
+                    // 如果新旧副本未发生变化（OAR == RAR），则无需再分配
                     if (assignedReplicas == newReplicas) {
                         throw new KafkaException("Partition %s to be reassigned is already assigned to replicas".format(topicAndPartition) + " %s. Ignoring request for partition reassignment".format(newReplicas.mkString(",")))
                     } else {
@@ -790,15 +781,16 @@ class KafkaController(val config: KafkaConfig, // 配置信息
                         // 为分区注册一个 ReassignedPartitionsIsrChangeListener 监听器
                         this.watchIsrChangesForReassignedPartition(topic, partition, reassignedPartitionContext)
                         controllerContext.partitionsBeingReassigned.put(topicAndPartition, reassignedPartitionContext)
-                        // 标记 topic 为不可删除，因为需要执行副本重新分配
+                        // 标记 topic 为不可删除，因为需要执行副本再分配
                         deleteTopicManager.markTopicIneligibleForDeletion(Set(topic))
-                        // 重新分配副本
+                        // 执行副本再分配操作
                         this.onPartitionReassignment(topicAndPartition, reassignedPartitionContext)
                     }
                 case None => throw new KafkaException("Attempt to reassign partition %s that doesn't exist".format(topicAndPartition))
             }
         } catch {
-            case e: Throwable => error("Error completing reassignment of partition %s".format(topicAndPartition), e)
+            case e: Throwable =>
+                error("Error completing reassignment of partition %s".format(topicAndPartition), e)
                 removePartitionFromReassignedPartitions(topicAndPartition)
         }
     }
@@ -812,18 +804,18 @@ class KafkaController(val config: KafkaConfig, // 配置信息
     def onPreferredReplicaElection(partitions: Set[TopicAndPartition], isTriggeredByAutoRebalance: Boolean = false) {
         info("Starting preferred replica leader election for partitions %s".format(partitions.mkString(",")))
         try {
-            // 添加参与优先副本选举的分区
+            // 将分区添加到参与优先副本选举的分区集合中
             controllerContext.partitionsUndergoingPreferredReplicaElection ++= partitions
             // 设置对应的 topic 为不可删除
             deleteTopicManager.markTopicIneligibleForDeletion(partitions.map(_.topic))
-            // 设置分区为 OnlinePartition 状态，包括重选 leader、更新 ZK，以及发送 LeaderAndIsrRequest 和 UpdateMetadataRequest 请求
+            // 设置分区为 OnlinePartition 状态，并使用优先副本选择器重选 leader 副本，同时更新 ZK 和发送 LeaderAndIsrRequest 和 UpdateMetadataRequest 请求
             partitionStateMachine.handleStateChanges(partitions, OnlinePartition, preferredReplicaPartitionLeaderSelector)
         } catch {
             case e: Throwable => error("Error completing preferred replica leader election for partitions %s".format(partitions.mkString(",")), e)
         } finally {
-            // 清理相关数据
-            removePartitionsFromPreferredReplicaElection(partitions, isTriggeredByAutoRebalance)
-            // 将 topic 标记为可删除，并唤醒 DeleteTopicsThread 线程
+            // 清理 ZK 和上下文中记录的相关数据
+            this.removePartitionsFromPreferredReplicaElection(partitions, isTriggeredByAutoRebalance)
+            // 将 topic 恢复为可删除，并唤醒 DeleteTopicsThread 线程
             deleteTopicManager.resumeDeletionForTopics(partitions.map(_.topic))
         }
     }
@@ -1012,27 +1004,32 @@ class KafkaController(val config: KafkaConfig, // 配置信息
 
     private def moveReassignedPartitionLeaderIfRequired(topicAndPartition: TopicAndPartition,
                                                         reassignedPartitionContext: ReassignedPartitionsContext) {
+
+        // 获取新分配的副本集合 RAR
         val reassignedReplicas = reassignedPartitionContext.newReplicas
+        // 获取分区的 leader 副本 ID
         val currentLeader = controllerContext.partitionLeadershipInfo(topicAndPartition).leaderAndIsr.leader
-        // change the assigned replica list to just the reassigned replicas in the cache so it gets sent out on the LeaderAndIsr
-        // request to the current or new leader. This will prevent it from adding the old replicas to the ISR
+        // 更新 Controller 上下文中记录的 topic 分区的 AR 集合为 RAR
         val oldAndNewReplicas = controllerContext.partitionReplicaAssignment(topicAndPartition)
         controllerContext.partitionReplicaAssignment.put(topicAndPartition, reassignedReplicas)
+
+        // 如果当前 leader 副本不在新分配的副本集合中
         if (!reassignedPartitionContext.newReplicas.contains(currentLeader)) {
-            info("Leader %s for partition %s being reassigned, ".format(currentLeader, topicAndPartition) +
-                    "is not in the new list of replicas %s. Re-electing leader".format(reassignedReplicas.mkString(",")))
-            // move the leader to one of the alive and caught up new replicas
+            info("Leader %s for partition %s being reassigned, ".format(currentLeader, topicAndPartition) + "is not in the new list of replicas %s. Re-electing leader".format(reassignedReplicas.mkString(",")))
+            // 基于 ReassignedPartitionLeaderSelector 分区 leader 副本选择器重新选择 leader 副本
             partitionStateMachine.handleStateChanges(Set(topicAndPartition), OnlinePartition, reassignedPartitionLeaderSelector)
-        } else {
-            // check if the leader is alive or not
+        }
+        // 如果当前 leader 副本位于新分配的副本集合中
+        else {
+            // 如果 leader 副本所在的 broker 节点有效
             if (controllerContext.liveBrokerIds.contains(currentLeader)) {
-                info("Leader %s for partition %s being reassigned, ".format(currentLeader, topicAndPartition) +
-                        "is already in the new list of replicas %s and is alive".format(reassignedReplicas.mkString(",")))
-                // shrink replication factor and update the leader epoch in zookeeper to use on the next LeaderAndIsrRequest
-                updateLeaderEpochAndSendRequest(topicAndPartition, oldAndNewReplicas, reassignedReplicas)
-            } else {
-                info("Leader %s for partition %s being reassigned, ".format(currentLeader, topicAndPartition) +
-                        "is already in the new list of replicas %s but is dead".format(reassignedReplicas.mkString(",")))
+                info("Leader %s for partition %s being reassigned, ".format(currentLeader, topicAndPartition) + "is already in the new list of replicas %s and is alive".format(reassignedReplicas.mkString(",")))
+                // 更新 ZK 和 Controller 上下文中记录的对应分区 leader 副本的年代信息，并发送请求通知到对应节点
+                this.updateLeaderEpochAndSendRequest(topicAndPartition, oldAndNewReplicas, reassignedReplicas)
+            }
+            // 如果 leader 副本所在的 broker 节点失效，重新选择新的 leader 副本
+            else {
+                info("Leader %s for partition %s being reassigned, ".format(currentLeader, topicAndPartition) + "is already in the new list of replicas %s but is dead".format(reassignedReplicas.mkString(",")))
                 partitionStateMachine.handleStateChanges(Set(topicAndPartition), OnlinePartition, reassignedPartitionLeaderSelector)
             }
         }
@@ -1040,7 +1037,8 @@ class KafkaController(val config: KafkaConfig, // 配置信息
 
     private def stopOldReplicasOfReassignedPartition(topicAndPartition: TopicAndPartition,
                                                      reassignedPartitionContext: ReassignedPartitionsContext,
-                                                     oldReplicas: Set[Int]) {
+                                                     oldReplicas: Set[Int] // OAR - RAR
+                                                    ) {
         val topic = topicAndPartition.topic
         val partition = topicAndPartition.partition
         // first move the replica to offline state (the controller removes it from the ISR)
@@ -1053,8 +1051,7 @@ class KafkaController(val config: KafkaConfig, // 配置信息
         replicaStateMachine.handleStateChanges(replicasToBeDeleted, NonExistentReplica)
     }
 
-    private def updateAssignedReplicasForPartition(topicAndPartition: TopicAndPartition,
-                                                   replicas: Seq[Int]) {
+    private def updateAssignedReplicasForPartition(topicAndPartition: TopicAndPartition, replicas: Seq[Int]) {
         val partitionsAndReplicasForThisTopic = controllerContext.partitionReplicaAssignment.filter(_._1.topic.equals(topicAndPartition.topic))
         partitionsAndReplicasForThisTopic.put(topicAndPartition, replicas)
         updateAssignedReplicasForPartition(topicAndPartition, partitionsAndReplicasForThisTopic)
@@ -1066,8 +1063,7 @@ class KafkaController(val config: KafkaConfig, // 配置信息
     private def startNewReplicasForReassignedPartition(topicAndPartition: TopicAndPartition,
                                                        reassignedPartitionContext: ReassignedPartitionsContext,
                                                        newReplicas: Set[Int]) {
-        // send the start replica request to the brokers in the reassigned replicas list that are not in the assigned
-        // replicas list
+        // send the start replica request to the brokers in the reassigned replicas list that are not in the assigned replicas list
         newReplicas.foreach { replica =>
             replicaStateMachine.handleStateChanges(Set(PartitionAndReplica(topicAndPartition.topic, topicAndPartition.partition, replica)), NewReplica)
         }
@@ -1184,8 +1180,7 @@ class KafkaController(val config: KafkaConfig, // 配置信息
                 warn("Partition %s failed to complete preferred replica leader election. Leader is %d".format(partition, currentLeader))
             }
         }
-        if (!isTriggeredByAutoRebalance)
-            zkUtils.deletePath(ZkUtils.PreferredReplicaLeaderElectionPath)
+        if (!isTriggeredByAutoRebalance) zkUtils.deletePath(ZkUtils.PreferredReplicaLeaderElectionPath)
         controllerContext.partitionsUndergoingPreferredReplicaElection --= partitionsToBeRemoved
     }
 
@@ -1449,22 +1444,21 @@ class PartitionsReassignedListener(protected val controller: KafkaController) ex
     @throws[Exception]
     def doHandleDataChange(dataPath: String, data: AnyRef) {
         debug("Partitions reassigned listener fired for path %s. Record partitions to be reassigned %s".format(dataPath, data))
-        // 从 ZK 读取分区副本的重新分配信息
+        // 从 ZK 读取分区副本的再分配信息
         val partitionsReassignmentData = ZkUtils.parsePartitionReassignmentData(data.toString)
+        // 过滤掉正在进行再分配的分区集合
         val partitionsToBeReassigned = inLock(controllerContext.controllerLock) {
-            // 过滤掉正在进行重新分配的分区
             partitionsReassignmentData.filterNot(p => controllerContext.partitionsBeingReassigned.contains(p._1))
         }
         partitionsToBeReassigned.foreach { partitionToBeReassigned =>
             inLock(controllerContext.controllerLock) {
-                // 检测 topic 是否为待删除的 topic
+                // 检测 topic 是否为待删除的 topic，如果是的话则放弃对名下分区的再分配操作
                 if (controller.deleteTopicManager.isTopicQueuedUpForDeletion(partitionToBeReassigned._1.topic)) {
-                    error("Skipping reassignment of partition %s for topic %s since it is currently being deleted"
-                            .format(partitionToBeReassigned._1, partitionToBeReassigned._1.topic))
+                    error("Skipping reassignment of partition %s for topic %s since it is currently being deleted".format(partitionToBeReassigned._1, partitionToBeReassigned._1.topic))
                     controller.removePartitionFromReassignedPartitions(partitionToBeReassigned._1)
                 } else {
                     val context = ReassignedPartitionsContext(partitionToBeReassigned._2)
-                    // 为副本重新分配做一些准备工作
+                    // 为副本再分配做一些前期准备工作
                     controller.initiateReassignReplicasForTopicPartition(partitionToBeReassigned._1, context)
                 }
             }
@@ -1489,29 +1483,30 @@ class ReassignedPartitionsIsrChangeListener(protected val controller: KafkaContr
             debug("Reassigned partitions isr change listener fired for path %s with children %s".format(dataPath, data))
             val topicAndPartition = TopicAndPartition(topic, partition)
             try {
-                // check if this partition is still being reassigned or not
                 controllerContext.partitionsBeingReassigned.get(topicAndPartition) match {
+                    // 对应的 topic 分区正在执行副本再分配操作
                     case Some(reassignedPartitionContext) =>
-                        // need to re-read leader and isr from zookeeper since the zkclient callback doesn't return the Stat object
+                        // 从 ZK 上获取对应 topic 分区的 leader 副本和 ISR 集合
                         val newLeaderAndIsrOpt = zkUtils.getLeaderAndIsrForPartition(topic, partition)
                         newLeaderAndIsrOpt match {
                             case Some(leaderAndIsr) => // check if new replicas have joined ISR
                                 val caughtUpReplicas = reassignedReplicas & leaderAndIsr.isr.toSet
+                                // 如果 RAR 中的副本已经全部进入 ISR 集合中
                                 if (caughtUpReplicas == reassignedReplicas) {
                                     // resume the partition reassignment process
                                     info("%d/%d replicas have caught up with the leader for partition %s being reassigned."
-                                            .format(caughtUpReplicas.size, reassignedReplicas.size, topicAndPartition) +
-                                            "Resuming partition reassignment")
+                                            .format(caughtUpReplicas.size, reassignedReplicas.size, topicAndPartition) + "Resuming partition reassignment")
+                                    // 执行副本再分配的后续操作
                                     controller.onPartitionReassignment(topicAndPartition, reassignedPartitionContext)
-                                }
-                                else {
+                                } else {
+                                    // 啥也不干，等待下一次回调
                                     info("%d/%d replicas have caught up with the leader for partition %s being reassigned."
                                             .format(caughtUpReplicas.size, reassignedReplicas.size, topicAndPartition) +
                                             "Replica(s) %s still need to catch up".format((reassignedReplicas -- leaderAndIsr.isr.toSet).mkString(",")))
                                 }
-                            case None => error("Error handling reassignment of partition %s to replicas %s as it was never created"
-                                    .format(topicAndPartition, reassignedReplicas.mkString(",")))
+                            case None => error("Error handling reassignment of partition %s to replicas %s as it was never created".format(topicAndPartition, reassignedReplicas.mkString(",")))
                         }
+                    // 对应的 topic 分区已经完成副本再分配操作
                     case None =>
                 }
             } catch {
@@ -1596,7 +1591,7 @@ object IsrChangeNotificationListener {
  * Starts the preferred replica leader election for the list of partitions specified under
  * /admin/preferred_replica_election
  *
- * 监听 ZK 的 /admin/preferred_replica_election 路径，执行优先副本选举成为 leader
+ * 监听 ZK 的 /admin/preferred_replica_election 路径，选举优先副本成为 leader
  */
 class PreferredReplicaElectionListener(protected val controller: KafkaController) extends ControllerZkDataListener {
 
@@ -1611,22 +1606,18 @@ class PreferredReplicaElectionListener(protected val controller: KafkaController
      */
     @throws[Exception]
     def doHandleDataChange(dataPath: String, data: AnyRef) {
-        debug("Preferred replica election listener fired for path %s. Record partitions to undergo preferred replica election %s"
-                .format(dataPath, data.toString))
+        debug("Preferred replica election listener fired for path %s. Record partitions to undergo preferred replica election %s".format(dataPath, data.toString))
         inLock(controllerContext.controllerLock) {
-            // 获取需要进行优先副本选举的 TP 集合
-            val partitionsForPreferredReplicaElection =
-                PreferredReplicaLeaderElectionCommand.parsePreferredReplicaElectionData(data.toString)
+            // 获取需要进行优先副本选举的 topic 分区集合
+            val partitionsForPreferredReplicaElection = PreferredReplicaLeaderElectionCommand.parsePreferredReplicaElectionData(data.toString)
             if (controllerContext.partitionsUndergoingPreferredReplicaElection.nonEmpty)
-                info("These partitions are already undergoing preferred replica election: %s"
-                        .format(controllerContext.partitionsUndergoingPreferredReplicaElection.mkString(",")))
-            // 过滤正在进行优先副本选举的分区
+                info("These partitions are already undergoing preferred replica election: %s".format(controllerContext.partitionsUndergoingPreferredReplicaElection.mkString(",")))
+            // 过滤已经处于优先副本选举的分区
             val partitions = partitionsForPreferredReplicaElection -- controllerContext.partitionsUndergoingPreferredReplicaElection
             // 过滤掉待删除的 topic 分区
             val partitionsForTopicsToBeDeleted = partitions.filter(p => controller.deleteTopicManager.isTopicQueuedUpForDeletion(p.topic))
             if (partitionsForTopicsToBeDeleted.nonEmpty) {
-                error("Skipping preferred replica election for partitions %s since the respective topics are being deleted"
-                        .format(partitionsForTopicsToBeDeleted))
+                error("Skipping preferred replica election for partitions %s since the respective topics are being deleted".format(partitionsForTopicsToBeDeleted))
             }
             // 对剩余的分区执行优先副本选举
             controller.onPreferredReplicaElection(partitions -- partitionsForTopicsToBeDeleted)
