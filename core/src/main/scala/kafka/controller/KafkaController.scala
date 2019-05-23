@@ -1366,23 +1366,21 @@ class KafkaController(val config: KafkaConfig, // 配置信息
     private def checkAndTriggerPartitionRebalance(): Unit = {
         if (isActive) {
             trace("checking need to trigger partition rebalance")
-            // get all the active brokers
-            // 获取所有可用的 broker 副本
+            // 获取所有可用的副本集合，key 是 broker 节点 ID
             var preferredReplicasForTopicsByBrokers: Map[Int, Map[TopicAndPartition, Seq[Int]]] = null
             inLock(controllerContext.controllerLock) {
-                // 获取优先副本所在的 brokerId 与分区的对应关系
+                // 获取优先副本所在的 broker 节点 ID 与分区的对应关系
                 preferredReplicasForTopicsByBrokers =
                         controllerContext.partitionReplicaAssignment.filterNot(p => deleteTopicManager.isTopicQueuedUpForDeletion(p._1.topic)).groupBy {
                             case (_, assignedReplicas) => assignedReplicas.head
                         }
             }
             debug("preferred replicas by broker " + preferredReplicasForTopicsByBrokers)
-            // for each broker, check if a preferred replica election needs to be triggered
-            // 计算每个 broker 的 imbalance 比率
+            // 计算每个 broker 节点的副本不均衡比率（imbalanceRatio）
             preferredReplicasForTopicsByBrokers.foreach {
                 case (leaderBroker, topicAndPartitionsForBroker) =>
                     var imbalanceRatio: Double = 0
-                    // 存在 leader 副本，但不是以优先副本为 leader 的服务集合
+                    // 存在 leader 副本，但不是以优先副本作为 leader 副本的服务集合
                     var topicsNotInPreferredReplica: Map[TopicAndPartition, Seq[Int]] = null
                     inLock(controllerContext.controllerLock) {
                         topicsNotInPreferredReplica = topicAndPartitionsForBroker.filter { case (topicPartition, _) =>
