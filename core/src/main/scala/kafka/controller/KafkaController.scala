@@ -260,22 +260,24 @@ class KafkaController(val config: KafkaConfig, // 配置信息
     private val controllerElector = new ZookeeperLeaderElector(
         controllerContext, ZkUtils.ControllerPath, onControllerFailover, onControllerResignation, config.brokerId, time)
 
-    /** 分区自动均衡定时任务调度器 */
+    /** 分区再均衡定时任务调度器 */
     private val autoRebalanceScheduler = new KafkaScheduler(1)
 
     /** 用于对指定的 topic 执行删除操作 */
     var deleteTopicManager: TopicDeletionManager = _
 
     /** Leader 副本选举策略 */
+
     val offlinePartitionSelector = new OfflinePartitionLeaderSelector(controllerContext, config)
     private val reassignedPartitionLeaderSelector = new ReassignedPartitionLeaderSelector(controllerContext)
     private val preferredReplicaPartitionLeaderSelector = new PreferredReplicaPartitionLeaderSelector(controllerContext)
     private val controlledShutdownPartitionLeaderSelector = new ControlledShutdownLeaderSelector(controllerContext)
 
-    /** 用于批量向 broker 发送请求 */
+    /** 用于批量向 broker 节点发送请求 */
     private val brokerRequestBatch = new ControllerBrokerRequestBatch(this)
 
     /** ZK 监听器 */
+
     private val partitionReassignedListener = new PartitionsReassignedListener(this)
     private val preferredReplicaElectionListener = new PreferredReplicaElectionListener(this)
     private val isrChangeNotificationListener = new IsrChangeNotificationListener(this)
@@ -342,50 +344,48 @@ class KafkaController(val config: KafkaConfig, // 配置信息
      * @return The number of partitions that the broker still leads.
      */
     def shutdownBroker(id: Int): Set[TopicAndPartition] = {
-
+        // 保证当前 Controller 是 leader 角色
         if (!isActive) {
             throw new ControllerMovedException("Controller moved to another broker. Aborting controlled shutdown")
         }
 
         controllerContext.brokerShutdownLock synchronized {
             info("Shutting down broker " + id)
-
             inLock(controllerContext.controllerLock) {
-                if (!controllerContext.liveOrShuttingDownBrokerIds.contains(id))
-                    throw new BrokerNotAvailableException("Broker id %d does not exist.".format(id))
-
+                // 校验目标 broker 节点是否处于运行中，对于不存在或已经关闭的 broker 节点不需要执行关闭操作
+                if (!controllerContext.liveOrShuttingDownBrokerIds.contains(id)) throw new BrokerNotAvailableException("Broker id %d does not exist.".format(id))
+                // 记录正在关闭的 broker 节点 ID
                 controllerContext.shuttingDownBrokerIds.add(id)
                 debug("All shutting down brokers: " + controllerContext.shuttingDownBrokerIds.mkString(","))
                 debug("Live brokers: " + controllerContext.liveBrokerIds.mkString(","))
             }
 
-            // 获取待关闭 broker 上所有的分区和副本信息
+            // 获取待关闭 broker 节点上所有的分区和副本信息
             val allPartitionsAndReplicationFactorOnBroker: Set[(TopicAndPartition, Int)] =
                 inLock(controllerContext.controllerLock) {
-                    controllerContext.partitionsOnBroker(id)
-                            .map(topicAndPartition => (topicAndPartition, controllerContext.partitionReplicaAssignment(topicAndPartition).size))
+                    controllerContext.partitionsOnBroker(id).map(topicAndPartition =>
+                        (topicAndPartition, controllerContext.partitionReplicaAssignment(topicAndPartition).size))
                 }
 
+            // 遍历处理待关闭 broker 节点上的分区和副本
             allPartitionsAndReplicationFactorOnBroker.foreach {
                 case (topicAndPartition, replicationFactor) =>
                     // Move leadership serially to relinquish lock.
                     inLock(controllerContext.controllerLock) {
                         controllerContext.partitionLeadershipInfo.get(topicAndPartition).foreach { currLeaderIsrAndControllerEpoch =>
-                            // 如果开启副本机制
+                            // 如果开启了副本机制
                             if (replicationFactor > 1) {
-                                // 检测 leader 副本是否处于待关闭的 broker 上
+                                // 如果分区 leader 副本位于待关闭的 broker 节点上
                                 if (currLeaderIsrAndControllerEpoch.leaderAndIsr.leader == id) {
-                                    // If the broker leads the topic partition, transition the leader and update isr. Updates zk and
-                                    // notifies all affected brokers
-                                    // 将相关的分区切换为 OnlinePartition 状态，使用 ControlledShutdownLeaderSelector 重新选择 leader 和 ISR 集合，
-                                    // 并将结果写入 ZK，然后发送 LeaderAndIsrRequest 和 UpdateMetadataRequest 请求
+                                    // 使用 ControlledShutdownLeaderSelector 选择器重新为分区选择新的 leader 和 ISR 集合，
+                                    // 并将结果写入 ZK，然后发送 LeaderAndIsrRequest 和 UpdateMetadataRequest 请求给集群中相应 broker 节点
                                     partitionStateMachine.handleStateChanges(
                                         Set(topicAndPartition), OnlinePartition, controlledShutdownPartitionLeaderSelector)
-                                } else {
-                                    // Stop the replica first. The state change below initiates ZK changes which should take some time
-                                    // before which the stop replica request should be completed (in most cases)
+                                }
+                                // 如果分区 leader 副本不位于待关闭的 broker 节点上
+                                else {
                                     try {
-                                        // 发送 StopReplicaRequest 请求（不删除副本）
+                                        // 发送 StopReplicaRequest 请求给待关闭的 broker 节点，关闭分区位于该节点上的副本（不删除副本）
                                         brokerRequestBatch.newBatch()
                                         brokerRequestBatch.addStopReplicaRequestForBrokers(
                                             Seq(id), topicAndPartition.topic, topicAndPartition.partition, deletePartition = false)
@@ -399,8 +399,7 @@ class KafkaController(val config: KafkaConfig, // 配置信息
 
                                             throw e
                                     }
-                                    // If the broker is a follower, updates the isr in ZK and notifies the current leader
-                                    // 将副本转换成 OfflineReplica 状态
+                                    // 将副本状态切换成 OfflineReplica，并尝试从 ISR 集合中移除，同时通知到集群中相应 broker 节点
                                     replicaStateMachine.handleStateChanges(
                                         Set(PartitionAndReplica(topicAndPartition.topic, topicAndPartition.partition, id)), OfflineReplica)
                                 }
@@ -409,16 +408,13 @@ class KafkaController(val config: KafkaConfig, // 配置信息
                     }
             }
 
-            /**
-             * 统计 leader 副本依然处于待关闭 broker 上的分区
-             *
-             * @return
-             */
+            // 统计 leader 副本依然处于待关闭 broker 节点上的分区数目
             def replicatedPartitionsBrokerLeads(): Iterable[TopicAndPartition] = inLock(controllerContext.controllerLock) {
                 trace("All leaders = " + controllerContext.partitionLeadershipInfo.mkString(","))
                 controllerContext.partitionLeadershipInfo.filter {
                     case (topicAndPartition, leaderIsrAndControllerEpoch) =>
-                        leaderIsrAndControllerEpoch.leaderAndIsr.leader == id && controllerContext.partitionReplicaAssignment(topicAndPartition).size > 1
+                        leaderIsrAndControllerEpoch.leaderAndIsr.leader == id &&
+                                controllerContext.partitionReplicaAssignment(topicAndPartition).size > 1
                 }.keys
             }
 
@@ -828,7 +824,7 @@ class KafkaController(val config: KafkaConfig, // 配置信息
     def startup(): Unit = {
         inLock(controllerContext.controllerLock) {
             info("Controller starting up")
-            // 注册 SessionExpirationListener 监听器，监听 controller 与 ZK 的连接状态
+            // 注册 SessionExpirationListener 监听器，监听 Controller 与 ZK 的连接状态
             this.registerSessionExpirationListener()
             // 标识当前 controller 已经启动，现在还是 follower 角色
             isRunning = true
@@ -1366,54 +1362,53 @@ class KafkaController(val config: KafkaConfig, // 配置信息
     private def checkAndTriggerPartitionRebalance(): Unit = {
         if (isActive) {
             trace("checking need to trigger partition rebalance")
-            // 获取所有可用的副本集合，key 是 broker 节点 ID
+            // 获取所有可用的副本集合，key 是优先副本所在的 broker 节点 ID
             var preferredReplicasForTopicsByBrokers: Map[Int, Map[TopicAndPartition, Seq[Int]]] = null
             inLock(controllerContext.controllerLock) {
                 // 获取优先副本所在的 broker 节点 ID 与分区的对应关系
                 preferredReplicasForTopicsByBrokers =
-                        controllerContext.partitionReplicaAssignment.filterNot(p => deleteTopicManager.isTopicQueuedUpForDeletion(p._1.topic)).groupBy {
-                            case (_, assignedReplicas) => assignedReplicas.head
-                        }
+                        controllerContext.partitionReplicaAssignment
+                                // 过滤掉待删除的 topic
+                                .filterNot(p => deleteTopicManager.isTopicQueuedUpForDeletion(p._1.topic))
+                                // 按照第一个副本（优先副本） ID 进行分组
+                                .groupBy { case (_, assignedReplicas) => assignedReplicas.head }
             }
             debug("preferred replicas by broker " + preferredReplicasForTopicsByBrokers)
+
             // 计算每个 broker 节点的副本不均衡比率（imbalanceRatio）
-            preferredReplicasForTopicsByBrokers.foreach {
-                case (leaderBroker, topicAndPartitionsForBroker) =>
-                    var imbalanceRatio: Double = 0
-                    // 存在 leader 副本，但不是以优先副本作为 leader 副本的服务集合
-                    var topicsNotInPreferredReplica: Map[TopicAndPartition, Seq[Int]] = null
-                    inLock(controllerContext.controllerLock) {
-                        topicsNotInPreferredReplica = topicAndPartitionsForBroker.filter { case (topicPartition, _) =>
-                            controllerContext.partitionLeadershipInfo.contains(topicPartition) &&
-                                    controllerContext.partitionLeadershipInfo(topicPartition).leaderAndIsr.leader != leaderBroker
-                        }
-                        debug("topics not in preferred replica " + topicsNotInPreferredReplica)
-                        val totalTopicPartitionsForBroker = topicAndPartitionsForBroker.size
-                        val totalTopicPartitionsNotLedByBroker = topicsNotInPreferredReplica.size
-                        // 计算当前 broker 的 imbalance 比率
-                        imbalanceRatio = totalTopicPartitionsNotLedByBroker.toDouble / totalTopicPartitionsForBroker
-                        trace("leader imbalance ratio for broker %d is %f".format(leaderBroker, imbalanceRatio))
+            preferredReplicasForTopicsByBrokers.foreach { case (leaderBroker, topicAndPartitionsForBroker) =>
+                var imbalanceRatio: Double = 0
+                // 计算存在 leader 副本，但不是以优先副本作为 leader 副本的分区副本集合
+                var topicsNotInPreferredReplica: Map[TopicAndPartition, Seq[Int]] = null
+                inLock(controllerContext.controllerLock) {
+                    topicsNotInPreferredReplica = topicAndPartitionsForBroker.filter { case (topicPartition, _) =>
+                        controllerContext.partitionLeadershipInfo.contains(topicPartition) && // 存在 leader 副本
+                                controllerContext.partitionLeadershipInfo(topicPartition).leaderAndIsr.leader != leaderBroker // 且 leader 副本不是优先副本
                     }
-                    // check ratio and if greater than desired ratio, trigger a rebalance for the topic partitions
-                    // that need to be on this broker
-                    // 当 broker 上的 imbalance 比率大于阈值时，触发优先副本选举
-                    if (imbalanceRatio > (config.leaderImbalancePerBrokerPercentage.toDouble / 100)) {
-                        topicsNotInPreferredReplica.keys.foreach { topicPartition =>
-                            inLock(controllerContext.controllerLock) {
-                                // do this check only if the broker is live and there are no partitions being reassigned currently
-                                // and preferred replica election is not in progress
-                                // 先执行一系列的检查
-                                if (controllerContext.liveBrokerIds.contains(leaderBroker) &&
-                                        controllerContext.partitionsBeingReassigned.isEmpty &&
-                                        controllerContext.partitionsUndergoingPreferredReplicaElection.isEmpty &&
-                                        !deleteTopicManager.isTopicQueuedUpForDeletion(topicPartition.topic) &&
-                                        controllerContext.allTopics.contains(topicPartition.topic)) {
-                                    // 执行优先副本选举
-                                    onPreferredReplicaElection(Set(topicPartition), isTriggeredByAutoRebalance = true)
-                                }
+                    debug("topics not in preferred replica " + topicsNotInPreferredReplica)
+                    val totalTopicPartitionsForBroker = topicAndPartitionsForBroker.size
+                    val totalTopicPartitionsNotLedByBroker = topicsNotInPreferredReplica.size
+                    // 计算当前 broker 节点的 imbalance 比率：（不是以优先副本作为 leader 副本的分区数 / 所在 broker 节点的总分区数）
+                    imbalanceRatio = totalTopicPartitionsNotLedByBroker.toDouble / totalTopicPartitionsForBroker
+                    trace("leader imbalance ratio for broker %d is %f".format(leaderBroker, imbalanceRatio))
+                }
+
+                // 当 broker 节点上的不均衡比率大于阈值（对应 leader.imbalance.per.broker.percentage 配置）时，触发优先副本选举机制
+                if (imbalanceRatio > (config.leaderImbalancePerBrokerPercentage.toDouble / 100)) {
+                    topicsNotInPreferredReplica.keys.foreach { topicPartition =>
+                        inLock(controllerContext.controllerLock) {
+                            // 对满足条件的 topic 分区，执行优先副本选举
+                            if (controllerContext.liveBrokerIds.contains(leaderBroker) && // 对应的 broker 节点是有效的
+                                    controllerContext.partitionsBeingReassigned.isEmpty && // 没有分区正在执行副本再分配
+                                    controllerContext.partitionsUndergoingPreferredReplicaElection.isEmpty && // 没有分区正在执行优先副本选举
+                                    !deleteTopicManager.isTopicQueuedUpForDeletion(topicPartition.topic) && // 分区所属 topic 正常运行
+                                    controllerContext.allTopics.contains(topicPartition.topic)) { // 分区所属 topic 是有效的
+                                // 执行优先副本选举
+                                onPreferredReplicaElection(Set(topicPartition), isTriggeredByAutoRebalance = true)
                             }
                         }
                     }
+                }
             }
         }
     }

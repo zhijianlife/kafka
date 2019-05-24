@@ -253,8 +253,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         authorizeClusterAction(request)
 
         val partitionsRemaining = controller.shutdownBroker(controlledShutdownRequest.brokerId)
-        val controlledShutdownResponse = new ControlledShutdownResponse(controlledShutdownRequest.correlationId,
-            Errors.NONE.code, partitionsRemaining)
+        val controlledShutdownResponse = new ControlledShutdownResponse(controlledShutdownRequest.correlationId, Errors.NONE.code, partitionsRemaining)
         requestChannel.sendResponse(new Response(request, new RequestOrResponseSend(request.connectionId, controlledShutdownResponse)))
     }
 
