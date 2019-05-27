@@ -38,7 +38,7 @@ import scala.collection.{Map, Seq, immutable}
  * Each Kafka server instantiates a coordinator which is responsible for a set of groups.
  * Groups are assigned to coordinators based on their group names.
  *
- * 每一个 broker 上都会实例化一个 GroupCoordinator 对象，每个 GroupCoordinator 只负责管理消费者 group 的一个子集。
+ * 每一个 broker 上都会实例化一个 GroupCoordinator 对象，每个 GroupCoordinator 负责管理消费者 group 的一个子集。
  *
  * GroupCoordinator 的主要功能有：
  *
@@ -47,12 +47,12 @@ import scala.collection.{Map, Seq, immutable}
  * 3. 记录消费者 group 相关信息，即使 broker 宕机导致 group 由新的 GroupCoordinator 进行管理，新的 GroupCoordinator 也知道 group 中每个消费者负责处理哪个分区等信息
  * 4. 通过心跳机制检测消费者的运行状态
  */
-class GroupCoordinator(val brokerId: Int,
-                       val groupConfig: GroupConfig, // 记录 group 中 session 过期的最小时长和最大时长，即超时时长的合法区间
+class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
+                       val groupConfig: GroupConfig, // Group 配置对象，记录了 group 中 session 过期的最小时长和最大时长，即超时时长的合法区间
                        val offsetConfig: OffsetConfig, // 记录 OffsetMetadata 相关的配置项
-                       val groupManager: GroupMetadataManager,
-                       val heartbeatPurgatory: DelayedOperationPurgatory[DelayedHeartbeat], // 管理 DelayedHeartbeat
-                       val joinPurgatory: DelayedOperationPurgatory[DelayedJoin], // 管理 DelayedJoin
+                       val groupManager: GroupMetadataManager, // 负责管理 group 元数据以及对应的 offset 信息
+                       val heartbeatPurgatory: DelayedOperationPurgatory[DelayedHeartbeat], // 管理 DelayedHeartbeat 延时任务的炼狱
+                       val joinPurgatory: DelayedOperationPurgatory[DelayedJoin], // 管理 DelayedJoin 延时任务的炼狱
                        time: Time) extends Logging {
 
     type JoinCallback = JoinGroupResult => Unit
@@ -60,6 +60,7 @@ class GroupCoordinator(val brokerId: Int,
 
     this.logIdent = "[GroupCoordinator " + brokerId + "]: "
 
+    /** 标识当前 GroupCoordinator 实例是否启动 */
     private val isActive = new AtomicBoolean(false)
 
     def offsetsTopicConfigs: Properties = {
@@ -80,8 +81,7 @@ class GroupCoordinator(val brokerId: Int,
      */
     def startup(enableMetadataExpiration: Boolean = true) {
         info("Starting up.")
-        if (enableMetadataExpiration)
-            groupManager.enableMetadataExpiration()
+        if (enableMetadataExpiration) groupManager.enableMetadataExpiration()
         isActive.set(true)
         info("Startup complete.")
     }

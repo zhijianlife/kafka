@@ -169,11 +169,12 @@ case class GroupSummary(state: String,
  */
 @nonthreadsafe
 private[coordinator] class GroupMetadata(val groupId: String, // group 的 ID
-                                         initialState: GroupState = Empty) {
+                                         initialState: GroupState = Empty // group 初始状态
+                                        ) {
 
-    /** 当前 group 的状态信息 */
+    /** 当前 group 的状态 */
     private var state: GroupState = initialState
-    /** key 是 memberId */
+    /** 记录消费者的元数据信息，key 是消费者 ID */
     private val members = new mutable.HashMap[String, MemberMetadata]
     private val offsets = new mutable.HashMap[TopicPartition, OffsetAndMetadata]
     private val pendingOffsetCommits = new mutable.HashMap[TopicPartition, OffsetAndMetadata]
@@ -181,9 +182,9 @@ private[coordinator] class GroupMetadata(val groupId: String, // group 的 ID
     var protocolType: Option[String] = None
     /** 当前 group 的年代信息，避免受过期请求的影响 */
     var generationId = 0
-    /** group 中 leader 消费者的 memberId */
+    /** group 中 leader 消费者的 ID */
     var leaderId: String = _
-    /** 记录选择的 PartitionAssignor */
+    /** 记录当前 group 选择的分区分配策略 PartitionAssignor */
     var protocol: String = _
 
     def is(groupState: GroupState): Boolean = state == groupState

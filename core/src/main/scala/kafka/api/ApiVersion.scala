@@ -80,8 +80,7 @@ sealed trait ApiVersion extends Ordered[ApiVersion] {
     val messageFormatVersion: Byte
     val id: Int
 
-    override def compare(that: ApiVersion): Int =
-        ApiVersion.orderingByVersion.compare(this, that)
+    override def compare(that: ApiVersion): Int = ApiVersion.orderingByVersion.compare(this, that)
 
     override def toString: String = version
 }

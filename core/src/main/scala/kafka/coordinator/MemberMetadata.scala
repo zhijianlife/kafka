@@ -51,25 +51,25 @@ case class MemberSummary(memberId: String,
  */
 @nonthreadsafe
 private[coordinator] class MemberMetadata(val memberId: String, // 对应消费者的 ID，由 GroupCoordinator 分配
-                                          val groupId: String, // 记录消费者隶属的 group 的 ID
+                                          val groupId: String, // 消费者隶属的 group 的 ID
                                           val clientId: String,
                                           val clientHost: String,
                                           val rebalanceTimeoutMs: Int,
                                           val sessionTimeoutMs: Int, // 心跳超时时间
                                           val protocolType: String,
-                                          var supportedProtocols: List[(String, Array[Byte])] // 消费者支持的 PartitionAssignor
+                                          var supportedProtocols: List[(String, Array[Byte])] // 消费者支持的分区分配策略 PartitionAssignor
                                          ) {
 
-    /** 记录分配给当前 member 的分区信息 */
+    /** 分配给当前消费者的分区信息 */
     var assignment: Array[Byte] = Array.empty[Byte]
 
-    /** 与 JoinGroupRequest 相关的回调函数 */
+    /** JoinGroupRequest 请求相关的回调函数 */
     var awaitingJoinCallback: JoinGroupResult => Unit = _
 
-    /** 与 SyncGroupRequest 相关的回调函数 */
+    /** SyncGroupRequest 请求相关的回调函数 */
     var awaitingSyncCallback: (Array[Byte], Short) => Unit = _
 
-    /** 最后一次收到心跳信息的时间戳 */
+    /** 最后一次心跳时间戳 */
     var latestHeartbeat: Long = -1
 
     /** 标识消费者是否已经离开当前 group */

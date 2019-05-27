@@ -45,7 +45,7 @@ import scala.collection._
 
 /**
  * 负责管理 group 元数据以及对应的 offset 信息，
- * 底层使用 offset topic 以消息的信息存储 group 的 GroupMetadata 信息和消费的每个分区的 offset
+ * 底层使用 offset topic，以消息的信息存储 group 的 GroupMetadata 信息和消费的每个分区的 offset
  *
  * @param brokerId
  * @param interBrokerProtocolVersion
@@ -54,13 +54,14 @@ import scala.collection._
  * @param zkUtils
  * @param time
  */
-class GroupMetadataManager(val brokerId: Int,
-                           val interBrokerProtocolVersion: ApiVersion,
-                           val config: OffsetConfig,
-                           replicaManager: ReplicaManager,
+class GroupMetadataManager(val brokerId: Int, // 所属 broker 节点 ID
+                           val interBrokerProtocolVersion: ApiVersion, // kafka 版本信息
+                           val config: OffsetConfig, // 记录 OffsetMetadata 相关的配置项
+                           replicaManager: ReplicaManager, // 管理 broker 节点上 offset topic 的分区信息
                            zkUtils: ZkUtils,
                            time: Time) extends Logging with KafkaMetricsGroup {
 
+    /** 消息压缩类型 */
     private val compressionType: CompressionType = CompressionType.forId(config.offsetsTopicCompressionCodec.codec)
 
     /** 缓存每个 group 在服务端对应的 GroupMetadata 对象  */
@@ -69,35 +70,19 @@ class GroupMetadataManager(val brokerId: Int,
     /* lock protecting access to loading and owned partition sets */
     private val partitionLock = new ReentrantLock()
 
-    /**
-     * partitions of consumer groups that are being loaded, its lock should be always called BEFORE the group lock if needed
-     *
-     * 记录正在加载的 offset topic 分区的 ID
-     */
+    /** 正在加载的 offset topic 分区的 ID */
     private val loadingPartitions: mutable.Set[Int] = mutable.Set()
 
-    /**
-     * partitions of consumer groups that are assigned, using the same loading partition lock
-     *
-     * 记录以及加载的 offset topic 分区的 ID
-     */
+    /** 已经加载完成的 offset topic 分区的 ID */
     private val ownedPartitions: mutable.Set[Int] = mutable.Set()
 
-    /* shutting down flag */
+    /** 标识 GroupCoordinator 正在关闭 */
     private val shuttingDown = new AtomicBoolean(false)
 
-    /**
-     * number of partitions for the consumer metadata topic
-     *
-     * 记录 offset topic 的分区数目
-     */
+    /** 记录 offset topic 的分区数目 */
     private val groupMetadataTopicPartitionCount = getOffsetsTopicPartitionCount
 
-    /**
-     * single-thread scheduler to handle offset/group metadata cache loading and unloading
-     *
-     * 执行 delete-expired-consumer-offsets、GroupCoordinator 迁移等任务
-     */
+    /** 用于调度 delete-expired-consumer-offsets 和 GroupCoordinator 迁移等任务 */
     private val scheduler = new KafkaScheduler(threads = 1, threadNamePrefix = "group-metadata-manager-")
 
     this.logIdent = "[Group Metadata Manager on Broker " + brokerId + "]: "
@@ -119,7 +104,7 @@ class GroupMetadataManager(val brokerId: Int,
     )
 
     def enableMetadataExpiration() {
-        // 启动 KafkaScheduler
+        // 启动定时任务调度器
         scheduler.startup()
 
         // 启动 delete-expired-group-metadata 定时任务
@@ -662,13 +647,14 @@ class GroupMetadataManager(val brokerId: Int,
 
     // visible for testing
     private[coordinator] def cleanupGroupMetadata(): Unit = {
-        cleanupGroupMetadata(None)
+        this.cleanupGroupMetadata(None)
     }
 
     def cleanupGroupMetadata(deletedTopicPartitions: Option[Seq[TopicPartition]]) {
         val startMs = time.milliseconds()
         var offsetsRemoved = 0
 
+        // 遍历处理没有 group 对应的元数据信息
         groupMetadataCache.foreach { case (groupId, group) =>
             val (removedOffsets, groupIsDead, generation) = group synchronized {
                 val removedOffsets = deletedTopicPartitions match {
@@ -1198,8 +1184,7 @@ case class DelayedStore(partitionRecords: Map[TopicPartition, MemoryRecords],
  */
 case class GroupTopicPartition(group: String, topicPartition: TopicPartition) {
 
-    def this(group: String, topic: String, partition: Int) =
-        this(group, new TopicPartition(topic, partition))
+    def this(group: String, topic: String, partition: Int) = this(group, new TopicPartition(topic, partition))
 
     override def toString: String =
         "[%s,%s,%d]".format(group, topicPartition.topic, topicPartition.partition)
