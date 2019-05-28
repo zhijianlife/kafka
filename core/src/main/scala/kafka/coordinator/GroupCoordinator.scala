@@ -287,10 +287,13 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
                         groupAssignment: Map[String, Array[Byte]],
                         responseCallback: SyncCallback) {
         if (!isActive.get) {
+            // 当前 GroupCoordinator 实例未启动
             responseCallback(Array.empty, Errors.GROUP_COORDINATOR_NOT_AVAILABLE.code)
         } else if (!isCoordinatorForGroup(groupId)) {
+            // 当前 GroupCoordinator 实例未管理参数指定的 group
             responseCallback(Array.empty, Errors.NOT_COORDINATOR_FOR_GROUP.code)
         } else {
+            // 获取并处理 group 对应的 GroupMetadata 对象
             groupManager.getGroup(groupId) match {
                 case None => responseCallback(Array.empty, Errors.UNKNOWN_MEMBER_ID.code)
                 case Some(group) => doSyncGroup(group, generation, memberId, groupAssignment, responseCallback)
@@ -986,6 +989,12 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
         // TODO: add metrics for complete heartbeats
     }
 
+    /**
+     * 获取 group 对应的 offset topic 的分区 ID
+     *
+     * @param group
+     * @return
+     */
     def partitionFor(group: String): Int = groupManager.partitionFor(group)
 
     private def shouldKeepMemberAlive(member: MemberMetadata, heartbeatDeadline: Long): Boolean =

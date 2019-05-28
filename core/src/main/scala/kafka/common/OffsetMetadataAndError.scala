@@ -21,8 +21,7 @@ import org.apache.kafka.common.protocol.Errors
 
 case class OffsetMetadata(offset: Long, metadata: String = OffsetMetadata.NoMetadata) {
     override def toString: String = "OffsetMetadata[%d,%s]"
-            .format(offset,
-                if (metadata != null && metadata.length > 0) metadata else "NO_METADATA")
+            .format(offset, if (metadata != null && metadata.length > 0) metadata else "NO_METADATA")
 }
 
 object OffsetMetadata {

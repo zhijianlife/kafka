@@ -147,9 +147,6 @@ class KafkaApis(val requestChannel: RequestChannel,
      * @param request
      */
     def handleLeaderAndIsrRequest(request: RequestChannel.Request) {
-        // ensureTopicExists is only for client facing requests
-        // We can't have the ensureTopicExists check here since the controller sends it as an advisory to all brokers so they
-        // stop serving data to clients for the topic being deleted
         val correlationId = request.header.correlationId
         val leaderAndIsrRequest = request.body.asInstanceOf[LeaderAndIsrRequest]
 
@@ -157,15 +154,14 @@ class KafkaApis(val requestChannel: RequestChannel,
             // 完成 GroupCoordinator 的迁移操作
             def onLeadershipChange(updatedLeaders: Iterable[Partition], updatedFollowers: Iterable[Partition]) {
                 // for each new leader or follower, call coordinator to handle consumer group migration.
-                // this callback is invoked under the replica state change lock to ensure proper order of
-                // leadership changes
+                // this callback is invoked under the replica state change lock to ensure proper order of leadership changes
                 updatedLeaders.foreach { partition =>
-                    if (partition.topic == Topic.GroupMetadataTopicName)
-                        coordinator.handleGroupImmigration(partition.partitionId)
+                    // 仅处理 offset topic，当 broker 成为 offset topic 分区的 leader 副本角色时回调执行
+                    if (partition.topic == Topic.GroupMetadataTopicName) coordinator.handleGroupImmigration(partition.partitionId)
                 }
                 updatedFollowers.foreach { partition =>
-                    if (partition.topic == Topic.GroupMetadataTopicName)
-                        coordinator.handleGroupEmigration(partition.partitionId)
+                    // 仅处理 offset topic
+                    if (partition.topic == Topic.GroupMetadataTopicName) coordinator.handleGroupEmigration(partition.partitionId)
                 }
             }
 
@@ -174,6 +170,7 @@ class KafkaApis(val requestChannel: RequestChannel,
                     val result = replicaManager.becomeLeaderOrFollower(correlationId, leaderAndIsrRequest, metadataCache, onLeadershipChange)
                     new LeaderAndIsrResponse(result.errorCode, result.responseMap.mapValues(new JShort(_)).asJava)
                 } else {
+                    // 权限认证失败
                     val result = leaderAndIsrRequest.partitionStates.asScala.keys.map((_, new JShort(Errors.CLUSTER_AUTHORIZATION_FAILED.code))).toMap
                     new LeaderAndIsrResponse(Errors.CLUSTER_AUTHORIZATION_FAILED.code, result.asJava)
                 }
@@ -829,10 +826,8 @@ class KafkaApis(val requestChannel: RequestChannel,
                             properties: Properties = new Properties()): MetadataResponse.TopicMetadata = {
         try {
             AdminUtils.createTopic(zkUtils, topic, numPartitions, replicationFactor, properties, RackAwareMode.Safe)
-            info("Auto creation of topic %s with %d partitions and replication factor %d is successful"
-                    .format(topic, numPartitions, replicationFactor))
-            new MetadataResponse.TopicMetadata(Errors.LEADER_NOT_AVAILABLE, topic, Topic.isInternal(topic),
-                java.util.Collections.emptyList())
+            info("Auto creation of topic %s with %d partitions and replication factor %d is successful".format(topic, numPartitions, replicationFactor))
+            new MetadataResponse.TopicMetadata(Errors.LEADER_NOT_AVAILABLE, topic, Topic.isInternal(topic), java.util.Collections.emptyList())
         } catch {
             case _: TopicExistsException => // let it go, possibly another broker created this topic
                 new MetadataResponse.TopicMetadata(Errors.LEADER_NOT_AVAILABLE, topic, Topic.isInternal(topic),
@@ -850,13 +845,12 @@ class KafkaApis(val requestChannel: RequestChannel,
                 Math.min(config.offsetsTopicReplicationFactor.toInt, aliveBrokers.length)
             else
                 config.offsetsTopicReplicationFactor.toInt
-        createTopic(Topic.GroupMetadataTopicName, config.offsetsTopicPartitions,
-            offsetsTopicReplicationFactor, coordinator.offsetsTopicConfigs)
+        this.createTopic(Topic.GroupMetadataTopicName, config.offsetsTopicPartitions, offsetsTopicReplicationFactor, coordinator.offsetsTopicConfigs)
     }
 
     private def getOrCreateGroupMetadataTopic(listenerName: ListenerName): MetadataResponse.TopicMetadata = {
         val topicMetadata = metadataCache.getTopicMetadata(Set(Topic.GroupMetadataTopicName), listenerName)
-        topicMetadata.headOption.getOrElse(createGroupMetadataTopic())
+        topicMetadata.headOption.getOrElse(this.createGroupMetadataTopic())
     }
 
     /**
@@ -1063,36 +1057,34 @@ class KafkaApis(val requestChannel: RequestChannel,
     def handleGroupCoordinatorRequest(request: RequestChannel.Request) {
         val groupCoordinatorRequest = request.body.asInstanceOf[GroupCoordinatorRequest]
 
+        // 权限验证
         if (!authorize(request.session, Describe, new Resource(Group, groupCoordinatorRequest.groupId))) {
             val responseBody = new GroupCoordinatorResponse(Errors.GROUP_AUTHORIZATION_FAILED.code, Node.noNode)
             requestChannel.sendResponse(new RequestChannel.Response(request, responseBody))
         } else {
-            // 获取 groupId 对应的 offset topic 对应的分区 ID
+            // 获取 group 对应的 offset topic 的分区 ID
             val partition = coordinator.partitionFor(groupCoordinatorRequest.groupId)
 
-            // get metadata (and create the topic if necessary)
-            // 从 MetadataCache 中获取 offset topic  的相关信息，如果 offset topic 未创建则进行创建
-            val offsetsTopicMetadata = getOrCreateGroupMetadataTopic(request.listenerName)
+            // 从 MetadataCache 中获取 offset topic 的相关信息，如果未创建则进行创建
+            val offsetsTopicMetadata = this.getOrCreateGroupMetadataTopic(request.listenerName)
 
             val responseBody = if (offsetsTopicMetadata.error != Errors.NONE) {
+                // 创建 offset topic 失败
                 new GroupCoordinatorResponse(Errors.GROUP_COORDINATOR_NOT_AVAILABLE.code, Node.noNode)
             } else {
-                // 通过 offset topic 的分区 ID 获取分区 leader 所在的节点
+                // 获取当前 group 对应 offset topic 分区 leader 副本所在的节点
                 val coordinatorEndpoint = offsetsTopicMetadata.partitionMetadata().asScala
                         .find(_.partition == partition)
                         .map(_.leader())
 
+                // 创建 GroupCoordinatorResponse 对象
                 coordinatorEndpoint match {
-                    // 创建 GroupCoordinatorResponse 对象
-                    case Some(endpoint) if !endpoint.isEmpty =>
-                        new GroupCoordinatorResponse(Errors.NONE.code, endpoint)
-                    case _ =>
-                        new GroupCoordinatorResponse(Errors.GROUP_COORDINATOR_NOT_AVAILABLE.code, Node.noNode)
+                    case Some(endpoint) if !endpoint.isEmpty => new GroupCoordinatorResponse(Errors.NONE.code, endpoint)
+                    case _ => new GroupCoordinatorResponse(Errors.GROUP_COORDINATOR_NOT_AVAILABLE.code, Node.noNode)
                 }
             }
 
-            trace("Sending consumer metadata %s for correlation id %d to client %s."
-                    .format(responseBody, request.header.correlationId, request.header.clientId))
+            trace("Sending consumer metadata %s for correlation id %d to client %s.".format(responseBody, request.header.correlationId, request.header.clientId))
             // 将响应对象加入到 channel 中，等待发送
             requestChannel.sendResponse(new RequestChannel.Response(request, responseBody))
         }
@@ -1194,14 +1186,14 @@ class KafkaApis(val requestChannel: RequestChannel,
     def handleSyncGroupRequest(request: RequestChannel.Request) {
         val syncGroupRequest = request.body.asInstanceOf[SyncGroupRequest]
 
-        // 创建对应的回调函数，构建 SyncGroupResponse 对象，并添加到 channel 等待发送
+        // 创建对应的回调函数，构建 SyncGroupResponse 响应对象，并添加到 channel 中等待发送
         def sendResponseCallback(memberState: Array[Byte], errorCode: Short) {
             val responseBody = new SyncGroupResponse(errorCode, ByteBuffer.wrap(memberState))
             requestChannel.sendResponse(new Response(request, responseBody))
         }
 
-        // 权限校验
         if (!authorize(request.session, Read, new Resource(Group, syncGroupRequest.groupId()))) {
+            // 权限校验失败
             sendResponseCallback(Array[Byte](), Errors.GROUP_AUTHORIZATION_FAILED.code)
         } else {
             coordinator.handleSyncGroup(

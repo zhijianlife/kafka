@@ -931,7 +931,7 @@ class KafkaConfig(val props: java.util.Map[_, _], doLog: Boolean) extends Abstra
     /** ********* Offset management configuration ***********/
     val offsetMetadataMaxSize = getInt(KafkaConfig.OffsetMetadataMaxSizeProp)
     val offsetsLoadBufferSize = getInt(KafkaConfig.OffsetsLoadBufferSizeProp)
-    val offsetsTopicReplicationFactor = getShort(KafkaConfig.OffsetsTopicReplicationFactorProp)
+    val offsetsTopicReplicationFactor: lang.Short = getShort(KafkaConfig.OffsetsTopicReplicationFactorProp)
     val offsetsTopicPartitions = getInt(KafkaConfig.OffsetsTopicPartitionsProp)
     val offsetCommitTimeoutMs = getInt(KafkaConfig.OffsetCommitTimeoutMsProp)
     val offsetCommitRequiredAcks = getShort(KafkaConfig.OffsetCommitRequiredAcksProp)
