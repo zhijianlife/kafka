@@ -121,34 +121,40 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
                         protocolType: String,
                         protocols: List[(String, Array[Byte])],
                         responseCallback: JoinCallback) {
-        // 检测 GroupCoordinator 是否启动
         if (!isActive.get) {
+            // GroupCoordinator 实例未启动
             responseCallback(joinError(memberId, Errors.GROUP_COORDINATOR_NOT_AVAILABLE.code))
-        } else if (!validGroupId(groupId)) { // 检测 groudId 是否合法
+        } else if (!validGroupId(groupId)) {
+            // groudId 不合法
             responseCallback(joinError(memberId, Errors.INVALID_GROUP_ID.code))
-        } else if (!isCoordinatorForGroup(groupId)) { // 检测 GroupCoordinator 是否管理当前 group
+        } else if (!isCoordinatorForGroup(groupId)) {
+            // 当前 GroupCoordinator 实例并不负责管理当前 group
             responseCallback(joinError(memberId, Errors.NOT_COORDINATOR_FOR_GROUP.code))
-        } else if (isCoordinatorLoadingInProgress(groupId)) { // 检测 GroupCoordinator 是否已经加载了该 group 对应的 offset topic 分区
+        } else if (isCoordinatorLoadingInProgress(groupId)) {
+            // 当前 GroupCoordinator 实例正在加载该 group 对应的 offset topic 分区信息
             responseCallback(joinError(memberId, Errors.GROUP_LOAD_IN_PROGRESS.code))
-        } else if (sessionTimeoutMs < groupConfig.groupMinSessionTimeoutMs ||
-                sessionTimeoutMs > groupConfig.groupMaxSessionTimeoutMs) { // session 时长检测，保证消费者是活跃的
+        } else if (sessionTimeoutMs < groupConfig.groupMinSessionTimeoutMs || sessionTimeoutMs > groupConfig.groupMaxSessionTimeoutMs) {
+            // 会话时长超时，保证消费者是活跃的
             responseCallback(joinError(memberId, Errors.INVALID_SESSION_TIMEOUT.code))
         } else {
             // only try to create the group if the group is not unknown AND
             // the member id is UNKNOWN, if member is specified but group does not
             // exist we should reject the request
+            // 获取并处理 group 对应的元数据信息
             groupManager.getGroup(groupId) match {
+                // 对应的 group 不存在
                 case None =>
                     if (memberId != JoinGroupRequest.UNKNOWN_MEMBER_ID) {
+                        // 指定了消费者 ID，但是对应的 group 不存在，则拒绝请求
                         responseCallback(joinError(memberId, Errors.UNKNOWN_MEMBER_ID.code))
                     } else {
                         // 创建 GroupMetadata 对象
                         val group = groupManager.addGroup(new GroupMetadata(groupId))
-                        doJoinGroup(group, memberId, clientId, clientHost, rebalanceTimeoutMs, sessionTimeoutMs, protocolType, protocols, responseCallback)
+                        this.doJoinGroup(group, memberId, clientId, clientHost, rebalanceTimeoutMs, sessionTimeoutMs, protocolType, protocols, responseCallback)
                     }
-
+                // 对应的 group 存在
                 case Some(group) =>
-                    doJoinGroup(group, memberId, clientId, clientHost, rebalanceTimeoutMs, sessionTimeoutMs, protocolType, protocols, responseCallback)
+                    this.doJoinGroup(group, memberId, clientId, clientHost, rebalanceTimeoutMs, sessionTimeoutMs, protocolType, protocols, responseCallback)
             }
         }
     }
@@ -177,25 +183,21 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
                             responseCallback: JoinCallback) {
 
         group synchronized {
-            if (!group.is(Empty) && (group.protocolType != Some(protocolType) || // 检测 member 支持的 PartitionAssignor
-                    !group.supportsProtocols(protocols.map(_._1).toSet))) {
-                // if the new member does not support the group protocol, reject it
+            if (!group.is(Empty)
+                    // 消费者指定的分区分配策略，对应的 group 不支持
+                    && (group.protocolType != Some(protocolType) || !group.supportsProtocols(protocols.map(_._1).toSet))) {
                 responseCallback(joinError(memberId, Errors.INCONSISTENT_GROUP_PROTOCOL.code))
-            } else if (memberId != JoinGroupRequest.UNKNOWN_MEMBER_ID && !group.has(memberId)) { // 检测 memberId 是否能够被识别
-                // if the member trying to register with a un-recognized id, send the response to let
-                // it reset its member id and retry
+            } else if (memberId != JoinGroupRequest.UNKNOWN_MEMBER_ID && !group.has(memberId)) {
+                // 消费者 ID 不能够被识别
                 responseCallback(joinError(memberId, Errors.UNKNOWN_MEMBER_ID.code))
             } else {
-                // 依据 group 的状态分别进行处理
+                // 依据 group 的当前状态分别进行处理
                 group.currentState match {
-                    // 直接返回错误码
+                    // 目标 group 已经死亡
                     case Dead =>
-                        // if the group is marked as dead, it means some other thread has just removed the group
-                        // from the coordinator metadata; this is likely that the group has migrated to some other
-                        // coordinator OR the group is in a transient unstable phase. Let the member retry
-                        // joining without the specified member id,
+                        // 对应的 group 的元数据信息已经被删除，说明已经迁移到其它 GroupCoordinator 实例或者不再可用，直接返回错误码
                         responseCallback(joinError(memberId, Errors.UNKNOWN_MEMBER_ID.code))
-
+                    // 目标 group 正在执行分配再平衡策略
                     case PreparingRebalance =>
                         // 当前为未知的 member，申请加入
                         if (memberId == JoinGroupRequest.UNKNOWN_MEMBER_ID) {
@@ -345,27 +347,26 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
                             val missing = group.allMembers -- groupAssignment.keySet
                             val assignment = groupAssignment ++ missing.map(_ -> Array.empty[Byte]).toMap
 
-                            // 调用 GroupMetadataManager.prepareStoreGroup 方法将 GroupMetadata 相关信息构建消息，写入到对应的 offset topic 分区中
-                            delayedGroupStore = groupManager.prepareStoreGroup(group, assignment, (error: Errors) => {
-                                group synchronized {
-                                    // another member may have joined the group while we were awaiting this callback,
-                                    // so we must ensure we are still in the AwaitingSync state and the same generation
-                                    // when it gets invoked. if we have transitioned to another state, then do nothing
-                                    // 检查 group 的状态和年代信息
-                                    if (group.is(AwaitingSync) && generationId == group.generationId) {
-                                        if (error != Errors.NONE) {
-                                            // 清空分区的分配结果，发送异常响应
-                                            resetAndPropagateAssignmentError(group, error)
-                                            // 切换 group 状态为 PreparingRebalance
-                                            maybePrepareRebalance(group)
-                                        } else {
-                                            // 设置分区的分配结果，发送正常的 SyncGroupResponse 响应
-                                            setAndPropagateAssignment(group, assignment)
-                                            group.transitionTo(Stable)
+                            // 将 GroupMetadata 相关信息以消息的形式，写入到对应的 offset topic 分区中
+                            delayedGroupStore = groupManager.prepareStoreGroup(group, assignment,
+                                // 追加消息完成的响应逻辑
+                                (error: Errors) => {
+                                    group synchronized {
+                                        // 检查 group 的状态（正在等待 group leader 将分区的分配结果发送给 GroupCoordinator）和年代信息
+                                        if (group.is(AwaitingSync) && generationId == group.generationId) {
+                                            if (error != Errors.NONE) {
+                                                // 清空分区的分配结果，并发送异常响应
+                                                resetAndPropagateAssignmentError(group, error)
+                                                // 切换 group 状态为 PreparingRebalance
+                                                maybePrepareRebalance(group)
+                                            } else {
+                                                // 设置分区的分配结果，发送正常的 SyncGroupResponse 响应
+                                                setAndPropagateAssignment(group, assignment)
+                                                group.transitionTo(Stable)
+                                            }
                                         }
                                     }
-                                }
-                            })
+                                })
                         }
 
                     case Stable =>
@@ -498,7 +499,7 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
     }
 
     /**
-     * 处理 OffsetCommitRequest 请求
+     * 处理 OffsetCommitRequest 请求，用于处理消费者提交的 offset
      *
      * @param groupId
      * @param memberId
@@ -569,26 +570,25 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
     }
 
     /**
-     * 查找分区对应的 offset 信息
+     * 获取指定 topic 分区对应的最近一次提交的 offset 信息
      *
      * @param groupId
      * @param partitions
      * @return
      */
-    def handleFetchOffsets(groupId: String,
-                           partitions: Option[Seq[TopicPartition]] = None): (Errors, Map[TopicPartition, OffsetFetchResponse.PartitionData]) = {
-        if (!isActive.get)
+    def handleFetchOffsets(groupId: String, partitions: Option[Seq[TopicPartition]] = None): (Errors, Map[TopicPartition, OffsetFetchResponse.PartitionData]) = {
+        if (!isActive.get) {
+            // 校验当前 GroupCoordinator 实例是否已经启动运行
             (Errors.GROUP_COORDINATOR_NOT_AVAILABLE, Map())
-        // 检测当前 GroupCoordinator 是否是对应 group 的管理者
-        else if (!isCoordinatorForGroup(groupId)) {
+        } else if (!isCoordinatorForGroup(groupId)) {
+            // 当前 GroupCoordinator 实例并未管理对应的 group
             debug("Could not fetch offsets for group %s (not group coordinator).".format(groupId))
             (Errors.NOT_COORDINATOR_FOR_GROUP, Map())
-
-        } else if (isCoordinatorLoadingInProgress(groupId)) // 检测 GroupMetadata 是否已经加载完成
-                   (Errors.GROUP_LOAD_IN_PROGRESS, Map())
-        else {
-            // return offsets blindly regardless the current group state since the group may be using
-            // Kafka commit storage without automatic group management
+        } else if (isCoordinatorLoadingInProgress(groupId)) {
+            // 对应的 GroupMetadata 未加载完成
+            (Errors.GROUP_LOAD_IN_PROGRESS, Map())
+        } else {
+            // 返回指定 topic 分区集合对应的最近一次提交的 offset 值
             (Errors.NONE, groupManager.getOffsets(groupId, partitions))
         }
     }
@@ -701,9 +701,9 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
      */
     private def setAndPropagateAssignment(group: GroupMetadata, assignment: Map[String, Array[Byte]]) {
         assert(group.is(AwaitingSync))
-        // 更新 GroupMetadata 中每个相关的 MemberMetadata 的 assignment 字段
+        // 将分区分配结果更新到 GroupMetadata 中每个相关的 MemberMetadata 的 assignment 字段
         group.allMemberMetadata.foreach(member => member.assignment = assignment(member.memberId))
-        propagateAssignment(group, Errors.NONE)
+        this.propagateAssignment(group, Errors.NONE)
     }
 
     private def resetAndPropagateAssignmentError(group: GroupMetadata, error: Errors) {
@@ -716,16 +716,12 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
     private def propagateAssignment(group: GroupMetadata, error: Errors) {
         for (member <- group.allMemberMetadata) {
             if (member.awaitingSyncCallback != null) {
-                // 调用 MemberMetadata 的 awaitingSyncCallback 回调函数
+                // 调用 MemberMetadata 的 awaitingSyncCallback 回调函数，创建 SyncGroupResponse 响应对象，并添加到 channel 中等待发送
                 member.awaitingSyncCallback(member.assignment, error.code)
                 member.awaitingSyncCallback = null
 
-                // reset the session timeout for members after propagating the member's assignment.
-                // This is because if any member's session expired while we were still awaiting either
-                // the leader sync group or the storage callback, its expiration will be ignored and no
-                // future heartbeat expectations will not be scheduled.
-                // 开启等待下次心跳的延迟任务
-                completeAndScheduleNextHeartbeatExpiration(group, member)
+                // 更新心跳时间，完成本地心跳延时任务，并创建下次心跳的延迟任务
+                this.completeAndScheduleNextHeartbeatExpiration(group, member)
             }
         }
     }
@@ -751,18 +747,16 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
      * 并创建新的 DelayedHeartbeat 对象放入 heartbeatPurgatory 中等待下次心跳到来或 DelayedHeartbeat 超时
      */
     private def completeAndScheduleNextHeartbeatExpiration(group: GroupMetadata, member: MemberMetadata) {
-        // complete current heartbeat expectation
         // 更新心跳时间
         member.latestHeartbeat = time.milliseconds()
-        // 获取 DelayedHeartbeat 对应的 key
+        // 获取 DelayedHeartbeat 延时任务关注的 key
         val memberKey = MemberKey(member.groupId, member.memberId)
-        // 尝试完成之前添加的 DelayedHeartbeat
+        // 尝试完成之前添加的 DelayedHeartbeat 延时任务
         heartbeatPurgatory.checkAndComplete(memberKey)
 
-        // reschedule the next heartbeat expiration deadline
         // 计算下一次的心跳超时时间
         val newHeartbeatDeadline = member.latestHeartbeat + member.sessionTimeoutMs
-        // 创建新的 DelayedHeartbeat 对象，并添加到 heartbeatPurgatory 中进行管理
+        // 创建新的 DelayedHeartbeat 延时任务，并添加到炼狱中进行管理
         val delayedHeartbeat = new DelayedHeartbeat(this, group, member, newHeartbeatDeadline, member.sessionTimeoutMs)
         heartbeatPurgatory.tryCompleteElseWatch(delayedHeartbeat, Seq(memberKey))
     }
@@ -831,8 +825,7 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
 
     private def maybePrepareRebalance(group: GroupMetadata) {
         group synchronized {
-            if (group.canRebalance)
-                prepareRebalance(group)
+            if (group.canRebalance) prepareRebalance(group)
         }
     }
 

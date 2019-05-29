@@ -27,8 +27,6 @@ import scala.collection.{Seq, immutable, mutable}
 
 /**
  * 表示消费者 group 的状态，用于服务端 GroupCoordinator 管理 group
- *
- * P435
  */
 private[coordinator] sealed trait GroupState {
     def state: Byte
@@ -37,15 +35,18 @@ private[coordinator] sealed trait GroupState {
 /**
  * Group is preparing to rebalance
  *
- * action: respond to heartbeats with REBALANCE_IN_PROGRESS
- * respond to sync group with REBALANCE_IN_PROGRESS
- * remove member on leave group request
- * park join group requests from new or existing members until all expected members have joined
- * allow offset commits from previous generation
- * allow offset fetch requests
- * transition: some members have joined by the timeout => AwaitingSync
- * all members have left the group => Empty
- * group is removed by partition emigration => Dead
+ * action:
+ * 1. respond to heartbeats with REBALANCE_IN_PROGRESS
+ * 2. respond to sync group with REBALANCE_IN_PROGRESS
+ * 3. remove member on leave group request
+ * 4. park join group requests from new or existing members until all expected members have joined
+ * 5. allow offset commits from previous generation
+ * 6. allow offset fetch requests
+ *
+ * transition:
+ * 1. some members have joined by the timeout => AwaitingSync
+ * 2. all members have left the group => Empty
+ * 3. group is removed by partition emigration => Dead
  *
  */
 private[coordinator] case object PreparingRebalance extends GroupState {
@@ -55,17 +56,20 @@ private[coordinator] case object PreparingRebalance extends GroupState {
 /**
  * Group is awaiting state assignment from the leader
  *
- * action: respond to heartbeats with REBALANCE_IN_PROGRESS
- * respond to offset commits with REBALANCE_IN_PROGRESS
- * park sync group requests from followers until transition to Stable
- * allow offset fetch requests
- * transition: sync group with state assignment received from leader => Stable
- * join group from new member or existing member with updated metadata => PreparingRebalance
- * leave group from existing member => PreparingRebalance
- * member failure detected => PreparingRebalance
- * group is removed by partition emigration => Dead
+ * action:
+ * 1. respond to heartbeats with REBALANCE_IN_PROGRESS
+ * 2. respond to offset commits with REBALANCE_IN_PROGRESS
+ * 3. park sync group requests from followers until transition to Stable
+ * 4. allow offset fetch requests
  *
- * 正在等待 group leader 将分区的分佩结果发送给 GroupCoordinator
+ * transition:
+ * 1. sync group with state assignment received from leader => Stable
+ * 2. join group from new member or existing member with updated metadata => PreparingRebalance
+ * 3. leave group from existing member => PreparingRebalance
+ * 4. member failure detected => PreparingRebalance
+ * 5. group is removed by partition emigration => Dead
+ *
+ * 正在等待 group leader 将分区的分配结果发送给 GroupCoordinator
  */
 private[coordinator] case object AwaitingSync extends GroupState {
     val state: Byte = 5
@@ -74,16 +78,19 @@ private[coordinator] case object AwaitingSync extends GroupState {
 /**
  * Group is stable
  *
- * action: respond to member heartbeats normally
- * respond to sync group from any member with current assignment
- * respond to join group from followers with matching metadata with current group metadata
- * allow offset commits from member of current generation
- * allow offset fetch requests
- * transition: member failure detected via heartbeat => PreparingRebalance
- * leave group from existing member => PreparingRebalance
- * leader join-group received => PreparingRebalance
- * follower join-group with new metadata => PreparingRebalance
- * group is removed by partition emigration => Dead
+ * action:
+ * 1. respond to member heartbeats normally
+ * 2. respond to sync group from any member with current assignment
+ * 3. respond to join group from followers with matching metadata with current group metadata
+ * 4. allow offset commits from member of current generation
+ * 5. allow offset fetch requests
+ *
+ * transition:
+ * 1. member failure detected via heartbeat => PreparingRebalance
+ * 2. leave group from existing member => PreparingRebalance
+ * 3. leader join-group received => PreparingRebalance
+ * 4. follower join-group with new metadata => PreparingRebalance
+ * 5. group is removed by partition emigration => Dead
  *
  * 表示 group 处于正常状态，初始状态
  */
@@ -94,13 +101,16 @@ private[coordinator] case object Stable extends GroupState {
 /**
  * Group has no more members and its metadata is being removed
  *
- * action: respond to join group with UNKNOWN_MEMBER_ID
- * respond to sync group with UNKNOWN_MEMBER_ID
- * respond to heartbeat with UNKNOWN_MEMBER_ID
- * respond to leave group with UNKNOWN_MEMBER_ID
- * respond to offset commit with UNKNOWN_MEMBER_ID
- * allow offset fetch requests
- * transition: Dead is a final state before group metadata is cleaned up, so there are no transitions
+ * action:
+ * 1. respond to join group with UNKNOWN_MEMBER_ID
+ * 2. respond to sync group with UNKNOWN_MEMBER_ID
+ * 3. respond to heartbeat with UNKNOWN_MEMBER_ID
+ * 4. respond to leave group with UNKNOWN_MEMBER_ID
+ * 5. respond to offset commit with UNKNOWN_MEMBER_ID
+ * 6. allow offset fetch requests
+ *
+ * transition:
+ * 1. Dead is a final state before group metadata is cleaned up, so there are no transitions
  *
  * 处于该状态的 group 已经没有 member，并且对应的 metadata 已经被删除
  */
@@ -112,16 +122,19 @@ private[coordinator] case object Dead extends GroupState {
  * Group has no more members, but lingers until all offsets have expired. This state
  * also represents groups which use Kafka only for offset commits and have no members.
  *
- * action: respond normally to join group from new members
- * respond to sync group with UNKNOWN_MEMBER_ID
- * respond to heartbeat with UNKNOWN_MEMBER_ID
- * respond to leave group with UNKNOWN_MEMBER_ID
- * respond to offset commit with UNKNOWN_MEMBER_ID
- * allow offset fetch requests
- * transition: last offsets removed in periodic expiration task => Dead
- * join group from a new member => PreparingRebalance
- * group is removed by partition emigration => Dead
- * group is removed by expiration => Dead
+ * action:
+ * 1. respond normally to join group from new members
+ * 2. respond to sync group with UNKNOWN_MEMBER_ID
+ * 3. respond to heartbeat with UNKNOWN_MEMBER_ID
+ * 4. respond to leave group with UNKNOWN_MEMBER_ID
+ * 5. respond to offset commit with UNKNOWN_MEMBER_ID
+ * 6. allow offset fetch requests
+ *
+ * transition:
+ * 1. last offsets removed in periodic expiration task => Dead
+ * 2. join group from a new member => PreparingRebalance
+ * 3. group is removed by partition emigration => Dead
+ * 4. group is removed by expiration => Dead
  *
  * 处于该状态的 group 已经没有 member，等待所有的分区 offset 过期
  */

@@ -1064,12 +1064,11 @@ class KafkaApis(val requestChannel: RequestChannel,
         } else {
             // 获取 group 对应的 offset topic 的分区 ID
             val partition = coordinator.partitionFor(groupCoordinatorRequest.groupId)
-
             // 从 MetadataCache 中获取 offset topic 的相关信息，如果未创建则进行创建
             val offsetsTopicMetadata = this.getOrCreateGroupMetadataTopic(request.listenerName)
 
             val responseBody = if (offsetsTopicMetadata.error != Errors.NONE) {
-                // 创建 offset topic 失败
+                // 创建 offset topic 信息失败
                 new GroupCoordinatorResponse(Errors.GROUP_COORDINATOR_NOT_AVAILABLE.code, Node.noNode)
             } else {
                 // 获取当前 group 对应 offset topic 分区 leader 副本所在的节点
@@ -1131,7 +1130,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     def handleJoinGroupRequest(request: RequestChannel.Request) {
         val joinGroupRequest = request.body.asInstanceOf[JoinGroupRequest]
 
-        // the callback for sending a join-group response
+        // 回调函数，用于发送 JoinGroupResponse 响应
         def sendResponseCallback(joinResult: JoinGroupResult) {
             val members = joinResult.members map { case (memberId, metadataArray) => (memberId, ByteBuffer.wrap(metadataArray)) }
             // 创建 JoinGroupResponse 对象
@@ -1144,9 +1143,8 @@ class KafkaApis(val requestChannel: RequestChannel,
                 joinResult.leaderId,
                 members.asJava)
 
-            trace("Sending join group response %s for correlation id %d to client %s."
-                    .format(responseBody, request.header.correlationId, request.header.clientId))
-            // 将响应对象放入 channel 等待发送
+            trace("Sending join group response %s for correlation id %d to client %s.".format(responseBody, request.header.correlationId, request.header.clientId))
+            // 将响应对象放入 channel 中等待发送
             requestChannel.sendResponse(new RequestChannel.Response(request, responseBody))
         }
 
@@ -1162,9 +1160,8 @@ class KafkaApis(val requestChannel: RequestChannel,
                 Collections.emptyMap())
             requestChannel.sendResponse(new RequestChannel.Response(request, responseBody))
         } else {
-            // 委托请求给 GroupCoordinator.handleJoinGroup 进行处理
-            val protocols = joinGroupRequest.groupProtocols().asScala.map(protocol =>
-                (protocol.name, Utils.toArray(protocol.metadata))).toList
+            // 委托请求给 GroupCoordinator#handleJoinGroup 进行处理
+            val protocols = joinGroupRequest.groupProtocols().asScala.map(protocol => (protocol.name, Utils.toArray(protocol.metadata))).toList
             coordinator.handleJoinGroup(
                 joinGroupRequest.groupId,
                 joinGroupRequest.memberId,
