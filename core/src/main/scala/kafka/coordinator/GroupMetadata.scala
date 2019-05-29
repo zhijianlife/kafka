@@ -249,8 +249,18 @@ private[coordinator] class GroupMetadata(val groupId: String, // group 的 ID
     // TODO: decide if ids should be predictable or random
     def generateMemberIdSuffix: String = UUID.randomUUID().toString
 
+    /**
+     * 前置状态为 Stable, AwaitingSync, Empty 中的一个
+     *
+     * @return
+     */
     def canRebalance: Boolean = GroupMetadata.validPreviousStates(PreparingRebalance).contains(state)
 
+    /**
+     * 切换 group 状态
+     *
+     * @param groupState
+     */
     def transitionTo(groupState: GroupState) {
         assertValidTransition(groupState)
         state = groupState

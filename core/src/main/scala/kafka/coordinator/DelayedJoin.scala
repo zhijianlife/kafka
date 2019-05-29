@@ -29,13 +29,12 @@ import kafka.server.DelayedOperation
  * the group are marked as failed, and complete this operation to proceed rebalance with
  * the rest of the group.
  *
- * 等待消费者 group 中所有的消费者发送 JoinGroupRequest 请求申请加入
+ * 等待 group 名下所有的消费者发送 JoinGroupRequest 请求申请加入到当前 group
  */
 private[coordinator] class DelayedJoin(coordinator: GroupCoordinator,
                                        group: GroupMetadata,
-                                       rebalanceTimeout: Long // 指定 DelayedJoin 的到期时长，对应 GroupMetadata 中所有 member 设置的超时时间最大值
-                                      )
-        extends DelayedOperation(rebalanceTimeout) {
+                                       rebalanceTimeout: Long // 指定 DelayedJoin 延时任务的到期时长，对应 group 中所有消费者设置的超时时间最大值
+                                      ) extends DelayedOperation(rebalanceTimeout) {
 
     // overridden since tryComplete already synchronizes on the group. This makes it safe to
     // call purgatory operations while holding the group lock.
