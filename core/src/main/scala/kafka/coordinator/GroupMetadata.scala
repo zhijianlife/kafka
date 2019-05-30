@@ -267,7 +267,7 @@ private[coordinator] class GroupMetadata(val groupId: String, // group 的 ID
     }
 
     /**
-     * 为消费者 group 选择合适的 PartitionAssignor
+     * 为消费者 group 选择合适的分区分配策略
      *
      * @return
      */
@@ -275,13 +275,12 @@ private[coordinator] class GroupMetadata(val groupId: String, // group 的 ID
         if (members.isEmpty)
             throw new IllegalStateException("Cannot select protocol for empty group")
 
-        // select the protocol for this group which is supported by all members
+        // 计算所有消费者都支持的分区分配策略
         val candidates = candidateProtocols
 
-        // let each member vote for one of the protocols and choose the one with the most votes
-        // 选择所有 member 都支持的协议作为候选协议集合
-        // 每个 member 都会通过 vote 方法进行投票（为支持的协议中的第一个协议投一票）
-        // 最终选择投票最多的 PartitionAssignor
+        // 选择所有消费者都支持的协议作为候选协议集合，
+        // 每个消费者都会通过 vote 方法进行投票（为支持的协议中的第一个协议投一票），
+        // 最终选择投票最多的分区分配策略
         val votes: List[(String, Int)] = allMemberMetadata
                 .map(_.vote(candidates))
                 .groupBy(identity)
@@ -306,6 +305,7 @@ private[coordinator] class GroupMetadata(val groupId: String, // group 的 ID
         assert(notYetRejoinedMembers == List.empty[MemberMetadata])
         if (members.nonEmpty) {
             generationId += 1
+            // 基于投票的方式选择一个所有消费者都支持的分区分配策略
             protocol = selectProtocol
             transitionTo(AwaitingSync)
         } else {

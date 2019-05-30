@@ -1211,12 +1211,10 @@ class KafkaApis(val requestChannel: RequestChannel,
     def handleHeartbeatRequest(request: RequestChannel.Request) {
         val heartbeatRequest = request.body.asInstanceOf[HeartbeatRequest]
 
-        // the callback for sending a heartbeat response
-        // 定义回调函数，将 HeartbeatResponse 放入 channel 中等待发送
+        // 响应回调函数，将 HeartbeatResponse 放入 channel 中等待发送
         def sendResponseCallback(errorCode: Short) {
             val response = new HeartbeatResponse(errorCode)
-            trace("Sending heartbeat response %s for correlation id %d to client %s."
-                    .format(response, request.header.correlationId, request.header.clientId))
+            trace("Sending heartbeat response %s for correlation id %d to client %s.".format(response, request.header.correlationId, request.header.clientId))
             requestChannel.sendResponse(new RequestChannel.Response(request, response))
         }
 
@@ -1225,7 +1223,6 @@ class KafkaApis(val requestChannel: RequestChannel,
             val heartbeatResponse = new HeartbeatResponse(Errors.GROUP_AUTHORIZATION_FAILED.code)
             requestChannel.sendResponse(new Response(request, heartbeatResponse))
         } else {
-            // let the coordinator to handle heartbeat
             // 委托给 GroupCoordinator 进行处理
             coordinator.handleHeartbeat(
                 heartbeatRequest.groupId(),

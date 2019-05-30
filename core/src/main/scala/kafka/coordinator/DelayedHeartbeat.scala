@@ -28,8 +28,7 @@ private[coordinator] class DelayedHeartbeat(coordinator: GroupCoordinator,
                                             member: MemberMetadata,
                                             heartbeatDeadline: Long, // DelayedHeartbeat 到期时间戳
                                             sessionTimeout: Long // DelayedHeartbeat 到期时长，消费者在 JoinGroupRequest 中设置
-                                           )
-        extends DelayedOperation(sessionTimeout) {
+                                           ) extends DelayedOperation(sessionTimeout) {
 
     // overridden since tryComplete already synchronizes on the group. This makes it safe to
     // call purgatory operations while holding the group lock.

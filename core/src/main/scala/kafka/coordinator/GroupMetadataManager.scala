@@ -190,7 +190,6 @@ class GroupMetadataManager(val brokerId: Int, // 所属 broker 节点 ID
                     else GroupMetadataManager.CURRENT_GROUP_VALUE_SCHEMA_VERSION
                 }
 
-                // We always use CREATE_TIME, like the producer. The conversion to LOG_APPEND_TIME (if necessary) happens automatically.
                 val timestampType = TimestampType.CREATE_TIME
                 val timestamp = time.milliseconds()
                 // 创建记录 GroupMetadata 信息的消息，其中 value 是分区的分配结果

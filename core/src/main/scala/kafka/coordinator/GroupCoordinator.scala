@@ -426,37 +426,34 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
                         generationId: Int,
                         responseCallback: Short => Unit) {
         if (!isActive.get) {
+            // GroupCoordinator 实例未启动
             responseCallback(Errors.GROUP_COORDINATOR_NOT_AVAILABLE.code)
         } else if (!isCoordinatorForGroup(groupId)) {
+            // 当前 GroupCoordinator 实例并不负责管理当前 group
             responseCallback(Errors.NOT_COORDINATOR_FOR_GROUP.code)
         } else if (isCoordinatorLoadingInProgress(groupId)) {
-            // the group is still loading, so respond just blindly
+            // 当前 GroupCoordinator 实例正在加载该 group 对应的 offset topic 分区信息
             responseCallback(Errors.NONE.code)
         } else {
             groupManager.getGroup(groupId) match {
                 // 对应的 group 不存在
                 case None =>
                     responseCallback(Errors.UNKNOWN_MEMBER_ID.code)
-
                 case Some(group) =>
                     group synchronized {
                         group.currentState match {
+                            // 目标 group 已经死亡，则直接响应错误码
                             case Dead =>
-                                // if the group is marked as dead, it means some other thread has just removed the group
-                                // from the coordinator metadata; this is likely that the group has migrated to some other
-                                // coordinator OR the group is in a transient unstable phase. Let the member retry
-                                // joining without the specified member id,
+                                // 对应的 group 的元数据信息已经被删除，说明已经迁移到其它 GroupCoordinator 实例或者不再可用，直接返回错误码
                                 responseCallback(Errors.UNKNOWN_MEMBER_ID.code)
-
+                            // 目标 group 名下已经没有消费者
                             case Empty =>
                                 responseCallback(Errors.UNKNOWN_MEMBER_ID.code)
-
+                            // 目标 group 正在等待 group leader 的分区分配结果
                             case AwaitingSync =>
-                                if (!group.has(memberId))
-                                    responseCallback(Errors.UNKNOWN_MEMBER_ID.code)
-                                else
-                                    responseCallback(Errors.REBALANCE_IN_PROGRESS.code)
-
+                                if (!group.has(memberId)) responseCallback(Errors.UNKNOWN_MEMBER_ID.code)
+                                else responseCallback(Errors.REBALANCE_IN_PROGRESS.code)
+                            // 目标 group 正在准备执行分区再平衡
                             case PreparingRebalance =>
                                 if (!group.has(memberId)) {
                                     responseCallback(Errors.UNKNOWN_MEMBER_ID.code)
@@ -464,10 +461,10 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
                                     responseCallback(Errors.ILLEGAL_GENERATION.code)
                                 } else {
                                     val member = group.get(memberId)
-                                    completeAndScheduleNextHeartbeatExpiration(group, member)
+                                    this.completeAndScheduleNextHeartbeatExpiration(group, member)
                                     responseCallback(Errors.REBALANCE_IN_PROGRESS.code)
                                 }
-
+                            // 目标 group 处于正常运行状态
                             case Stable =>
                                 if (!group.has(memberId)) {
                                     responseCallback(Errors.UNKNOWN_MEMBER_ID.code)
@@ -475,7 +472,7 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
                                     responseCallback(Errors.ILLEGAL_GENERATION.code)
                                 } else {
                                     val member = group.get(memberId)
-                                    completeAndScheduleNextHeartbeatExpiration(group, member)
+                                    this.completeAndScheduleNextHeartbeatExpiration(group, member)
                                     responseCallback(Errors.NONE.code)
                                 }
                         }
@@ -734,9 +731,9 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
      * 并创建新的 DelayedHeartbeat 对象放入 heartbeatPurgatory 中等待下次心跳到来或 DelayedHeartbeat 超时
      */
     private def completeAndScheduleNextHeartbeatExpiration(group: GroupMetadata, member: MemberMetadata) {
-        // 更新心跳时间
+        // 更新对应消费者的心跳时间
         member.latestHeartbeat = time.milliseconds()
-        // 获取 DelayedHeartbeat 延时任务关注的 key
+        // 获取 DelayedHeartbeat 延时任务关注的消费者
         val memberKey = MemberKey(member.groupId, member.memberId)
         // 尝试完成之前添加的 DelayedHeartbeat 延时任务
         heartbeatPurgatory.checkAndComplete(memberKey)
@@ -866,7 +863,7 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
     def onCompleteJoin(group: GroupMetadata) {
         var delayedStore: Option[DelayedStore] = None
         group synchronized {
-            // 移除那些已知的但是未申请重新加入当前 group 的消费者集合
+            // 移除那些已知的但是未申请重新加入当前 group 的消费者
             group.notYetRejoinedMembers.foreach { failedMember => group.remove(failedMember.memberId) }
 
             if (!group.is(Dead)) {
@@ -882,7 +879,7 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
                     })
                 } else {
                     info(s"Stabilized group ${group.groupId} generation ${group.generationId}")
-                    // 向 group 名下所有的消费者发送 JoinGroupResponse 响应，
+                    // 向 group 名下所有的消费者发送 JoinGroupResponse 响应
                     for (member <- group.allMemberMetadata) {
                         assert(member.awaitingJoinCallback != null)
                         val joinResult = JoinGroupResult(
@@ -928,7 +925,7 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
                              heartbeatDeadline: Long,
                              forceComplete: () => Boolean): Boolean = {
         group synchronized {
-            if (shouldKeepMemberAlive(member, heartbeatDeadline) || member.isLeaving)
+            if (this.shouldKeepMemberAlive(member, heartbeatDeadline) || member.isLeaving)
                 forceComplete()
             else false
         }

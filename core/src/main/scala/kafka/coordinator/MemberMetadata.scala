@@ -121,8 +121,7 @@ private[coordinator] class MemberMetadata(val memberId: String, // 对应消费�
     def vote(candidates: Set[String]): String = {
         supportedProtocols.find({ case (protocol, _) => candidates.contains(protocol) }) match {
             case Some((protocol, _)) => protocol
-            case None =>
-                throw new IllegalArgumentException("Member does not support any of the candidate protocols")
+            case None => throw new IllegalArgumentException("Member does not support any of the candidate protocols")
         }
     }
 
