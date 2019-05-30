@@ -53,7 +53,7 @@ public final class Metadata {
     public static final long TOPIC_EXPIRY_MS = 5 * 60 * 1000;
     private static final long TOPIC_EXPIRY_NEEDS_UPDATE = -1L;
 
-    /** 元数据更新最小时间间隔，默认是 100 毫秒，防止更新太频繁 */
+    /** 元数据最小更新时间间隔，默认是 100 毫秒，防止更新太频繁 */
     private final long refreshBackoffMs;
 
     /** 元数据更新时间间隔，默认为 5 分钟 */
@@ -356,7 +356,7 @@ public final class Metadata {
     }
 
     /**
-     *
+     * 标记需要更新集群元数据信息
      */
     private synchronized void requestUpdateForNewTopics() {
         // Override the timestamp of last refresh to let immediate update.

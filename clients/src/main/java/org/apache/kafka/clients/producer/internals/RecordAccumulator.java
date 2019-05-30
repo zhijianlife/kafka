@@ -62,10 +62,12 @@ public final class RecordAccumulator {
 
     private static final Logger log = LoggerFactory.getLogger(RecordAccumulator.class);
 
-    /** 标识当前 accumulator 是否被关闭，对应 producer 被关闭 */
+    /** 标识当前收集器是否被关闭，对应 producer 被关闭 */
     private volatile boolean closed;
+
     /** 记录正在执行 flush 操作的线程数 */
     private final AtomicInteger flushesInProgress;
+
     /** 记录正在执行 append 操作的线程数 */
     private final AtomicInteger appendsInProgress;
 
@@ -75,7 +77,7 @@ public final class RecordAccumulator {
     /** 消息压缩类型 */
     private final CompressionType compression;
 
-    /** 通过参数 linger.ms 指定，当本地消息缓存时间超过该值时即使消息量未达到阈值也会进行投递 */
+    /** 通过参数 linger.ms 指定，当本地消息缓存时间超过该值时，即使消息量未达到阈值也会进行投递 */
     private final long lingerMs;
 
     /** 生产者重试时间间隔 */
@@ -87,21 +89,21 @@ public final class RecordAccumulator {
     /** 时间戳工具 */
     private final Time time;
 
-    /** 记录 TopicPartition 与 RecordBatch 的映射关系，对应的 RecordBatch 都是发往该 TopicPartition */
+    /** 记录 topic 分区与 RecordBatch 的映射关系，对应的消息都是发往对应的 topic 分区 */
     private final ConcurrentMap<TopicPartition, Deque<RecordBatch>> batches;
 
-    /** 记录未发送完成（即未收到服务端响应）的 RecordBatch 集合 */
+    /** 记录未发送完成（即未收到服务端响应）的消息集合 */
     private final IncompleteRecordBatches incomplete;
 
     /* The following variables are only accessed by the sender thread, so we don't need to protect them. */
 
     /**
      * 消息顺序性保证，
-     * 缓存当前待发送消息的目标 TopicPartition，防止对于同一个 TopicPartition 同时存在多个未完成的消息，可能导致消息顺序性错乱
+     * 缓存当前待发送消息的目标 topic 分区，防止对于同一个 topic 分区同时存在多个未完成的消息，可能导致消息顺序性错乱
      */
     private final Set<TopicPartition> muted;
 
-    /** 记录 drain 方法批量导出 RecordBatch 时上次的偏移量 */
+    /** 记录 drain 方法批量导出消息时上次的偏移量 */
     private int drainIndex;
 
     /**
@@ -194,16 +196,14 @@ public final class RecordAccumulator {
                                      byte[] value,
                                      Callback callback,
                                      long maxTimeToBlock) throws InterruptedException {
-        // We keep track of the number of appending thread，
-        // to make sure we do not miss batches in abortIncompleteBatches().
         // 记录正在向收集器中追加消息的线程数
         appendsInProgress.incrementAndGet();
         try {
-            // 获取当前 TopicPartition 对应的 Deque，如果不存在则创建一个
+            // 获取当前 topic 分区对应的 Deque，如果不存在则创建一个
             Deque<RecordBatch> dq = this.getOrCreateDeque(tp);
             synchronized (dq) {
                 if (closed) {
-                    // producer 已经被关闭了
+                    // producer 已经被关闭了，抛出异常
                     throw new IllegalStateException("Cannot send after the producer is closed.");
                 }
                 // 向 Deque 中最后一个 RecordBatch 追加 Record，并返回对应的 RecordAppendResult 对象
@@ -216,14 +216,13 @@ public final class RecordAccumulator {
 
             /* 追加 Record 失败，尝试申请新的 buffer */
 
-            // we don't have an in-progress record batch try to allocate a new batch
             int size = Math.max(this.batchSize, Records.LOG_OVERHEAD + Record.recordSize(key, value));
             log.trace("Allocating a new {} byte message buffer for topic {} partition {}", size, tp.topic(), tp.partition());
             // 申请新的 buffer
             ByteBuffer buffer = free.allocate(size, maxTimeToBlock);
             synchronized (dq) {
-                // Need to check if producer is closed again after grabbing the dequeue lock.
                 if (closed) {
+                    // 再次校验 producer 状态，如果已经被关闭了，抛出异常
                     throw new IllegalStateException("Cannot send after the producer is closed.");
                 }
 

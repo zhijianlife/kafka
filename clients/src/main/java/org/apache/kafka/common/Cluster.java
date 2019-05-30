@@ -40,7 +40,7 @@ public final class Cluster {
     /** 内部 topic 集合 */
     private final Set<String> internalTopics;
 
-    /** 记录 TopicPartition 与 PartitionInfo 的映射关系 */
+    /** 记录 topic 分区与分区详细信息的映射关系 */
     private final Map<TopicPartition, PartitionInfo> partitionsByTopicPartition;
 
     /** 记录 topic 及其分区信息的映射关系 */

@@ -156,7 +156,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     /** 消息收集器，用于收集并缓存消息，等待 Sender 线程的发送 */
     private final RecordAccumulator accumulator;
 
-    /** 消息发送器 */
+    /** 消息发送线程对象 */
     private final Sender sender;
 
     private final Metrics metrics;
@@ -417,7 +417,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
 
     private static int parseAcks(String acksString) {
         try {
-            return acksString.trim().equalsIgnoreCase("all") ? -1 : Integer.parseInt(acksString.trim());
+            return "all".equalsIgnoreCase(acksString.trim()) ? -1 : Integer.parseInt(acksString.trim());
         } catch (NumberFormatException e) {
             throw new ConfigException("Invalid configuration value for 'acks': " + acksString);
         }
@@ -519,7 +519,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     private Future<RecordMetadata> doSend(ProducerRecord<K, V> record, Callback callback) {
         TopicPartition tp = null;
         try {
-            // 1. 获取 kafka 集群元数据信息，如果当前是新 topic，或者指定的分区超过已知的分区范围，则会触发更新集群元数据信息
+            // 1. 获取 kafka 集群元数据信息，如果当前请求的是新 topic，或者指定的分区超过已知的分区范围，则会触发更新集群元数据信息
             ClusterAndWaitTime clusterAndWaitTime = this.waitOnMetadata(record.topic(), record.partition(), maxBlockTimeMs);
             long remainingWaitMs = Math.max(0, maxBlockTimeMs - clusterAndWaitTime.waitedOnMetadataMs);
             Cluster cluster = clusterAndWaitTime.cluster;
@@ -542,28 +542,27 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                         " to class " + producerConfig.getClass(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG).getName() + " specified in value.serializer");
             }
 
-            // 4. 为当前消息选择合适的分区，如果未指定明确指定的话，则基于注册的分区器为当前消息计算分区
+            // 4. 为当前消息选择合适的分区，如果未明确指定的话，则基于注册的分区器为当前消息计算分区
             int partition = this.partition(record, serializedKey, serializedValue, cluster);
-
 
             /* 5. 将消息追加到消息收集器（RecordAccumulator）中 */
 
             // 计算当前消息大小，并校验消息是否过大
             int serializedSize = Records.LOG_OVERHEAD + Record.recordSize(serializedKey, serializedValue);
             this.ensureValidRecordSize(serializedSize);
-            tp = new TopicPartition(record.topic(), partition);
-            // 如果未明确为当前消息指定时间戳，则以设置为当前时间戳
+            tp = new TopicPartition(record.topic(), partition); // 消息投递的目标 topic 分区
+            // 如果未明确为当前消息指定时间戳，则设置为当前时间戳
             long timestamp = record.timestamp() == null ? time.milliseconds() : record.timestamp();
             log.trace("Sending record {} with callback {} to topic {} partition {}", record, callback, record.topic(), partition);
             // producer callback will make sure to call both 'callback' and interceptor callback
             Callback interceptCallback = this.interceptors == null ? callback : new InterceptorCallback<>(callback, this.interceptors, tp);
-            // 追加记录到消息收集器中
+            // 追加消息到收集器中
             RecordAccumulator.RecordAppendResult result = accumulator.append(
                     tp, timestamp, serializedKey, serializedValue, interceptCallback, remainingWaitMs);
 
             /* 6. 条件性唤醒消息发送线程 */
 
-            // 如果队列中不止一个 RecordBatch，或者最后一个 RecordBatch 满了，或者有创建新的 RecordBatch，则唤醒 Sender 线程
+            // 如果队列中不止一个 RecordBatch，或者最后一个 RecordBatch 满了，或者有创建新的 RecordBatch，则唤醒 Sender 线程发送消息
             if (result.batchIsFull || result.newBatchCreated) {
                 log.trace("Waking up the sender since topic {} partition {} is either full or getting a new batch", record.topic(), partition);
                 // 唤醒 sender 线程，发送消息
@@ -626,7 +625,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
         metadata.add(topic);
         // 获取当前集群信息
         Cluster cluster = metadata.fetch();
-        // 获取当前 topic 的分区数目
+        // 获取指定 topic 的分区数目
         Integer partitionsCount = cluster.partitionCountForTopic(topic);
 
         // 如果参数未指定分区，或指定的分区在当前记录的分区范围之内，则返回历史集群信息
@@ -640,14 +639,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
         long remainingWaitMs = maxWaitMs; // 剩余等待时间
         long elapsed;
 
-        /*
-         * 请求集群的元数据信息，直到获取到信息或者超时
-         *
-         * Issue metadata requests until we have metadata for the topic or maxWaitTimeMs is exceeded.
-         * In case we already have cached metadata for the topic, but the requested partition is greater than expected,
-         * issue an update request only once.
-         * This is necessary in case the metadata is stale（陈旧） and the number of partitions for this topic has increased in the meantime.
-         */
+        /* 请求集群的元数据信息，直到获取到信息或者超时 */
         do {
             log.trace("Requesting metadata update for topic {}.", topic);
             // 更新 Metadata 的 needUpdate 字段，并获取当前元数据的版本号
@@ -659,7 +651,6 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                 metadata.awaitUpdate(version, remainingWaitMs);
             } catch (TimeoutException ex) {
                 // 等待超时
-                // Rethrow with original maxWaitMs to prevent logging exception with remainingWaitMs
                 throw new TimeoutException("Failed to update metadata after " + maxWaitMs + " ms.");
             }
 
@@ -682,8 +673,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
 
         // 参数指定的分区非法
         if (partition != null && partition >= partitionsCount) {
-            throw new KafkaException(
-                    String.format("Invalid partition given with record: %d is not in the range [0...%d).", partition, partitionsCount));
+            throw new KafkaException(String.format("Invalid partition given with record: %d is not in the range [0...%d).", partition, partitionsCount));
         }
 
         return new ClusterAndWaitTime(cluster, elapsed);

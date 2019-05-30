@@ -40,7 +40,7 @@ public final class RecordBatch {
     /** 当前 RecordBatch 创建的时间戳 */
     final long createdMs;
 
-    /** 当前缓存的消息的目标 TopicPartition 对象 */
+    /** 当前缓存的消息的目标 topic 分区 */
     final TopicPartition topicPartition;
 
     /** 标识当前 RecordBatch 发送之后的状态 */
@@ -52,9 +52,10 @@ public final class RecordBatch {
     /** 用来存储数据的 {@link MemoryRecords} 对应的 builder 对象 */
     private final MemoryRecordsBuilder recordsBuilder;
 
-    /** 尝试发送当前 RecordBatch 的次数 */
+    /** 发送当前 RecordBatch 的重试次数 */
     volatile int attempts;
-    /** 最后一次尝试发送的时间戳` */
+
+    /** 最后一次重试发送的时间戳` */
     long lastAttemptMs;
 
     /** 记录保存的 record 个数 */
