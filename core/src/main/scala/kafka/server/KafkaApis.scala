@@ -261,20 +261,17 @@ class KafkaApis(val requestChannel: RequestChannel,
         val header = request.header
         val offsetCommitRequest = request.body.asInstanceOf[OffsetCommitRequest]
 
-        // reject the request if not authorized to the group
         // 权限验证
         if (!authorize(request.session, Read, new Resource(Group, offsetCommitRequest.groupId))) {
             val errorCode = new JShort(Errors.GROUP_AUTHORIZATION_FAILED.code)
-            val results = offsetCommitRequest.offsetData.keySet.asScala.map { topicPartition =>
-                (topicPartition, errorCode)
-            }.toMap
+            val results = offsetCommitRequest.offsetData.keySet.asScala.map { topicPartition => (topicPartition, errorCode) }.toMap
             val response = new OffsetCommitResponse(results.asJava)
             requestChannel.sendResponse(new RequestChannel.Response(request, response))
         } else {
-            // 过滤当前 MetadataCache 中未知的 topic 对应的 offset 信息
+            // 过滤未知或未授权（Describe 权限）的 topic 对应的 offset 提交信息
             val (existingAndAuthorizedForDescribeTopics, nonExistingOrUnauthorizedForDescribeTopics) = offsetCommitRequest.offsetData.asScala.toMap.partition {
                 case (topicPartition, _) =>
-                    val authorizedForDescribe = authorize(request.session, Describe, new Resource(auth.Topic, topicPartition.topic))
+                    val authorizedForDescribe = this.authorize(request.session, Describe, new Resource(auth.Topic, topicPartition.topic))
                     val exists = metadataCache.contains(topicPartition.topic)
                     if (!authorizedForDescribe && exists)
                         debug(s"Offset commit request with correlation id ${header.correlationId} from client ${header.clientId} " +
@@ -282,11 +279,11 @@ class KafkaApis(val requestChannel: RequestChannel,
                     authorizedForDescribe && exists
             }
 
+            // 分割成包含 Read 权限和不包含 Read 权限的 topic 集合
             val (authorizedTopics, unauthorizedForReadTopics) = existingAndAuthorizedForDescribeTopics.partition {
-                case (topicPartition, _) => authorize(request.session, Read, new Resource(auth.Topic, topicPartition.topic))
+                case (topicPartition, _) => this.authorize(request.session, Read, new Resource(auth.Topic, topicPartition.topic))
             }
 
-            // the callback for sending an offset commit response
             // 定义回调函数，负责创建 OffsetCommitResponse 对象，并放入 channel 中等待发送
             def sendResponseCallback(commitStatus: immutable.Map[TopicPartition, Short]) {
                 val combinedCommitStatus = commitStatus.mapValues(new JShort(_)) ++
@@ -304,9 +301,8 @@ class KafkaApis(val requestChannel: RequestChannel,
                 requestChannel.sendResponse(new RequestChannel.Response(request, response))
             }
 
-            // 没有可用的 offset 信息，直接调用 sendResponseCallback 方法返回
-            if (authorizedTopics.isEmpty)
-                sendResponseCallback(Map.empty)
+            // 请求的 topic 未授权，直接响应
+            if (authorizedTopics.isEmpty) sendResponseCallback(Map.empty)
             else if (header.apiVersion == 0) {
                 /*
                  * 依据 api 版本号分别处理：
@@ -330,17 +326,12 @@ class KafkaApis(val requestChannel: RequestChannel,
                 }
                 sendResponseCallback(responseInfo)
             } else {
-                // for version 1 and beyond store offsets in offset manager
-
-                // compute the retention time based on the request version:
-                // if it is v1 or not specified by user, we can use the default retention
-                // 依据版本号决定 offset 的消息超时时长
+                // 依据版本号决定 offset 的消息保留时长
                 val offsetRetention =
-                if (header.apiVersion <= 1 ||
-                        offsetCommitRequest.retentionTime == OffsetCommitRequest.DEFAULT_RETENTION_TIME)
-                    coordinator.offsetConfig.offsetsRetentionMs
-                else
-                    offsetCommitRequest.retentionTime // 请求中指定了超时时长
+                    if (header.apiVersion <= 1 || offsetCommitRequest.retentionTime == OffsetCommitRequest.DEFAULT_RETENTION_TIME)
+                        coordinator.offsetConfig.offsetsRetentionMs
+                    else
+                        offsetCommitRequest.retentionTime // 请求中指定了保留时长
 
                 // commit timestamp is always set to now.
                 // "default" expiration timestamp is now + retention (and retention may be overridden if v2)
@@ -348,7 +339,7 @@ class KafkaApis(val requestChannel: RequestChannel,
                 //   - If v1 and no explicit commit timestamp is provided we use default expiration timestamp.
                 //   - If v1 and explicit commit timestamp is provided we calculate retention from that explicit commit timestamp
                 //   - If v2 we use the default expiration timestamp
-                // 依据配置的保留时间、或每个分区指定的保留时间，计算出 offset 的过期清理的时间
+                // 依据配置的保留时间或每个分区指定的保留时间，计算 offset 消息的过期清理的时间
                 val currentTimestamp = time.milliseconds
                 val defaultExpireTimestamp = offsetRetention + currentTimestamp
                 val partitionData = authorizedTopics.mapValues { partitionData =>
@@ -366,8 +357,7 @@ class KafkaApis(val requestChannel: RequestChannel,
                     )
                 }
 
-                // call coordinator to handle commit offset
-                // 委托给 GroupCoordinator.handleCommitOffsets 进行处理
+                // 委托给 GroupCoordinator#handleCommitOffsets 进行处理
                 coordinator.handleCommitOffsets(
                     offsetCommitRequest.groupId,
                     offsetCommitRequest.memberId,

@@ -290,7 +290,6 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
     }
 
     /**
-     * P452
      *
      * @param group
      * @param generationId
@@ -307,8 +306,10 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
 
         group synchronized {
             if (!group.has(memberId)) {
+                // 当前消费者不属于该 group
                 responseCallback(Array.empty, Errors.UNKNOWN_MEMBER_ID.code)
             } else if (generationId != group.generationId) {
+                // group 年代信息不合法
                 responseCallback(Array.empty, Errors.ILLEGAL_GENERATION.code)
             } else {
                 group.currentState match {
@@ -318,22 +319,17 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
                     case PreparingRebalance =>
                         // 直接返回错误码
                         responseCallback(Array.empty, Errors.REBALANCE_IN_PROGRESS.code)
-
                     case AwaitingSync =>
-                        // 设置 awaitingSyncCallback 回调函数
+                        // 设置对应消费者的响应回调函数
                         group.get(memberId).awaitingSyncCallback = responseCallback
-
-                        // if this is the leader, then we can attempt to persist state and transition to stable
-                        // 处理 group leader 发来的 SyncGroupRequest 请求
+                        // 仅处理来自 group leader 发来的 SyncGroupRequest 请求
                         if (memberId == group.leaderId) {
                             info(s"Assignment received from leader for group ${group.groupId} for generation ${group.generationId}")
-
-                            // fill any missing members with an empty assignment
-                            // 将未分配到分区的 member 对应的分区结果填充为空的字节数组
+                            // 将未分配分区的消费者对应的分区分配结果填充为空的字节数组
                             val missing = group.allMembers -- groupAssignment.keySet
                             val assignment = groupAssignment ++ missing.map(_ -> Array.empty[Byte]).toMap
 
-                            // 将 GroupMetadata 相关信息以消息的形式，写入到对应的 offset topic 分区中
+                            // 将 GroupMetadata 相关信息以消息的形式写入到对应的 offset topic 分区中
                             delayedGroupStore = groupManager.prepareStoreGroup(group, assignment,
                                 // 追加消息完成的响应逻辑
                                 (error: Errors) => {
@@ -343,7 +339,7 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
                                             if (error != Errors.NONE) {
                                                 // 清空分区的分配结果，并发送异常响应
                                                 resetAndPropagateAssignmentError(group, error)
-                                                // 切换 group 状态为 PreparingRebalance
+                                                // 切换 group 状态为 PreparingRebalance，再次尝试分配分区
                                                 maybePrepareRebalance(group)
                                             } else {
                                                 // 设置分区的分配结果，发送正常的 SyncGroupResponse 响应
@@ -354,21 +350,17 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
                                     }
                                 })
                         }
-
                     case Stable =>
-                        // if the group is stable, we just return the current assignment
-                        // 将分配给当前 member 处理的分区信息返回
+                        // 将已有的分区分配结果返回给当前消费者
                         val memberMetadata = group.get(memberId)
                         responseCallback(memberMetadata.assignment, Errors.NONE.code)
                         // 心跳相关操作
-                        completeAndScheduleNextHeartbeatExpiration(group, group.get(memberId))
+                        this.completeAndScheduleNextHeartbeatExpiration(group, group.get(memberId))
                 }
             }
         }
 
-        // store the group metadata without holding the group lock to avoid the potential
-        // for deadlock if the callback is invoked holding other locks (e.g. the replica
-        // state change lock)
+        // 执行写 offset topic 逻辑
         delayedGroupStore.foreach(groupManager.store)
     }
 
@@ -496,18 +488,20 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
                             offsetMetadata: immutable.Map[TopicPartition, OffsetAndMetadata],
                             responseCallback: immutable.Map[TopicPartition, Short] => Unit) {
         if (!isActive.get) {
+            // GroupCoordinator 实例未启动
             responseCallback(offsetMetadata.mapValues(_ => Errors.GROUP_COORDINATOR_NOT_AVAILABLE.code))
         } else if (!isCoordinatorForGroup(groupId)) {
+            // 当前 GroupCoordinator 实例并不负责管理当前 group
             responseCallback(offsetMetadata.mapValues(_ => Errors.NOT_COORDINATOR_FOR_GROUP.code))
         } else if (isCoordinatorLoadingInProgress(groupId)) {
+            // 当前 GroupCoordinator 实例正在加载该 group 对应的 offset topic 分区信息
             responseCallback(offsetMetadata.mapValues(_ => Errors.GROUP_LOAD_IN_PROGRESS.code))
         } else {
             groupManager.getGroup(groupId) match {
-                // group 对应的 GroupMetadata 不存在
+                // 对应的 group 不存在
                 case None =>
-                    // GroupCoordinator 不维护 group 的分区分配结果，只记录提交的 offset 信息
+                    // 对应 group 的信息不由 kafka 维护，kafka 只记录提交的 offset 信息
                     if (generationId < 0) {
-                        // the group is not relying on Kafka for group management, so allow the commit
                         val group = groupManager.addGroup(new GroupMetadata(groupId))
                         doCommitOffsets(group, memberId, generationId, offsetMetadata, responseCallback)
                     } else {
@@ -530,25 +524,29 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
 
         group synchronized {
             if (group.is(Dead)) {
+                // 目标 group 已经失效，直接响应错误码
                 responseCallback(offsetMetadata.mapValues(_ => Errors.UNKNOWN_MEMBER_ID.code))
             } else if (generationId < 0 && group.is(Empty)) {
-                // the group is only using Kafka to store offsets
+                // 目标 group 的信息不是由 kafka 维护，而仅仅依赖于 kafka 记录 offset 消费信息
                 delayedOffsetStore = groupManager.prepareStoreOffsets(group, memberId, generationId, offsetMetadata, responseCallback)
             } else if (group.is(AwaitingSync)) {
+                // 目标 group 目前正在执行分区再平衡操作
                 responseCallback(offsetMetadata.mapValues(_ => Errors.REBALANCE_IN_PROGRESS.code))
             } else if (!group.has(memberId)) {
+                // 目标 group 并不包含当前消费者
                 responseCallback(offsetMetadata.mapValues(_ => Errors.UNKNOWN_MEMBER_ID.code))
             } else if (generationId != group.generationId) {
+                // 目标 group 年代信息不一致
                 responseCallback(offsetMetadata.mapValues(_ => Errors.ILLEGAL_GENERATION.code))
             } else {
-                // 将记录 offset 的消息追加到对应的 offset topic 分区中
+                // 将记录 offset 信息的消息追加到对应的 offset topic 对应分区中
                 val member = group.get(memberId)
                 completeAndScheduleNextHeartbeatExpiration(group, member)
                 delayedOffsetStore = groupManager.prepareStoreOffsets(group, memberId, generationId, offsetMetadata, responseCallback)
             }
         }
 
-        // store the offsets without holding the group lock
+        // 执行真正的追加消息操作
         delayedOffsetStore.foreach(groupManager.store)
     }
 
@@ -837,13 +835,14 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
 
     private def onMemberFailure(group: GroupMetadata, member: MemberMetadata) {
         trace("Member %s in group %s has failed".format(member.memberId, group.groupId))
-        // 将对应的 member 从 GroupMetadata 中删除
+        // 将对应的消费者从 GroupMetadata 中删除
         group.remove(member.memberId)
         group.currentState match {
+            // 对应 group 已经失效，什么也不做
             case Dead | Empty =>
-            // 之前的分区分配可能已经失效，切换 GroupMetadata 状态为 PreparingRebalance
-            case Stable | AwaitingSync => maybePrepareRebalance(group)
-            // GroupMetadata 中的 member 减少，可能满足 DelayedJoin 的执行条件，尝试执行
+            // 之前的分区分配结果可能已经失效，切换 GroupMetadata 状态为 PreparingRebalance，准备再次重新分配分区
+            case Stable | AwaitingSync => this.maybePrepareRebalance(group)
+            // 某个消费者下线，可能满足关注该 group 的 DelayedJoin 的执行条件，尝试执行
             case PreparingRebalance => joinPurgatory.checkAndComplete(GroupKey(group.groupId))
         }
     }
@@ -940,10 +939,8 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
      */
     def onExpireHeartbeat(group: GroupMetadata, member: MemberMetadata, heartbeatDeadline: Long) {
         group synchronized {
-            // 再次检测 member 是否下线
-            if (!shouldKeepMemberAlive(member, heartbeatDeadline))
-            // 确实已经下线
-                onMemberFailure(group, member)
+            // 检测消费者是否已经离线，如果是则
+            if (!shouldKeepMemberAlive(member, heartbeatDeadline)) this.onMemberFailure(group, member)
         }
     }
 
