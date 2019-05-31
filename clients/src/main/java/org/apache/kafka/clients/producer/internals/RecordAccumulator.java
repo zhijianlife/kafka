@@ -363,56 +363,50 @@ public final class RecordAccumulator {
      * </ol>
      */
     public ReadyCheckResult ready(Cluster cluster, long nowMs) {
-        // 用于记录可以发送请求的节点
+        // 用于记录接收请求的节点
         Set<Node> readyNodes = new HashSet<>();
-        // 记录下次调用 ready 方法的时间间隔
+        // 记录下次执行 ready 判断的时间间隔
         long nextReadyCheckDelayMs = Long.MAX_VALUE;
-        // 记录找不到 leader 分区的 topic 集合
+        // 记录找不到 leader 副本的分区对应的 topic 集合
         Set<String> unknownLeaderTopics = new HashSet<>();
 
         // 是否有线程在等待 BufferPool 分配空间
         boolean exhausted = this.free.queued() > 0;
-        // 遍历 batches，对每个分区的 leader 副本所在的 node 执行判断
+        // 遍历每个 topic 分区及其 RecordBatch 队列，对每个分区的 leader 副本所在的节点执行判定
         for (Map.Entry<TopicPartition, Deque<RecordBatch>> entry : this.batches.entrySet()) {
             TopicPartition part = entry.getKey();
             Deque<RecordBatch> deque = entry.getValue();
 
-            // 获取当前分区 leader 副本所在的节点
+            // 获取当前 topic 分区 leader 副本所在的节点
             Node leader = cluster.leaderFor(part);
             synchronized (deque) {
-                // 当前分区不存在 leader，但存在发往该分区的消息
+                // 当前分区 leader 副本未知，但存在发往该分区的消息
                 if (leader == null && !deque.isEmpty()) {
-                    // This is a partition for which leader is not known, but messages are available to send.
-                    // Note that entries are currently not removed from batches when deque is empty.
                     unknownLeaderTopics.add(part.topic());
                 }
-                // 如果需要保证顺序性，则不应该存在多个发往该 leader 节点且未完成的消息
+                // 如果需要保证消息顺序性，则不应该存在多个发往该 leader 副本节点且未完成的消息
                 else if (!readyNodes.contains(leader) && !muted.contains(part)) {
                     RecordBatch batch = deque.peekFirst();
                     if (batch != null) {
-                        // 重试 && 重试时间间隔未达到阈值时间
+                        // 当前为重试操作，且重试时间间隔未达到阈值时间
                         boolean backingOff = batch.attempts > 0 && batch.lastAttemptMs + retryBackoffMs > nowMs;
-                        // 重试等待的时间
-                        long waitedTimeMs = nowMs - batch.lastAttemptMs;
+                        long waitedTimeMs = nowMs - batch.lastAttemptMs; // 重试等待的时间
                         long timeToWaitMs = backingOff ? retryBackoffMs : lingerMs;
                         long timeLeftMs = Math.max(timeToWaitMs - waitedTimeMs, 0);
                         boolean full = deque.size() > 1 || batch.isFull();
                         boolean expired = waitedTimeMs >= timeToWaitMs;
 
-                        // 标记当前节点
-                        boolean sendable = full // 1. 队列中有多个 RecordBatch || 第一个 RecordBatch 已满
+                        // 标记当前节点是否可以接收请求
+                        boolean sendable = full // 1. 队列中有多个 RecordBatch，或第一个 RecordBatch 已满
                                 || expired // 2. 当前等待重试的时间过长
-                                || exhausted // 3. 有其他线程在等待 BufferPoll 分配空间
+                                || exhausted // 3. 有其他线程在等待 BufferPoll 分配空间，即本地消息缓存已满
                                 || closed // 4. producer 已经关闭
                                 || flushInProgress(); // 5. 有线程正在等待 flush 操作完成
                         if (sendable && !backingOff) {
-                            // 允许发送，记录可以发送消息的节点
+                            // 允许发送消息，且当前为首次发送，或者重试等待时间已经较长，则记录目标 leader 副本所在节点
                             readyNodes.add(leader);
                         } else {
-                            // Note that this results in a conservative estimate since an un-sendable partition may have
-                            // a leader that will later be found to have sendable data. However, this is good enough
-                            // since we'll just wake up and then sleep again for the remaining time.
-                            // 更新下次调用 ready() 方法的时间间隔
+                            // 更新下次执行 ready 判定的时间间隔
                             nextReadyCheckDelayMs = Math.min(timeLeftMs, nextReadyCheckDelayMs);
                         }
                     }
@@ -467,19 +461,17 @@ public final class RecordAccumulator {
             int size = 0;
             // 获取当前节点上的分区信息
             List<PartitionInfo> parts = cluster.partitionsForNode(node.id());
-            // 记录要发送的 RecordBatch 集合
+            // 记录待发往当前节点的 RecordBatch 集合
             List<RecordBatch> ready = new ArrayList<>();
             /*
-             * to make starvation（饥饿） less likely this loop doesn't start at 0
-             *
              * drainIndex 用于记录上次发送停止的位置，本次继续从当前位置开始发送，
-             * 如果每次都是从 0 位置开始，可能会导致排在后面的分区饿死
+             * 如果每次都是从 0 位置开始，可能会导致排在后面的分区饿死，可以看做是一个简单的负载均衡策略
              */
             int start = drainIndex = drainIndex % parts.size();
             do {
                 PartitionInfo part = parts.get(drainIndex);
                 TopicPartition tp = new TopicPartition(part.topic(), part.partition());
-                // Only proceed if the partition has no in-flight batches.
+                // 如果需要保证消息强顺序性，则不应该同时存在多个发往目标分区的消息
                 if (!muted.contains(tp)) {
                     // 获取当前分区对应的 RecordBatch 集合
                     Deque<RecordBatch> deque = this.getDeque(new TopicPartition(part.topic(), part.partition()));
@@ -489,17 +481,15 @@ public final class RecordAccumulator {
                             if (first != null) {
                                 // 重试 && 重试时间间隔未达到阈值时间
                                 boolean backoff = first.attempts > 0 && first.lastAttemptMs + retryBackoffMs > now;
-                                // Only drain the batch if it is not during backoff period.
-                                if (!backoff) { // 第一次发送，或重试等待时间较长
+                                // 仅发送第一次发送，或重试等待时间较长的消息
+                                if (!backoff) {
                                     if (size + first.sizeInBytes() > maxSize && !ready.isEmpty()) {
-                                        // there is a rare case that a single batch size is larger than the request size due to compression;
-                                        // in this case we will still eventually send this batch in a single request
-                                        // 数据量已达到上限，结束循环，一般对应一个请求的大小
+                                        // 单次消息数据量已达到上限，结束循环，一般对应一个请求的大小，防止请求消息过大
                                         break;
                                     } else {
                                         // 每次仅获取第一个 RecordBatch，并放入 read 列表中，这样给每个分区一个机会，保证公平，防止饥饿
                                         RecordBatch batch = deque.pollFirst();
-                                        // 当前 RecordBatch 设置为只读
+                                        // 将当前 RecordBatch 设置为只读
                                         batch.close();
                                         size += batch.sizeInBytes();
                                         ready.add(batch);

@@ -70,6 +70,8 @@ public final class RecordBatch {
     /** 追后一次向当前 RecordBatch 追加消息的时间戳 */
     long lastAppendTime;
     private String expiryErrorMessage;
+
+    /** 表示当前 RecordBatch 已经处理完成 */
     private AtomicBoolean completed;
 
     /** 标记是否正在重试 */
@@ -125,14 +127,15 @@ public final class RecordBatch {
     public void done(long baseOffset, long logAppendTime, RuntimeException exception) {
         log.trace("Produced messages to topic-partition {} with base offset offset {} and error: {}.", topicPartition, baseOffset, exception);
 
+        // 标识当前 RecordBatch 已经处理完成
         if (completed.getAndSet(true)) {
             throw new IllegalStateException("Batch has already been completed");
         }
 
-        // Set the future before invoking the callbacks as we rely on its state for the `onCompletion` call
+        // 设置当前 RecordBatch 发送之后的状态
         produceFuture.set(baseOffset, logAppendTime, exception);
 
-        // 循环执行每个消息的 Callback
+        // 循环执行每个消息的 Callback 回调
         for (Thunk thunk : thunks) {
             try {
                 // 消息处理正常

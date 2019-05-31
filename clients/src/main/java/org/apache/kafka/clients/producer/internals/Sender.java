@@ -135,7 +135,7 @@ public class Sender implements Runnable {
     public void run() {
         log.debug("Starting Kafka producer I/O thread.");
 
-        // main loop, runs until close is called
+        // 主循环，一直运行直到 KafkaProducer 被关闭
         while (running) {
             try {
                 this.run(time.milliseconds());
@@ -144,15 +144,10 @@ public class Sender implements Runnable {
             }
         }
 
-        /* 客户端被关闭，尝试发送剩余的消息 */
+        /* 如果 KafkaProducer 被关闭，尝试发送剩余的消息 */
 
         log.debug("Beginning shutdown of Kafka producer I/O thread, sending remaining records.");
 
-        /*
-         * okay we stopped accepting requests but there may still be
-         * requests in the accumulator or waiting for acknowledgment,
-         * wait until these are completed.
-         */
         while (!forceClose // 不是强制关闭
                 // 存在未发送或已发送待响应的请求
                 && (this.accumulator.hasUnsent() || this.client.inFlightRequestCount() > 0)) {
@@ -163,10 +158,9 @@ public class Sender implements Runnable {
             }
         }
 
-        // 强制关闭，忽略所有未发送和已发送待响应的请求
+        // 如果是强制关闭，忽略所有未发送和已发送待响应的请求
         if (forceClose) {
-            // We need to fail all the incomplete batches and wake up the threads waiting on the futures.
-            // 丢弃所有未发送完成的 RecordBatch
+            // 丢弃所有未发送完成的消息
             this.accumulator.abortIncompleteBatches();
         }
         try {
@@ -188,23 +182,20 @@ public class Sender implements Runnable {
 
         // 1. 计算需要以及可以向哪些节点发送请求
         Cluster cluster = metadata.fetch(); // 获取 kafka 集群信息
-        RecordAccumulator.ReadyCheckResult result = this.accumulator.ready(cluster, now); // 计算可以向哪些节点发送请求
+        RecordAccumulator.ReadyCheckResult result = this.accumulator.ready(cluster, now); // 计算需要向哪些节点发送请求
 
-        // 2. 存在未知 leader 分区的 topic，标记需要更新本地集群元数据信息
+        // 2. 如果存在未知的 leader 副本对应的节点（对应的 topic 分区正在执行 leader 选举，或者对应的 topic 已经失效），标记需要更新缓存的集群元数据信息
         if (!result.unknownLeaderTopics.isEmpty()) {
-            // The set of topics with unknown leader contains topics with leader election pending as well as topics which may have expired.
-            // Add the topic again to metadata to ensure it is included and request metadata update, since there are messages to send to the topic.
-            for (String topic : result.unknownLeaderTopics)
-                this.metadata.add(topic);
+            for (String topic : result.unknownLeaderTopics) this.metadata.add(topic);
             this.metadata.requestUpdate();
         }
 
-        // 3. 遍历处理可以发送请求的节点，并基于网络 IO 检查对应节点是否可用，对于不可用的节点则剔除
+        // 3. 遍历处理待发送请求的目标节点，基于网络 IO 检查对应节点是否可用，对于不可用的节点则剔除
         Iterator<Node> iter = result.readyNodes.iterator();
         long notReadyTimeout = Long.MAX_VALUE;
         while (iter.hasNext()) {
             Node node = iter.next();
-            // 检查目标节点是否准备好接收请求，如果未准备但目标节点允许创建连接，则创建到目标节点的连接
+            // 检查目标节点是否准备好接收请求，如果未准备好但目标节点允许创建连接，则创建到目标节点的连接
             if (!this.client.ready(node, now)) {
                 // 对于未准备好的节点，则从 ready 集合中删除
                 iter.remove();
@@ -212,13 +203,13 @@ public class Sender implements Runnable {
             }
         }
 
-        // 4. 获取每个节点待发送 RecordBatch 集合，key 是对应的节点 ID
+        // 4. 获取每个节点待发送消息集合，其中 key 是目标 leader 副本所在节点 ID
         Map<Integer, List<RecordBatch>> batches =
                 this.accumulator.drain(cluster, result.readyNodes, this.maxRequestSize, now);
 
-        // 5. 如果需要保证消息的顺序性，则缓存对应 TopicPartition，防止同一时间往同一个 TopicPartition 发送多条处于未完成状态的消息
+        // 5. 如果需要保证消息的强顺序性，则缓存对应 topic 分区对象，防止同一时间往同一个 topic 分区发送多条处于未完成状态的消息
         if (guaranteeMessageOrder) {
-            // 将所有 RecordBatch 的 TopicPartition 加入到 RecordAccumulator.muted 集合中
+            // 将所有 RecordBatch 的 topic 分区对象加入到 muted 集合中
             // 防止同一时间往同一个 topic 分区发送多条处于未完成状态的消息
             for (List<RecordBatch> batchList : batches.values()) {
                 for (RecordBatch batch : batchList)
@@ -234,13 +225,7 @@ public class Sender implements Runnable {
 
         sensors.updateProduceRequestMetrics(batches);
 
-        /*
-         * If we have any nodes that are ready to send + have sendable data,
-         * poll with 0 timeout so this can immediately loop and try sending more data.
-         * Otherwise, the timeout is determined by nodes that have partitions with data
-         * that isn't yet sendable (e.g. lingering, backing off). Note that this specifically does not include nodes
-         * with sendable data that aren't ready to send since they would cause busy looping.
-         */
+        // 如果存在待发送的消息，则设置 pollTimeout 等于 0，这样可以立即发送请求，从而能够缩短剩余消息的缓存时间，避免堆积
         long pollTimeout = Math.min(result.nextReadyCheckDelayMs, notReadyTimeout);
         if (!result.readyNodes.isEmpty()) {
             log.trace("Nodes with data ready to send: {}", result.readyNodes);
@@ -249,13 +234,6 @@ public class Sender implements Runnable {
 
         // 7. 发送请求到服务端，并处理服务端响应
         this.sendProduceRequests(batches, now);
-
-        /*
-         * if some partitions are already ready to be sent, the select time would be 0;
-         * otherwise if some partition already has some data accumulated but not ready yet,
-         * the select time will be the time difference between now and its linger expiry time;
-         * otherwise the select time will be the time difference between now and the metadata expiry time;
-         */
         this.client.poll(pollTimeout, now);
     }
 
@@ -328,41 +306,40 @@ public class Sender implements Runnable {
      */
     private void completeBatch(RecordBatch batch, ProduceResponse.PartitionResponse response, long correlationId, long now) {
         Errors error = response.error;
-        // 可以重试
+        // 异常响应，但是允许重试
         if (error != Errors.NONE && this.canRetry(batch, error)) {
-            // retry
-            log.warn("Got error produce response with correlation id {} on topic-partition {}, retrying ({} attempts left). Error: {}",
-                    correlationId, batch.topicPartition, retries - batch.attempts - 1, error);
-            // 重新添加到收集器中，等待再次发送
+            log.warn("Got error produce response with correlation id {} on topic-partition {}, retrying ({} attempts left). Error: {}", correlationId, batch.topicPartition, retries - batch.attempts - 1, error);
+            // 将消息重新添加到收集器中，等待再次发送
             this.accumulator.reenqueue(batch, now);
             this.sensors.recordRetries(batch.topicPartition.topic(), batch.recordCount);
         }
-        // 不能重试
+        // 正常响应，或不允许重试的异常
         else {
             RuntimeException exception;
             if (error == Errors.TOPIC_AUTHORIZATION_FAILED) {
                 // 权限认证失败
                 exception = new TopicAuthorizationException(batch.topicPartition.topic());
             } else {
-                // 其他异常
+                // 其他异常，如果是正常响应，则为 null
                 exception = error.exception();
             }
-            // 将异常信息传递给用户，并释放 RecordBatch 占用的空间
+            // 将响应信息传递给用户，并释放 RecordBatch 占用的空间
             batch.done(response.baseOffset, response.logAppendTime, exception);
             this.accumulator.deallocate(batch);
             if (error != Errors.NONE) {
                 this.sensors.recordErrors(batch.topicPartition.topic(), batch.recordCount);
             }
         }
+
+        // 如果是集群元数据异常，则标记需要更新集群元数据信息
         if (error.exception() instanceof InvalidMetadataException) {
             if (error.exception() instanceof UnknownTopicOrPartitionException) {
                 log.warn("Received unknown topic or partition error in produce request on partition {}. The topic/partition may not exist or the user may not have Describe access to it", batch.topicPartition);
             }
-            // 标记需要更新集群元数据信息
             metadata.requestUpdate();
         }
 
-        // 释放已经处理完成的 TopicPartition
+        // 释放已经处理完成的 topic 分区，对于需要保证消息强顺序性，以允许接收下一条消息
         if (guaranteeMessageOrder) {
             this.accumulator.unmutePartition(batch.topicPartition);
         }
@@ -403,7 +380,7 @@ public class Sender implements Runnable {
             recordsByPartition.put(tp, batch);
         }
 
-        // 创建 ProduceRequest 构造器
+        // 创建 ProduceRequest 请求构造器
         ProduceRequest.Builder requestBuilder = new ProduceRequest.Builder(acks, timeout, produceRecordsByPartition);
 
         // 创建回调对象，用于处理响应
@@ -416,9 +393,9 @@ public class Sender implements Runnable {
 
         String nodeId = Integer.toString(destination);
 
-        // 创建 ClientRequest 对象，如果 acks 不等于 0 则表示期望获取服务端响应
+        // 创建 ClientRequest 请求对象，如果 acks 不等于 0 则表示期望获取服务端响应
         ClientRequest clientRequest = client.newClientRequest(nodeId, requestBuilder, now, acks != 0, callback);
-        // 缓存 ClientRequest 到 InFlightRequests 中
+        // 缓存 ClientRequest 请求对象到 InFlightRequests 中
         client.send(clientRequest, now);
         log.trace("Sent produce request to {}: {}", nodeId, requestBuilder);
     }
