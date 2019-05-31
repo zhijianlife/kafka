@@ -520,7 +520,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
     /** 客户端 ID */
     private final String clientId;
 
-    /** 控制消费者与 {@link GroupCoordinator} 之间交互 */
+    /** 控制消费者与 GroupCoordinator 之间交互 */
     private final ConsumerCoordinator coordinator;
 
     /** key 反序列化器 */
@@ -528,7 +528,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
     /** value 反序列化器 */
     private final Deserializer<V> valueDeserializer;
 
-    /** 负责从服务端获取消息 */
+    /** 负责从服务端拉取消息 */
     private final Fetcher<K, V> fetcher;
 
     /** 拦截器集合， 在方法返回给用户之前进行拦截修改 */
@@ -537,7 +537,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
     /** 时间戳工具 */
     private final Time time;
 
-    /** 集群网络通信客户端，是对 NetworkClient 的封装 */
+    /** 集群网络通信客户端，对 NetworkClient 的封装 */
     private final ConsumerNetworkClient client;
 
     private final Metrics metrics;
@@ -554,7 +554,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
     /** 请求超时时间 */
     private final long requestTimeoutMs;
 
-    /** 标识当前 consumer 是否关闭 */
+    /** 标识当前消费者是否关闭 */
     private volatile boolean closed = false;
 
     /** 记录当前正在使用 KafkaConsumer 的线程 ID，防止多个线程同时使用同一个 KafkaConsumer 对象 */
@@ -873,7 +873,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                 metadata.setTopics(subscriptions.groupSubscription());
             }
         } finally {
-            // 线程重入计数 refcount 减 1，如果 refcount = 0，则标记当前 KafkaConsumer 没有线程占用
+            // 线程重入计数 refcount 减 1，如果 refcount = 0，则标记当前 KafkaConsumer 对象没有线程占用
             this.release();
         }
     }
@@ -1037,27 +1037,23 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             if (timeout < 0) {
                 throw new IllegalArgumentException("Timeout must not be negative");
             }
-            // 当前 consumer 未订阅任何 topic
+            // 当前消费者未订阅任何 topic
             if (subscriptions.hasNoSubscriptionOrUserAssignment()) {
                 throw new IllegalStateException("Consumer is not subscribed to any topics or assigned any partitions");
             }
 
-            // poll for new data until the timeout expires
             long start = time.milliseconds();
             long remaining = timeout;
             do {
-                // 拉取消息，优先从本地缓存中获取，如果没有则会请求服务端，期间还会执行再平衡策略，以及异步提交 offset
+                // 拉取消息，优先从本地缓存中获取，如果没有则会请求服务端，期间会尝试执行分区再平衡策略，以及异步提交 offset
                 Map<TopicPartition, List<ConsumerRecord<K, V>>> records = this.pollOnce(remaining);
                 if (!records.isEmpty()) {
                     /*
-                     * 为了提升效率，在对响应的 records 处理之前，先发送下一次 fetch 请求，
-                     * 从而让处理消息的过程，与拉取消息的过程并行，以减少等待网络 IO 的时间
-                     *
-                     * NOTE: since the consumed position has already been updated,
-                     * we must not allow wakeups or any other errors to be triggered prior to returning the fetched records.
+                     * 为了提升效率，在对响应的消息处理之前，先发送下一次 fetch 请求，
+                     * 从而让处理消息的过程与拉取消息的过程并行，以减少等待网络 IO 的时间
                      */
                     if (fetcher.sendFetches() > 0 || client.pendingRequestCount() > 0) {
-                        // 如果有待发送的请求，执行一次不可中断的 poll
+                        // 如果有待发送的请求，执行一次不可中断的 poll 请求
                         client.pollNoWakeup();
                     }
 
@@ -1088,12 +1084,12 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      * @return The fetched records (may be empty)
      */
     private Map<TopicPartition, List<ConsumerRecord<K, V>>> pollOnce(long timeout) {
-        // 执行再平衡策略，以及异步提交 offset
+        // 执行分区再平衡策略，以及异步提交 offset
         coordinator.poll(time.milliseconds());
 
         if (!subscriptions.hasAllFetchPositions()) {
             /*
-             * 如果存在没有分配 offset 的 topic 分区，则进行更新：
+             * 如果存在没有分配 offset 的 topic 分区，则执行更新：
              * 1. 如果需要重置，则按照指定策略重置 offset
              * 2. 否则，尝试获取上次提交的 offset，如果结果为空则按照默认重置策略进行重置
              * 3. 否则，使用上次提交的 offset 更新本地记录的 offset 值
@@ -1101,13 +1097,13 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             this.updateFetchPositions(subscriptions.missingFetchPositions());
         }
 
-        // 如果本地有缓存可用的消息，则直接返回
+        // 尝试从本地获取缓存的消息
         Map<TopicPartition, List<ConsumerRecord<K, V>>> records = fetcher.fetchedRecords();
         if (!records.isEmpty()) {
             return records;
         }
 
-        // 创建 FetchRequest 请求
+        // 如果本地没有直接可用的消息，则创建 FetchRequest 请求，从集群拉取消息数据
         fetcher.sendFetches();
         long now = time.milliseconds();
         long pollTimeout = Math.min(coordinator.timeToNextPoll(now), timeout);
@@ -1115,13 +1111,11 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
         client.poll(pollTimeout, now, new PollCondition() {
             @Override
             public boolean shouldBlock() {
-                // since a fetch might be completed by the background thread, we need this poll condition
-                // to ensure that we do not block unnecessarily in poll()
                 return !fetcher.hasCompletedFetches();
             }
         });
 
-        // 检查是否需要执行再平衡，如果是则返回空的结果，以保证尽快执行再平衡
+        // 检查是否需要执行分区再平衡，如果是则返回空的结果，以保证尽快对分区执行再平衡操作
         if (coordinator.needRejoin()) {
             return Collections.emptyMap();
         }
@@ -1661,12 +1655,12 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      * @throws NoOffsetForPartitionException If no offset is stored for a given partition and no offset reset policy is  defined
      */
     private void updateFetchPositions(Set<TopicPartition> partitions) {
-        // 对于需要重置 offset 的分区，请求分区 leader 节点获取对应的 offset 值
+        // 对于需要重置 offset 的分区，请求分区 leader 副本所在节点获取对应的 offset 值
         fetcher.resetOffsetsIfNeeded(partitions);
 
         // 如果仍然存在没有分配 offset 的分区
         if (!subscriptions.hasAllFetchPositions(partitions)) {
-            // 如果需要从 GroupCoordinator 获取上次提交的 offset，则请求更新
+            // 如果需要从 GroupCoordinator 获取上次提交的 offset，则发送 OffsetFetchRequest 请求更新
             coordinator.refreshCommittedOffsetsIfNeeded();
             /*
              * 再次尝试对未分配 offset 的分区进行更新：
@@ -1678,7 +1672,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
         }
     }
 
-    /*
+    /**
      * Check that the consumer hasn't been closed.
      */
     private void ensureNotClosed() {
@@ -1713,7 +1707,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
     private void release() {
         // 线程重入次数减 1
         if (refcount.decrementAndGet() == 0) {
-            // 如果当前线程重入次数为 0，则标识当前 KafkaConsumer 对象没有线程占用
+            // 如果当前线程重入次数为 0，则表示当前 KafkaConsumer 对象没有线程占用
             currentThread.set(NO_CURRENT_THREAD);
         }
     }

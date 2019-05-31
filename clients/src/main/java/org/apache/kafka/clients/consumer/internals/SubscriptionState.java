@@ -158,7 +158,7 @@ public class SubscriptionState {
 
         this.listener = listener;
 
-        // 更新 subscription 和 groupSubscription
+        // 更新本地缓存的订阅的信息
         this.changeSubscription(topics);
     }
 
@@ -282,9 +282,9 @@ public class SubscriptionState {
     }
 
     public void unsubscribe() {
-        // 情况当前订阅的 topic
+        // 清空当前订阅的 topic 列表
         this.subscription = Collections.emptySet();
-        // 清空记录每个 TP 的消费状态
+        // 清空记录每个 topic 分区的消费状态
         this.assignment.clear();
         // 重置订阅正则模式
         this.subscribedPattern = null;
@@ -539,6 +539,7 @@ public class SubscriptionState {
 
         /** 下次获取消息的 offset */
         private Long position; // last consumed position
+        /** 最近一次获取的 topic 分区的 HW 值 */
         private Long highWatermark; // the high watermark from last fetch
         /** 最近一次提交的 offset */
         private OffsetAndMetadata committed;  // last committed position

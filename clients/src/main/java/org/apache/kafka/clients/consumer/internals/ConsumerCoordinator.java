@@ -311,7 +311,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
      * @param now current time in milliseconds
      */
     public void poll(long now) {
-        // 触发注册的监听 offset 提交完成的方法
+        // 触发执行注册的监听 offset 提交完成的方法
         this.invokeCompletedOffsetCommitCallbacks();
 
         // 确保当前是 AUTO_TOPICS 或 AUTO_PATTERN（USER_ASSIGNED 不需要再平衡）订阅模式，
@@ -337,7 +337,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
             /*
              * 1. 检查目标 coordinator 节点是否准备好接收请求
              * 2. 启动心跳线程
-             * 3. 执行再平衡操作
+             * 3. 执行分区再平衡操作
              */
             this.ensureActiveGroup();
             now = time.milliseconds();
