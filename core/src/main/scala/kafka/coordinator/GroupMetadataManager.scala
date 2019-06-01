@@ -372,25 +372,25 @@ class GroupMetadataManager(val brokerId: Int, // 所属 broker 节点 ID
         // 获取 group 对应的元数据信息
         val group = groupMetadataCache.get(groupId)
         if (group == null) {
-            // group 对应的元数据信息不存在
+            // group 对应的元数据信息不存在，则统一返回 offset 为 -1
             topicPartitionsOpt.getOrElse(Seq.empty[TopicPartition]).map { topicPartition =>
                 (topicPartition, new OffsetFetchResponse.PartitionData(OffsetFetchResponse.INVALID_OFFSET, "", Errors.NONE))
             }.toMap
         } else {
             group synchronized {
                 if (group.is(Dead)) {
-                    // 对应的 group 已经没有 member，并且对应的 metadata 已经被删除
+                    // 对应的 group 名下已经没有消费者，并且元数据信息已经被删除
                     topicPartitionsOpt.getOrElse(Seq.empty[TopicPartition]).map { topicPartition =>
                         (topicPartition, new OffsetFetchResponse.PartitionData(OffsetFetchResponse.INVALID_OFFSET, "", Errors.NONE))
                     }.toMap
                 } else {
                     topicPartitionsOpt match {
-                        // 请求的分区为空，表示请求 group 名下全部 topic 分区对应的最近提交的 offset 值
+                        // 请求未指定 topic 分区，表示请求 group 名下全部 topic 分区对应的最近一次提交的 offset 值
                         case None =>
                             group.allOffsets.map { case (topicPartition, offsetAndMetadata) =>
                                 topicPartition -> new OffsetFetchResponse.PartitionData(offsetAndMetadata.offset, offsetAndMetadata.metadata, Errors.NONE)
                             }
-                        // 查找指定 topic 分区集合对应的最近提交的 offset 值
+                        // 查找指定 topic 分区集合对应的最近一次提交的 offset 值
                         case Some(_) =>
                             topicPartitionsOpt.getOrElse(Seq.empty[TopicPartition]).map { topicPartition =>
                                 val partitionData = group.offset(topicPartition) match {

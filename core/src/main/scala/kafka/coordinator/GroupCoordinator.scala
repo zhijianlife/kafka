@@ -373,31 +373,30 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
      */
     def handleLeaveGroup(groupId: String, memberId: String, responseCallback: Short => Unit) {
         if (!isActive.get) {
+            // GroupCoordinator 实例未启动
             responseCallback(Errors.GROUP_COORDINATOR_NOT_AVAILABLE.code)
         } else if (!isCoordinatorForGroup(groupId)) {
+            // 当前 GroupCoordinator 实例并不负责管理当前 group
             responseCallback(Errors.NOT_COORDINATOR_FOR_GROUP.code)
         } else if (isCoordinatorLoadingInProgress(groupId)) {
+            // 当前 GroupCoordinator 实例正在加载该 group 对应的 offset topic 分区信息
             responseCallback(Errors.GROUP_LOAD_IN_PROGRESS.code)
         } else {
             groupManager.getGroup(groupId) match {
+                // 对应的 group 不存在或已经失效
                 case None =>
-                    // if the group is marked as dead, it means some other thread has just removed the group
-                    // from the coordinator metadata; this is likely that the group has migrated to some other
-                    // coordinator OR the group is in a transient unstable phase. Let the consumer to retry
-                    // joining without specified consumer id,
                     responseCallback(Errors.UNKNOWN_MEMBER_ID.code)
-
                 case Some(group) =>
                     group synchronized {
                         if (group.is(Dead) || !group.has(memberId)) {
                             responseCallback(Errors.UNKNOWN_MEMBER_ID.code)
                         } else {
                             val member = group.get(memberId)
-                            // 设置 MemberMetadata.isLeaving 为 true，尝试完成对应的 DelayedHeartbeat
-                            removeHeartbeatForLeavingMember(group, member)
-                            // 移除对应的 MemberMetadata 对象，并切换状态
-                            onMemberFailure(group, member)
-                            // 调用回调函数
+                            // 设置 MemberMetadata#isLeaving 为 true，并尝试完成对应的 DelayedHeartbeat 延时任务
+                            this.removeHeartbeatForLeavingMember(group, member)
+                            // 从 group 元数据信息中移除对应的 MemberMetadata 对象，并切换状态
+                            this.onMemberFailure(group, member)
+                            // 调用回调响应函数
                             responseCallback(Errors.NONE.code)
                         }
                     }
@@ -559,17 +558,17 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
      */
     def handleFetchOffsets(groupId: String, partitions: Option[Seq[TopicPartition]] = None): (Errors, Map[TopicPartition, OffsetFetchResponse.PartitionData]) = {
         if (!isActive.get) {
-            // 校验当前 GroupCoordinator 实例是否已经启动运行
+            // 当前 GroupCoordinator 实例未启动运行
             (Errors.GROUP_COORDINATOR_NOT_AVAILABLE, Map())
         } else if (!isCoordinatorForGroup(groupId)) {
-            // 当前 GroupCoordinator 实例并未管理对应的 group
+            // 当前 GroupCoordinator 实例并不负责管理当前 group
             debug("Could not fetch offsets for group %s (not group coordinator).".format(groupId))
             (Errors.NOT_COORDINATOR_FOR_GROUP, Map())
         } else if (isCoordinatorLoadingInProgress(groupId)) {
-            // 对应的 GroupMetadata 未加载完成
+            // 当前 GroupCoordinator 实例正在加载该 group 对应的 offset topic 分区信息
             (Errors.GROUP_LOAD_IN_PROGRESS, Map())
         } else {
-            // 返回指定 topic 分区集合对应的最近一次提交的 offset 值
+            // 返回指定 topic 分区集合对应的最近一次提交的 offset 位置信息
             (Errors.NONE, groupManager.getOffsets(groupId, partitions))
         }
     }
@@ -776,7 +775,7 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
         val member = new MemberMetadata(memberId, group.groupId, clientId, clientHost, rebalanceTimeoutMs, sessionTimeoutMs, protocolType, protocols)
         // 设置回调函数，即 KafkaApis#sendResponseCallback 方法，用于向客户端发送 JoinGroupResponse 响应
         member.awaitingJoinCallback = callback
-        // 添加到 GroupMetadata 中
+        // 添加到 GroupMetadata 中，第一个加入 group 的消费者成为 leader 角色
         group.add(member)
         // 尝试切换 group 的状态为 PreparingRebalance
         this.maybePrepareRebalance(group)

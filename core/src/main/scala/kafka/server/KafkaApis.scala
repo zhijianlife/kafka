@@ -969,10 +969,10 @@ class KafkaApis(val requestChannel: RequestChannel,
             authorize(request.session, Describe, new Resource(auth.Topic, partition.topic))
 
         val offsetFetchResponse =
-        // reject the request if not authorized to the group
-            if (!authorize(request.session, Read, new Resource(Group, offsetFetchRequest.groupId)))
+            if (!authorize(request.session, Read, new Resource(Group, offsetFetchRequest.groupId))) {
+                // 权限校验不过
                 offsetFetchRequest.getErrorResponse(Errors.GROUP_AUTHORIZATION_FAILED)
-            else {
+            } else {
                 /*
                  * 依据版本号进行不同的读取 offset 的流程处理：
                  * - 版本号为 0 表示旧版请求，offset 存储在 ZK 中
@@ -1010,6 +1010,7 @@ class KafkaApis(val requestChannel: RequestChannel,
                 } else {
                     // versions 1 and above read offsets from Kafka
                     if (offsetFetchRequest.isAllPartitions) {
+                        // 如果当前是请求获取指定 group 名下所有 topic 分区的 offset 值
                         val (error, allPartitionData) = coordinator.handleFetchOffsets(offsetFetchRequest.groupId)
                         if (error != Errors.NONE)
                             offsetFetchRequest.getErrorResponse(error)
@@ -1019,10 +1020,8 @@ class KafkaApis(val requestChannel: RequestChannel,
                             new OffsetFetchResponse(Errors.NONE, authorizedPartitionData.asJava, header.apiVersion)
                         }
                     } else {
-                        val (authorizedPartitions, unauthorizedPartitions) = offsetFetchRequest.partitions.asScala
-                                .partition(authorizeTopicDescribe)
-                        val (error, authorizedPartitionData) = coordinator.handleFetchOffsets(offsetFetchRequest.groupId,
-                            Some(authorizedPartitions))
+                        val (authorizedPartitions, unauthorizedPartitions) = offsetFetchRequest.partitions.asScala.partition(authorizeTopicDescribe)
+                        val (error, authorizedPartitionData) = coordinator.handleFetchOffsets(offsetFetchRequest.groupId, Some(authorizedPartitions))
                         if (error != Errors.NONE)
                             offsetFetchRequest.getErrorResponse(error)
                         else {

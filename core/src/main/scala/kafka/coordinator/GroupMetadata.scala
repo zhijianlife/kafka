@@ -189,6 +189,7 @@ private[coordinator] class GroupMetadata(val groupId: String, // group 的 ID
     private var state: GroupState = initialState
     /** 记录消费者的元数据信息，key 是消费者 ID */
     private val members = new mutable.HashMap[String, MemberMetadata]
+    /** 缓存每个 topic 分区对应的 offset 元数据信息 */
     private val offsets = new mutable.HashMap[TopicPartition, OffsetAndMetadata]
     private val pendingOffsetCommits = new mutable.HashMap[TopicPartition, OffsetAndMetadata]
 
