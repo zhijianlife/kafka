@@ -105,47 +105,64 @@ class KafkaServer(val config: KafkaConfig, // 配置信息对象
                   kafkaMetricsReporters: Seq[KafkaMetricsReporter] = List() // 监控上报程序
                  ) extends Logging with KafkaMetricsGroup {
 
-    /** 标识 kafka 已经启动完成 */
+    /** 标识节点已经启动完成 */
     private val startupComplete = new AtomicBoolean(false)
-    /** 标识 kafka 正在执行关闭操作 */
+    /** 标识节点正在执行关闭操作 */
     private val isShuttingDown = new AtomicBoolean(false)
-    /** 标识 kafka 正在执行启动操作 */
+    /** 标识节点正在执行启动操作 */
     private val isStartingUp = new AtomicBoolean(false)
 
-    /** 用于阻塞主线程等待 KafkaServer 的关闭 */
+    /** 阻塞主线程等待 KafkaServer 的关闭 */
     private var shutdownLatch = new CountDownLatch(1)
 
     private val jmxPrefix: String = "kafka.server"
 
     var metrics: Metrics = _
 
-    /** 记录当前 broker 节点的状态 */
+    /** 记录 broker 节点的当前状态 */
     val brokerState: BrokerState = new BrokerState
 
+    /** Api 接口类，用于分发各种类型的请求 */
     var apis: KafkaApis = _
+    /** 权限控制器 */
     var authorizer: Option[Authorizer] = None
+
+    /** 网络 socket 服务 */
     var socketServer: SocketServer = _
+    /** 简单的连接池实现，用于管理所有的 KafkaRequestHandler */
     var requestHandlerPool: KafkaRequestHandlerPool = _
 
+    /** 日志数据管理 */
     var logManager: LogManager = _
 
+    /** 管理当前 broker 节点上的分区副本 */
     var replicaManager: ReplicaManager = _
+
+    /** topic 增删管理 */
     var adminManager: AdminManager = _
 
+    /** 动态配置管理 */
     var dynamicConfigHandlers: Map[String, ConfigHandler] = _
     var dynamicConfigManager: DynamicConfigManager = _
     var credentialProvider: CredentialProvider = _
 
+    /** group 协调管理组件 */
     var groupCoordinator: GroupCoordinator = _
 
+    /** 集群控制组件 */
     var kafkaController: KafkaController = _
 
+    /** 定时任务调度器 */
     val kafkaScheduler = new KafkaScheduler(config.backgroundThreads)
 
+    /** broker 节点活跃性检查 */
     var kafkaHealthcheck: KafkaHealthcheck = _
+
+    /** broker 缓存整个集群中全部分区的状态信息 */
     var metadataCache: MetadataCache = _
     var quotaManagers: QuotaFactory.QuotaManagers = _
 
+    /** ZK 操作工具类 */
     var zkUtils: ZkUtils = _
     val correlationId: AtomicInteger = new AtomicInteger(0)
     val brokerMetaPropsFile = "meta.properties"
@@ -189,15 +206,15 @@ class KafkaServer(val config: KafkaConfig, // 配置信息对象
         try {
             info("starting")
 
-            // kafka 当前正在执行关闭操作，期间不允许重新启动
+            // 当前正在执行关闭操作，期间不允许重新启动
             if (isShuttingDown.get)
                 throw new IllegalStateException("Kafka server is still shutting down, cannot re-start!")
 
-            // kafka 已经启动完成，不需要重复启动
+            // 服务已经启动完成，不需要重复启动
             if (startupComplete.get)
                 return
 
-            // 标识 kafka 正在启动，防止启动过程中重复启动
+            // 设置 kafka 正在启动，防止启动过程中重复启动
             val canStartup = isStartingUp.compareAndSet(false, true)
             if (canStartup) {
                 // 设置 broker 节点的状态为 Starting
@@ -206,10 +223,10 @@ class KafkaServer(val config: KafkaConfig, // 配置信息对象
                 // 初始化定时任务调度器
                 kafkaScheduler.startup()
 
-                // 创建 ZkUtils 工具类对象，期间会在 ZK 上创建一些基本的节点
+                // 创建 ZK 工具类对象，期间会在 ZK 上创建一些基本的节点
                 zkUtils = initZk()
 
-                // 从 ZK 上获取 clusterId，如果不存在则创建一个
+                // 从 ZK 上获取集群 ID，如果不存在则创建一个
                 _clusterId = getOrGenerateClusterId(zkUtils)
                 info(s"Cluster ID = $clusterId")
 
@@ -218,7 +235,7 @@ class KafkaServer(val config: KafkaConfig, // 配置信息对象
                  * - 如果在配置中配置了 broker.id，则需要保证与对应 log 目录下 meta.properties 文件中记录的一致
                  * - 如果没有配置，则自动生成一个，基于 ZK 保证各个 broker 的 ID 不重复
                  */
-                config.brokerId = getBrokerId
+                config.brokerId = this.getBrokerId
                 this.logIdent = "[Kafka Server " + config.brokerId + "], "
 
                 // 初始化一些监控相关的配置
@@ -232,11 +249,11 @@ class KafkaServer(val config: KafkaConfig, // 配置信息对象
                 quotaManagers = QuotaFactory.instantiate(config, metrics, time)
                 notifyClusterListeners(kafkaMetricsReporters ++ reporters.asScala)
 
-                // 创建并启动 LogManager，提供了对 log 文件管理的功能
+                // 创建并启动 LogManager，提供了对日志文件管理的功能
                 logManager = this.createLogManager(zkUtils.zkClient, brokerState)
                 logManager.startup()
 
-                // 创建 MetadataCache 对象，broker 使用该对象缓存整个集群中全部分区的状态
+                // 创建 MetadataCache 对象，broker 节点使用该对象缓存整个集群中全部分区的状态
                 metadataCache = new MetadataCache(config.brokerId)
                 // 权限相关
                 credentialProvider = new CredentialProvider(config.saslEnabledMechanisms)
@@ -245,13 +262,13 @@ class KafkaServer(val config: KafkaConfig, // 配置信息对象
                 socketServer = new SocketServer(config, metrics, time, credentialProvider)
                 socketServer.startup()
 
-                // 创建并启动 ReplicaManager，用于管理当前 broker 节点上的分区信息
+                // 创建并启动 ReplicaManager，用于管理当前 broker 节点上的分区副本信息
                 replicaManager = new ReplicaManager(config, metrics, time, zkUtils, kafkaScheduler, logManager, isShuttingDown, quotaManagers.follower)
                 replicaManager.startup()
 
                 /*
                  * 创建并启动 KafkaController，每个 broker 节点都会创建并启动一个 KafkaController 对象，但是只有一个 broker 会成为 controller leader，
-                 * controller leader 负责管理集群中所有的分区和副本的状态，也是 kafka 与 ZK 进行交互的桥梁。
+                 * controller leader 负责管理集群中所有的分区和副本的状态，也是集群与 ZK 进行交互的桥梁。
                  */
                 kafkaController = new KafkaController(config, zkUtils, brokerState, time, metrics, threadNamePrefix)
                 kafkaController.startup()
@@ -270,7 +287,7 @@ class KafkaServer(val config: KafkaConfig, // 配置信息对象
                     authZ
                 }
 
-                // 创建 KafkaApis 对象，用于分发接收到的所有的请求
+                // 创建 KafkaApis 对象，用于分发接收到的各种类型请求
                 apis = new KafkaApis(socketServer.requestChannel, replicaManager, adminManager, groupCoordinator,
                     kafkaController, zkUtils, config.brokerId, config, metadataCache, metrics, authorizer, quotaManagers, clusterId, time)
 
@@ -622,33 +639,23 @@ class KafkaServer(val config: KafkaConfig, // 配置信息对象
 
             if (shutdownLatch.getCount > 0 && isShuttingDown.compareAndSet(false, true)) {
                 CoreUtils.swallow(controlledShutdown())
-                // 设置 broker 状态为 BrokerShuttingDown，标识当前 broker 正在执行关闭
+                // 设置 broker 状态为 BrokerShuttingDown，表示当前 broker 正在执行关闭操作
                 brokerState.newState(BrokerShuttingDown)
 
-                /* 关闭相应注册的组件 */
+                /* 依次关闭相应注册的组件 */
 
-                if (socketServer != null)
-                    CoreUtils.swallow(socketServer.shutdown())
-                if (requestHandlerPool != null)
-                    CoreUtils.swallow(requestHandlerPool.shutdown())
+                if (socketServer != null) CoreUtils.swallow(socketServer.shutdown())
+                if (requestHandlerPool != null) CoreUtils.swallow(requestHandlerPool.shutdown())
                 CoreUtils.swallow(kafkaScheduler.shutdown())
-                if (apis != null)
-                    CoreUtils.swallow(apis.close())
+                if (apis != null) CoreUtils.swallow(apis.close())
                 CoreUtils.swallow(authorizer.foreach(_.close()))
-                if (replicaManager != null)
-                    CoreUtils.swallow(replicaManager.shutdown())
-                if (adminManager != null)
-                    CoreUtils.swallow(adminManager.shutdown())
-                if (groupCoordinator != null)
-                    CoreUtils.swallow(groupCoordinator.shutdown())
-                if (logManager != null)
-                    CoreUtils.swallow(logManager.shutdown())
-                if (kafkaController != null)
-                    CoreUtils.swallow(kafkaController.shutdown())
-                if (zkUtils != null)
-                    CoreUtils.swallow(zkUtils.close())
-                if (metrics != null)
-                    CoreUtils.swallow(metrics.close())
+                if (replicaManager != null) CoreUtils.swallow(replicaManager.shutdown())
+                if (adminManager != null) CoreUtils.swallow(adminManager.shutdown())
+                if (groupCoordinator != null) CoreUtils.swallow(groupCoordinator.shutdown())
+                if (logManager != null) CoreUtils.swallow(logManager.shutdown())
+                if (kafkaController != null) CoreUtils.swallow(kafkaController.shutdown())
+                if (zkUtils != null) CoreUtils.swallow(zkUtils.close())
+                if (metrics != null) CoreUtils.swallow(metrics.close())
 
                 // 设置 broker 状态为 NotRunning，表示关闭成功
                 brokerState.newState(NotRunning)
@@ -729,7 +736,7 @@ class KafkaServer(val config: KafkaConfig, // 配置信息对象
         var brokerId = config.brokerId
         val brokerIdSet = mutable.HashSet[Int]()
 
-        // 遍历 log.dirs
+        // 遍历 log.dirs 配置的 log 目录列表
         for (logDir <- config.logDirs) {
             // 在每一个 log 目录下面创建一个 meta.properties 文件，内容包含当前 broker 节点的 ID 和版本信息
             val brokerMetadataOpt = brokerMetadataCheckpoints(logDir).read()
@@ -739,24 +746,23 @@ class KafkaServer(val config: KafkaConfig, // 配置信息对象
         }
 
         if (brokerIdSet.size > 1) {
-            // 不允许多个 broker 共享一个 log 目录
+            // 不允许多个 broker 节点共享同一个 log 目录
             throw new InconsistentBrokerIdException(
                 s"Failed to match broker.id across log.dirs. This could happen if multiple brokers shared a log directory (log.dirs) " +
                         s"or partial data was manually copied from another broker. Found $brokerIdSet")
-        }
-        else if (brokerId >= 0 && brokerIdSet.size == 1 && brokerIdSet.last != brokerId) {
+        } else if (brokerId >= 0 && brokerIdSet.size == 1 && brokerIdSet.last != brokerId) {
             // 配置的 brokerId 与 meta.properties 中记录的 brokerId 不一致
             throw new InconsistentBrokerIdException(
                 s"Configured broker.id $brokerId doesn't match stored broker.id ${brokerIdSet.last} in meta.properties. " +
                         s"If you moved your data, make sure your configured broker.id matches. " +
                         s"If you intend to create a new broker, you should remove all data in your data directories (log.dirs).")
+        } else if (brokerIdSet.isEmpty && brokerId < 0 && config.brokerIdGenerationEnable) {
+            // 如果没有配置，则自动创建 brokerId，通过 ZK 保证 brokerId 的全局唯一性
+            brokerId = generateBrokerId
+        } else if (brokerIdSet.size == 1) {
+            // 从 meta.properties 中获取 brokerId
+            brokerId = brokerIdSet.last
         }
-        else if (brokerIdSet.isEmpty && brokerId < 0 && config.brokerIdGenerationEnable) // generate a new brokerId from Zookeeper
-             // 如果没有配置，则自动创建 brokerId，通过 ZK 保证 brokerId 的全局唯一性
-                 brokerId = generateBrokerId
-        else if (brokerIdSet.size == 1) // pick broker.id from meta.properties
-             // 从 meta.properties 中获取 brokerId
-                 brokerId = brokerIdSet.last
 
         brokerId
     }

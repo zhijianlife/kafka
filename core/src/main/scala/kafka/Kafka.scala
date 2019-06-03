@@ -66,16 +66,16 @@ object Kafka extends Logging {
             // 创建 kafkaServerStartable 对象，期间会初始化监控上报程序
             val kafkaServerStartable = KafkaServerStartable.fromProps(serverProps)
 
-            // 注册一个钩子方法，当 JVM 被关闭时执行 shutdown 程序，本质上是在执行 KafkaServer.shutdown 方法
+            // 注册一个钩子方法，当 JVM 被关闭时执行 shutdown 逻辑，本质上是在执行 KafkaServer#shutdown 方法
             Runtime.getRuntime.addShutdownHook(new Thread() {
                 override def run(): Unit = {
                     kafkaServerStartable.shutdown()
                 }
             })
 
-            // 本质上调用的是 KafkaServer.startup 方法
+            // 本质上调用的是 KafkaServer#startup 方法
             kafkaServerStartable.startup()
-            // 阻塞等待 kafka server 程序关闭
+            // 阻塞等待 kafka server 运行线程关闭
             kafkaServerStartable.awaitShutdown()
         } catch {
             case e: Throwable =>

@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,28 +17,26 @@
 
 package kafka.server
 
+import kafka.admin.AdminUtils
 import kafka.common.{NotificationHandler, ZkNodeChangeNotificationListener}
-import kafka.utils.Json
-import kafka.utils.Logging
-import kafka.utils.ZkUtils
+import kafka.utils.{Json, Logging, ZkUtils}
+import org.apache.kafka.common.utils.Time
 
 import scala.collection._
-import kafka.admin.AdminUtils
-import org.apache.kafka.common.utils.Time
 
 /**
  * Represents all the entities that can be configured via ZK
  */
 object ConfigType {
-  val Topic = "topics"
-  val Client = "clients"
-  val User = "users"
-  val Broker = "brokers"
-  val all = Seq(Topic, Client, User, Broker)
+    val Topic = "topics"
+    val Client = "clients"
+    val User = "users"
+    val Broker = "brokers"
+    val all: Seq[String] = Seq(Topic, Client, User, Broker)
 }
 
 object ConfigEntityName {
-  val Default = "<default>"
+    val Default = "<default>"
 }
 
 /**
@@ -53,12 +51,12 @@ object ConfigEntityName {
  *   E.g. /config/users/<user>/clients/<clientId>
  *
  * To avoid watching all topics for changes instead we have a notification path
- *   /config/changes
+ * /config/changes
  * The DynamicConfigManager has a child watch on this path.
  *
  * To update a config we first update the config properties. Then we create a new sequential
  * znode under the change path which contains the name of the entityType and entityName that was updated, say
- *   /config/changes/config_change_13321
+ * /config/changes/config_change_13321
  * The sequential znode contains data in this format: {"version" : 1, "entity_type":"topic/client", "entity_name" : "topic_name/client_id"}
  * This is just a notification--the actual config change is stored only once under the /config/entityType/entityName path.
  * Version 2 of notifications has the format: {"version" : 2, "entity_path":"entity_type/entity_name"}
@@ -81,94 +79,93 @@ object ConfigEntityName {
  */
 class DynamicConfigManager(private val zkUtils: ZkUtils,
                            private val configHandlers: Map[String, ConfigHandler],
-                           private val changeExpirationMs: Long = 15*60*1000,
+                           private val changeExpirationMs: Long = 15 * 60 * 1000,
                            private val time: Time = Time.SYSTEM) extends Logging {
 
-  object ConfigChangedNotificationHandler extends NotificationHandler {
-    override def processNotification(json: String) = {
-      Json.parseFull(json) match {
-        case None => // There are no config overrides.
-        // Ignore non-json notifications because they can be from the deprecated TopicConfigManager
-        case Some(mapAnon: Map[_, _]) =>
-          val map = mapAnon collect
-            { case (k: String, v: Any) => k -> v }
+    object ConfigChangedNotificationHandler extends NotificationHandler {
+        override def processNotification(json: String): Unit = {
+            Json.parseFull(json) match {
+                case None => // There are no config overrides.
+                // Ignore non-json notifications because they can be from the deprecated TopicConfigManager
+                case Some(mapAnon: Map[_, _]) =>
+                    val map = mapAnon collect { case (k: String, v: Any) => k -> v }
 
-          map("version") match {
-            case 1 => processEntityConfigChangeVersion1(json, map)
-            case 2 => processEntityConfigChangeVersion2(json, map)
-            case _ => throw new IllegalArgumentException("Config change notification has an unsupported version " + map("version") +
-                "Supported versions are 1 and 2.")
-          }
+                    map("version") match {
+                        case 1 => processEntityConfigChangeVersion1(json, map)
+                        case 2 => processEntityConfigChangeVersion2(json, map)
+                        case _ => throw new IllegalArgumentException("Config change notification has an unsupported version " + map("version") +
+                                "Supported versions are 1 and 2.")
+                    }
 
-        case _ => throw new IllegalArgumentException("Config change notification has an unexpected value. The format is:" +
-          "{\"version\" : 1, \"entity_type\":\"topics/clients\", \"entity_name\" : \"topic_name/client_id\"}." + " or " +
-          "{\"version\" : 2, \"entity_path\":\"entity_type/entity_name\"}." +
-          " Received: " + json)
-      }
+                case _ => throw new IllegalArgumentException("Config change notification has an unexpected value. The format is:" +
+                        "{\"version\" : 1, \"entity_type\":\"topics/clients\", \"entity_name\" : \"topic_name/client_id\"}." + " or " +
+                        "{\"version\" : 2, \"entity_path\":\"entity_type/entity_name\"}." +
+                        " Received: " + json)
+            }
+        }
+
+        private def processEntityConfigChangeVersion1(json: String, map: Map[String, Any]) {
+
+            val entityType = map.get("entity_type") match {
+                case Some(ConfigType.Topic) => ConfigType.Topic
+                case Some(ConfigType.Client) => ConfigType.Client
+                case _ => throw new IllegalArgumentException("Version 1 config change notification must have 'entity_type' set to 'clients' or 'topics'." +
+                        " Received: " + json)
+            }
+
+            val entity = map.get("entity_name") match {
+                case Some(value: String) => value
+                case _ => throw new IllegalArgumentException("Version 1 config change notification does not specify 'entity_name'. Received: " + json)
+            }
+
+            val entityConfig = AdminUtils.fetchEntityConfig(zkUtils, entityType, entity)
+            logger.info(s"Processing override for entityType: $entityType, entity: $entity with config: $entityConfig")
+            configHandlers(entityType).processConfigChanges(entity, entityConfig)
+
+        }
+
+        private def processEntityConfigChangeVersion2(json: String, map: Map[String, Any]) {
+
+            val entityPath = map.get("entity_path") match {
+                case Some(value: String) => value
+                case _ => throw new IllegalArgumentException("Version 2 config change notification does not specify 'entity_path'. Received: " + json)
+            }
+
+            val index = entityPath.indexOf('/')
+            val rootEntityType = entityPath.substring(0, index)
+            if (index < 0 || !configHandlers.contains(rootEntityType))
+                throw new IllegalArgumentException("Version 2 config change notification must have 'entity_path' starting with 'clients/', 'topics/' or 'users/'." +
+                        " Received: " + json)
+            val fullSanitizedEntityName = entityPath.substring(index + 1)
+
+            val entityConfig = AdminUtils.fetchEntityConfig(zkUtils, rootEntityType, fullSanitizedEntityName)
+            logger.info(s"Processing override for entityPath: $entityPath with config: $entityConfig")
+            configHandlers(rootEntityType).processConfigChanges(fullSanitizedEntityName, entityConfig)
+
+        }
     }
 
-    private def processEntityConfigChangeVersion1(json: String, map: Map[String, Any]) {
+    private val configChangeListener = new ZkNodeChangeNotificationListener(zkUtils, ZkUtils.ConfigChangesPath, AdminUtils.EntityConfigChangeZnodePrefix, ConfigChangedNotificationHandler)
 
-      val entityType = map.get("entity_type") match {
-        case Some(ConfigType.Topic) => ConfigType.Topic
-        case Some(ConfigType.Client) => ConfigType.Client
-        case _ => throw new IllegalArgumentException("Version 1 config change notification must have 'entity_type' set to 'clients' or 'topics'." +
-              " Received: " + json)
-      }
+    /**
+     * Begin watching for config changes
+     */
+    def startup(): Unit = {
+        configChangeListener.init()
 
-      val entity = map.get("entity_name") match {
-        case Some(value: String) => value
-        case _ => throw new IllegalArgumentException("Version 1 config change notification does not specify 'entity_name'. Received: " + json)
-      }
-
-      val entityConfig = AdminUtils.fetchEntityConfig(zkUtils, entityType, entity)
-      logger.info(s"Processing override for entityType: $entityType, entity: $entity with config: $entityConfig")
-      configHandlers(entityType).processConfigChanges(entity, entityConfig)
-
+        // Apply all existing client/user configs to the ClientIdConfigHandler/UserConfigHandler to bootstrap the overrides
+        configHandlers.foreach {
+            case (ConfigType.User, handler) =>
+                AdminUtils.fetchAllEntityConfigs(zkUtils, ConfigType.User).foreach {
+                    case (sanitizedUser, properties) => handler.processConfigChanges(sanitizedUser, properties)
+                }
+                AdminUtils.fetchAllChildEntityConfigs(zkUtils, ConfigType.User, ConfigType.Client).foreach {
+                    case (sanitizedUserClientId, properties) => handler.processConfigChanges(sanitizedUserClientId, properties)
+                }
+            case (configType, handler) =>
+                AdminUtils.fetchAllEntityConfigs(zkUtils, configType).foreach {
+                    case (entityName, properties) => handler.processConfigChanges(entityName, properties)
+                }
+        }
     }
-
-    private def processEntityConfigChangeVersion2(json: String, map: Map[String, Any]) {
-
-      val entityPath = map.get("entity_path") match {
-        case Some(value: String) => value
-        case _ => throw new IllegalArgumentException("Version 2 config change notification does not specify 'entity_path'. Received: " + json)
-      }
-
-      val index = entityPath.indexOf('/')
-      val rootEntityType = entityPath.substring(0, index)
-      if (index < 0 || !configHandlers.contains(rootEntityType))
-        throw new IllegalArgumentException("Version 2 config change notification must have 'entity_path' starting with 'clients/', 'topics/' or 'users/'." +
-              " Received: " + json)
-      val fullSanitizedEntityName = entityPath.substring(index + 1)
-
-      val entityConfig = AdminUtils.fetchEntityConfig(zkUtils, rootEntityType, fullSanitizedEntityName)
-      logger.info(s"Processing override for entityPath: $entityPath with config: $entityConfig")
-      configHandlers(rootEntityType).processConfigChanges(fullSanitizedEntityName, entityConfig)
-
-    }
-  }
-
-  private val configChangeListener = new ZkNodeChangeNotificationListener(zkUtils, ZkUtils.ConfigChangesPath, AdminUtils.EntityConfigChangeZnodePrefix, ConfigChangedNotificationHandler)
-
-  /**
-   * Begin watching for config changes
-   */
-  def startup(): Unit = {
-    configChangeListener.init()
-
-    // Apply all existing client/user configs to the ClientIdConfigHandler/UserConfigHandler to bootstrap the overrides
-    configHandlers.foreach {
-      case (ConfigType.User, handler) =>
-          AdminUtils.fetchAllEntityConfigs(zkUtils, ConfigType.User).foreach {
-            case (sanitizedUser, properties) => handler.processConfigChanges(sanitizedUser, properties)
-          }
-          AdminUtils.fetchAllChildEntityConfigs(zkUtils, ConfigType.User, ConfigType.Client).foreach {
-            case (sanitizedUserClientId, properties) => handler.processConfigChanges(sanitizedUserClientId, properties)
-          }
-      case (configType, handler) =>
-          AdminUtils.fetchAllEntityConfigs(zkUtils, configType).foreach {
-            case (entityName, properties) => handler.processConfigChanges(entityName, properties)
-          }
-    }
-  }
 }
