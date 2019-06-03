@@ -56,9 +56,9 @@ class SocketServer(val config: KafkaConfig,
 
     /** 封装服务器对应的多张网卡，kafka 可以同时监听这些 IP 和端口，每个 EndPoint 对应一个 Acceptor */
     private val endpoints: Map[ListenerName, EndPoint] = config.listeners.map(l => l.listenerName -> l).toMap
-    /** Processor 对应的线程数 */
+    /** 每个 Acceptor 对应的 Processor 对应的线程数 */
     private val numProcessorThreads = config.numNetworkThreads
-    /** Processor 线程总数 */
+    /** broker 节点上 Processor 线程总数 */
     private val totalProcessorThreads = numProcessorThreads * endpoints.size
     /** 请求队列中缓存的最大请求个数 */
     private val maxQueuedRequests = config.queuedMaxRequests
@@ -98,20 +98,18 @@ class SocketServer(val config: KafkaConfig,
             val sendBufferSize = config.socketSendBufferBytes
             // 指定 socket receive buffer 的大小（对应 socket.receive.buffer.bytes 配置）
             val recvBufferSize = config.socketReceiveBufferBytes
-            // 获取 brokerId
+            // 获取 broker 节点 ID
             val brokerId = config.brokerId
 
             var processorBeginIndex = 0
-            // 遍历为每个 EndPoint 创建并绑定对应的 Acceptor 和 Processors
+            // 遍历为每个 EndPoint，创建并绑定对应的 Acceptor 和 Processor
             config.listeners.foreach { endpoint =>
                 val listenerName = endpoint.listenerName
                 val securityProtocol = endpoint.securityProtocol
                 val processorEndIndex = processorBeginIndex + numProcessorThreads
 
-                /*
-                 * 按照指定的 processor 线程数，为每个 EndPoint 创建对应数量的 Processor 对象，
-                 * 编号区间 [processorBeginIndex, processorEndIndex)
-                 */
+                // 按照指定的 processor 线程数，为每个 EndPoint 创建对应数量的 Processor 对象，
+                // 编号区间 [processorBeginIndex, processorEndIndex)
                 for (i <- processorBeginIndex until processorEndIndex)
                     processors(i) = this.newProcessor(i, connectionQuotas, listenerName, securityProtocol)
 

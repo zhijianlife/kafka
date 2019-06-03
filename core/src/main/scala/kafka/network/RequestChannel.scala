@@ -212,14 +212,14 @@ object RequestChannel extends Logging {
  * @param numProcessors processor 线程数
  * @param queueSize     请求队列大小
  */
-class RequestChannel(val numProcessors: Int, // Processor 数目
+class RequestChannel(val numProcessors: Int, // Processor 线程总数
                      val queueSize: Int // 请求队列的大小
                     ) extends KafkaMetricsGroup {
 
-    /** 响应监听器列表，当 Handler 往响应队列写回响应时唤醒对应的 Processor 进行处理 */
+    /** 响应监听器列表，当 Handler 往响应队列写回响应数据时唤醒对应的 Processor 线程进行处理 */
     private var responseListeners: List[Int => Unit] = Nil
 
-    /** 请求队列 */
+    /** 请求队列，所有的 Processor 共用一个 */
     private val requestQueue = new ArrayBlockingQueue[RequestChannel.Request](queueSize)
 
     /** 响应队列，每个 Processor 对应一个响应队列 */
