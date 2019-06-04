@@ -45,7 +45,7 @@ class KafkaRequestHandler(id: Int,
                 var req: RequestChannel.Request = null
                 while (req == null) {
                     val startSelectTime = time.nanoseconds
-                    // 从请求队列中获取请求 Processor 分配的请求
+                    // 从请求队列中获取 Processor 封装的请求
                     req = requestChannel.receiveRequest(300)
                     val idleTime = time.nanoseconds - startSelectTime
                     aggregateIdleMeter.mark(idleTime / totalHandlerThreads)

@@ -306,8 +306,8 @@ private[kafka] abstract class AbstractServerThread(connectionQuotas: ConnectionQ
 private[kafka] class Acceptor(val endPoint: EndPoint, // 对应的网卡信息
                               val sendBufferSize: Int, // socket send buffer size
                               val recvBufferSize: Int, // socket receive buffer size
-                              brokerId: Int, // broker id
-                              processors: Array[Processor], // 绑定的 Processor 集合
+                              brokerId: Int, // broker 节点 id
+                              processors: Array[Processor], // 绑定的 Processor 线程集合
                               connectionQuotas: ConnectionQuotas // 控制 IP 连接数的对象
                              ) extends AbstractServerThread(connectionQuotas) with KafkaMetricsGroup {
 
@@ -331,7 +331,7 @@ private[kafka] class Acceptor(val endPoint: EndPoint, // 对应的网卡信息
     def run() {
         // 注册监听 OP_ACCEPT 事件
         serverChannel.register(nioSelector, SelectionKey.OP_ACCEPT)
-        // 标记当前线程启动完成，以便 SocketServer 能够继续为另外的网卡创建对应的 Acceptor
+        // 标记当前线程启动完成，以便 SocketServer 能够继续为其它网卡创建并绑定对应的 Acceptor 线程
         this.startupComplete()
         try {
             var currentProcessor = 0 // 当前生效的 processor 编号
@@ -352,7 +352,7 @@ private[kafka] class Acceptor(val endPoint: EndPoint, // 对应的网卡信息
                                     this.accept(key, processors(currentProcessor))
                                 else
                                     throw new IllegalStateException("Unrecognized key state for acceptor thread.")
-                                // 基于轮询算法选择下一个处理的 Processor，负载均衡
+                                // 基于轮询算法选择下一个 Processor 处理下一次请求，负载均衡
                                 currentProcessor = (currentProcessor + 1) % processors.length
                             } catch {
                                 case e: Throwable => error("Error while accepting connection", e)
@@ -444,15 +444,15 @@ private[kafka] class Acceptor(val endPoint: EndPoint, // 对应的网卡信息
 private[kafka] class Processor(val id: Int,
                                time: Time,
                                maxRequestSize: Int,
-                               requestChannel: RequestChannel, // Processor 与 Handler 线程之间传递数据的队列
+                               requestChannel: RequestChannel, // Processor 与 Handler 线程之间传递请求数据的队列
                                connectionQuotas: ConnectionQuotas,
                                connectionsMaxIdleMs: Long,
                                listenerName: ListenerName,
                                securityProtocol: SecurityProtocol,
                                channelConfigs: java.util.Map[String, _],
                                metrics: Metrics,
-                               credentialProvider: CredentialProvider)
-        extends AbstractServerThread(connectionQuotas) with KafkaMetricsGroup {
+                               credentialProvider: CredentialProvider
+                              ) extends AbstractServerThread(connectionQuotas) with KafkaMetricsGroup {
 
     private object ConnectionId {
         def fromString(s: String): Option[ConnectionId] = s.split("-") match {
@@ -502,35 +502,29 @@ private[kafka] class Processor(val id: Int,
         this.startupComplete()
         while (isRunning) {
             try {
-                // 1. 遍历队列获取分配给当前 Processor 的 SocketChannel 对象，注册 OP_READ 事件
+                // 1. 遍历获取分配给当前 Processor 的 SocketChannel 对象，注册 OP_READ 事件
                 this.configureNewConnections()
 
                 // 2. 遍历处理当前 Processor 的响应队列，依据响应类型进行处理
                 this.processNewResponses()
 
-                // 3. 发送之前缓存的响应给客户端
+                // 3. 发送缓存的响应对象给客户端
                 this.poll()
 
-                /*
-                 * 4.
-                 * 遍历处理 poll 操作放置在 Selector 的 completedReceives 队列中的请求，
-                 * 封装请求信息为 Request 对象，并记录到请求队列中，等待 Handler 线程处理，
-                 * 同时标记当前 Selector 暂时不再接收新的请求
-                 */
+                // 4.
+                // 遍历处理 poll 操作放置在 Selector 的 completedReceives 队列中的请求，
+                // 封装请求信息为 Request 对象，并记录到请求队列中等待 Handler 线程处理，
+                // 同时标记当前 Selector 暂时不再接收新的请求
                 this.processCompletedReceives()
 
-                /*
-                 * 5.
-                 * 遍历处理 poll 操作放置在 Selector 的 completedSends 队列中的请求，
-                 * 将其从 inflightResponses 集合中移除，并标记当前 Selector 可以继续读取数据
-                 */
+                // 5.
+                // 遍历处理 poll 操作放置在 Selector 的 completedSends 队列中的请求，
+                // 将其从 inflightResponses 集合中移除，并标记当前 Selector 可以继续读取数据
                 this.processCompletedSends()
 
-                /*
-                 * 6.
-                 * 遍历处理 poll 操作放置在 Selector 的 disconnected 集合中的断开的连接，
-                 * 将连接对应的所有响应从 inflightResponses 中移除，同时更新对应的连接数
-                 */
+                // 6.
+                // 遍历处理 poll 操作放置在 Selector 的 disconnected 集合中的断开的连接，
+                // 将连接对应的所有响应从 inflightResponses 中移除，同时更新对应 IP 的连接数
                 this.processDisconnected()
             } catch {
                 case e: ControlThrowable => throw e
@@ -541,8 +535,8 @@ private[kafka] class Processor(val id: Int,
 
         debug("Closing selector - processor " + id)
         // 关闭所有的连接以及选择器
-        swallowError(closeAll())
-        shutdownComplete()
+        this.swallowError(closeAll())
+        this.shutdownComplete()
     }
 
     /**
@@ -562,7 +556,7 @@ private[kafka] class Processor(val id: Int,
                         val channelId = curr.request.connectionId
                         if (selector.channel(channelId) != null || selector.closingChannel(channelId) != null)
                             selector.unmute(channelId) // 注册 OP_READ 事件
-                    // 当前响应需要发送给客户端
+                    // 当前响应需要发送给请求方
                     case RequestChannel.SendAction =>
                         // 发送该响应，并将响应对象记录到 inflightResponses 集合中
                         this.sendResponse(curr)
@@ -641,7 +635,7 @@ private[kafka] class Processor(val id: Int,
                     securityProtocol = securityProtocol)
                 // 将请求对象放入请求队列中，等待 Handler 线程处理
                 requestChannel.sendRequest(req)
-                // 取消注册的 OP_READ 事件，处理期间不再接收新的请求（即不读取请求对应的数据）
+                // 取消注册的 OP_READ 事件，处理期间不再接收新的请求（即不读取新的请求数据）
                 selector.mute(receive.source)
             } catch {
                 case e@(_: InvalidRequestException | _: SchemaException) =>
