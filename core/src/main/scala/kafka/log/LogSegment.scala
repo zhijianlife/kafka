@@ -63,13 +63,13 @@ class LogSegment(val log: FileRecords, // log 文件对象
     /** 当前 LogSegment 的创建时间 */
     private var created = time.milliseconds
 
-    /** 从上次添加索引项后，在日志文件中累计加入的消息的字节数 */
+    /** 自上次添加索引项后，在 log 文件中累计加入的消息字节数 */
     private var bytesSinceLastIndexEntry = 0
 
     /** The timestamp we used for time based log rolling */
     private var rollingBasedTimestamp: Option[Long] = None
 
-    /** 已追加的消息对应的最大时间戳 */
+    /** 已追加消息的最大时间戳 */
     @volatile private var maxTimestampSoFar = timeIndex.lastEntry.timestamp
     /** 已追加的具备最大时间戳的消息对应的 offset */
     @volatile private var offsetOfMaxTimestamp = timeIndex.lastEntry.offset
