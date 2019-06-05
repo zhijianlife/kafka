@@ -134,7 +134,7 @@ class ReplicaManager(val config: KafkaConfig, // 相关配置对象
     private val localBrokerId = config.brokerId
 
     /** 记录当前 broker 管理的所有分区信息，如果不存在则创建 */
-    private val allPartitions = new Pool[TopicPartition, Partition](Some(tp => new Partition(tp.topic, tp.partition, time, this)))
+    private val allPartitions = new Pool[TopicPartition, Partition](/*Some(tp => new Partition(tp.topic, tp.partition, time, this))*/)
 
     private val replicaStateChangeLock = new Object
 

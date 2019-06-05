@@ -115,6 +115,17 @@ class OffsetIndexTest extends JUnitSuite {
     }
 
     @Test
+    def testLoadIndex(): Unit = {
+        val file = new File("/home/zhenchao/workspace/data/kafka/topic-default-0/00000000000000000122.index")
+        val idx = new OffsetIndex(file, baseOffset = 122L)
+        val n = idx.entries
+        for (i <- 0 until n) {
+            val entry = idx.entry(i)
+            println(entry.offset + ", " + entry.position)
+        }
+    }
+
+    @Test
     def truncate() {
         val idx = new OffsetIndex(nonExistantTempFile(), baseOffset = 0L, maxIndexSize = 10 * 8)
         idx.truncate()

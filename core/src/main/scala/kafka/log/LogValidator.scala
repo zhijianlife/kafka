@@ -45,7 +45,7 @@ private[kafka] object LogValidator {
      * Returns a ValidationAndOffsetAssignResult containing the validated message set, maximum timestamp,
      * the offset of the shallow message with the max timestamp and a boolean indicating whether the message sizes may have changed.
      */
-    private[kafka] def validateMessagesAndAssignOffsets(records: MemoryRecords, // 待追加的消息
+    private[kafka] def validateMessagesAndAssignOffsets(records: MemoryRecords, // 待追加的消息集合
                                                         offsetCounter: LongRef, // 消息对应的 offset 操作对象
                                                         now: Long, // 当前时间戳
                                                         sourceCodec: CompressionCodec, // 生产者指定的消息压缩方式
@@ -57,14 +57,14 @@ private[kafka] object LogValidator {
         // 如果未对消息进行压缩处理
         if (sourceCodec == NoCompressionCodec && targetCodec == NoCompressionCodec) {
             // 存在消息的 magic 值与指定的 magic 值不一致
-            if (!records.hasMatchingShallowMagic(messageFormatVersion))
-            // 对消息的 magic 值进行统一，同时为消息分配 offset
+            if (!records.hasMatchingShallowMagic(messageFormatVersion)) {
+                // 对消息的 magic 值进行统一，同时为消息分配 offset
                 convertAndAssignOffsetsNonCompressed(
                     records, offsetCounter, compactedTopic, now, messageTimestampType, messageTimestampDiffMaxMs, messageFormatVersion)
-            // 所有消息的 magic 值均一致
-            else
-            // 执行 offset 分配，以及验证操作
+            } else {
+                // 所有消息的 magic 值均一致，则执行 offset 分配，以及验证操作
                 assignOffsetsNonCompressed(records, offsetCounter, now, compactedTopic, messageTimestampType, messageTimestampDiffMaxMs)
+            }
         }
         // 如果对消息进行了压缩
         else {

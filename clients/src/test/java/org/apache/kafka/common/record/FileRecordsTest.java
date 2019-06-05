@@ -14,11 +14,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  **/
+
 package org.apache.kafka.common.record;
 
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.test.TestUtils;
+import static org.apache.kafka.test.TestUtils.tempFile;
 import org.easymock.EasyMock;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -29,11 +34,6 @@ import java.nio.channels.FileChannel;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-
-import static org.apache.kafka.test.TestUtils.tempFile;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
 
 public class FileRecordsTest {
 
@@ -149,7 +149,7 @@ public class FileRecordsTest {
                 fileRecords.searchForOffsetWithSize(3, position));
         assertEquals("Should be able to find fourth message by correct offset",
                 new FileRecords.LogEntryPosition(50L, position, message4Size),
-                fileRecords.searchForOffsetWithSize(50,  position));
+                fileRecords.searchForOffsetWithSize(50, position));
     }
 
     /**
@@ -369,6 +369,17 @@ public class FileRecordsTest {
         }
     }
 
+    @Test
+    public void loadLog() throws Exception {
+        File file = new File("/home/zhenchao/workspace/data/kafka/topic-default-0/00000000000000000122.log");
+        FileRecords fileRecords = FileRecords.open(file);
+        int count = 0;
+        for (final LogEntry entry : fileRecords.deepEntries()) {
+            System.out.println(entry.toString());
+            if (count++ > 9) break;
+        }
+    }
+
     private void verifyConvertedMessageSet(List<LogEntry> initialEntries, Records convertedRecords, byte magicByte) {
         int i = 0;
         for (LogEntry logEntry : deepEntries(convertedRecords)) {
@@ -388,7 +399,7 @@ public class FileRecordsTest {
         return TestUtils.toList(buffer.deepEntries(BufferSupplier.NO_CACHING));
     }
 
-    private FileRecords createFileRecords(Record ... records) throws IOException {
+    private FileRecords createFileRecords(Record... records) throws IOException {
         FileRecords fileRecords = FileRecords.open(tempFile());
         fileRecords.append(MemoryRecords.withRecords(records));
         fileRecords.flush();

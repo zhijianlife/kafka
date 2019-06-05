@@ -45,11 +45,6 @@ class TimeIndexTest extends JUnitSuite {
     }
 
     @Test
-    def test(): Unit = {
-        val ti = new TimeIndex(new File("/home/zhenchao/workspace/data/kafka/topic-default-0/00000000000000000122.timeindex"), 122L)
-    }
-
-    @Test
     def testLookUp() {
         // Empty time index
         assertEquals(TimestampOffset(-1L, baseOffset), idx.lookup(100L))
@@ -83,9 +78,20 @@ class TimeIndexTest extends JUnitSuite {
             idx.maybeAppend(10000L, 1000L)
         }
         intercept[InvalidOffsetException] {
-            idx.maybeAppend(10000L, (maxEntries - 2) * 10, true)
+            idx.maybeAppend(10000L, (maxEntries - 2) * 10, skipFullCheck = true)
         }
-        idx.maybeAppend(10000L, 1000L, true)
+        idx.maybeAppend(10000L, 1000L, skipFullCheck = true)
+    }
+
+    @Test
+    def testLoadTimeIndex(): Unit = {
+        val file = new File("/home/zhenchao/workspace/data/kafka/topic-default-0/00000000000000000122.timeindex")
+        val idx = new TimeIndex(file, baseOffset = 122L)
+        val n = idx.entries
+        for (i <- 0 until n) {
+            val entry = idx.entry(i)
+            println(entry.timestamp + ", " + entry.offset)
+        }
     }
 
     private def appendEntries(numEntries: Int) {

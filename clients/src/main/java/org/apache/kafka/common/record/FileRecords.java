@@ -46,12 +46,13 @@ public class FileRecords extends AbstractRecords implements Closeable {
     /** 分片的结束位置 */
     private final int end;
 
+    /** 浅层拷贝 */
     private final Iterable<FileChannelLogEntry> shallowEntries;
 
     /** 如果是分片则表示分片的大小（end - start），如果不是分片则表示整个日志文件的大小 */
     private final AtomicInteger size;
 
-    /** 读写对应的日志文件 */
+    /** 读写对应的日志文件的通道 */
     private final FileChannel channel;
 
     /** 日志文件对象 */
@@ -394,6 +395,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
             // 如果是分片文件
             end = this.end;
         } else {
+            // 如果不是分片文件，则对应整个日志文件的大小
             end = this.sizeInBytes();
         }
         FileLogInputStream inputStream = new FileLogInputStream(channel, maxRecordSize, start, end);
@@ -419,8 +421,10 @@ public class FileRecords extends AbstractRecords implements Closeable {
     private Iterator<LogEntry> deepIterator(BufferSupplier bufferSupplier) {
         final int end;
         if (isSlice) {
+            // 如果是分片文件
             end = this.end;
         } else {
+            // 如果不是分片文件，则对应整个日志文件的大小
             end = this.sizeInBytes();
         }
         FileLogInputStream inputStream = new FileLogInputStream(channel, Integer.MAX_VALUE, start, end);

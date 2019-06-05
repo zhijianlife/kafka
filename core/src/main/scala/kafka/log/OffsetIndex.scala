@@ -57,7 +57,7 @@ import kafka.utils.CoreUtils.inLock
  * 2. 物理地址，占 4 个字节
  */
 class OffsetIndex(file: File, // 对应 index 文件
-                  baseOffset: Long, // 对应日志文件第一个消息的 offset
+                  baseOffset: Long, // 对应日志文件的起始 offset
                   maxIndexSize: Int = -1)
         extends AbstractIndex[Long, Int](file, baseOffset, maxIndexSize) {
 

@@ -262,12 +262,9 @@ abstract class AbstractIndex[K, V](@volatile var file: File,
             val mid = ceil(hi / 2.0 + lo / 2.0).toInt
             val found = parseEntry(idx, mid)
             val compareResult = compareIndexEntry(found, target, searchEntity)
-            if (compareResult > 0)
-                hi = mid - 1
-            else if (compareResult < 0)
-                     lo = mid
-            else
-                return mid
+            if (compareResult > 0) hi = mid - 1
+            else if (compareResult < 0) lo = mid
+            else return mid
         }
         lo
     }
