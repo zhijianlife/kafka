@@ -74,10 +74,10 @@ class SystemTimer(executorName: String,
         def newThread(runnable: Runnable): Thread = Utils.newThread("executor-" + executorName, runnable, false)
     })
 
-    /** 各个层级时间轮共用的延时任务队列 */
+    /** 各层级时间轮共用的延时任务队列 */
     private[this] val delayQueue = new DelayQueue[TimerTaskList]()
 
-    /** 各个层级时间轮共用的任务计数器 */
+    /** 各层级时间轮共用的任务计数器 */
     private[this] val taskCounter = new AtomicInteger(0)
 
     /** 分层时间轮中最底层的时间轮 */
@@ -102,7 +102,7 @@ class SystemTimer(executorName: String,
     override def add(timerTask: TimerTask): Unit = {
         readLock.lock()
         try {
-            // 将 TimerTask 封装成 TimerTaskEntry，并添加到时间轮中
+            // 将 TimerTask 封装成 TimerTaskEntry 对象，并添加到时间轮中
             this.addTimerTaskEntry(new TimerTaskEntry(timerTask, timerTask.delayMs + Time.SYSTEM.hiResClockMs))
         } finally {
             readLock.unlock()
@@ -133,10 +133,8 @@ class SystemTimer(executorName: String,
                 while (bucket != null) {
                     // 推进时间轮指针，对应的时间戳为当前时间格时间区间上界
                     timingWheel.advanceClock(bucket.getExpiration)
-                    /*
-                     * 遍历处理当前时间格中的延时任务，提交执行到期但未被取消的任务，
-                     * 对于未到期的任务重新添加到时间轮中继续等待被执行，期间可能会对任务在层级上执行降级
-                     */
+                    // 遍历处理当前时间格中的延时任务，提交执行到期但未被取消的任务，
+                    // 对于未到期的任务重新添加到时间轮中继续等待被执行，期间可能会对任务在层级上执行降级
                     bucket.flush(reinsert)
                     bucket = delayQueue.poll()
                 }

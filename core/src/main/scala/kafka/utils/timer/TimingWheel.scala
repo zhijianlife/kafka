@@ -110,8 +110,7 @@ private[timer] class TimingWheel(tickMs: Long, // 当前时间轮中一格的时
                                  wheelSize: Int, // 时间轮的格数
                                  startMs: Long, // 当前时间轮的创建时间
                                  taskCounter: AtomicInteger, // 各层级时间轮共用的任务计数器，用于记录时间轮中总的任务数
-                                 queue: DelayQueue[TimerTaskList] // 整个层级时间轮共用一个任务队列
-                                ) {
+                                 queue: DelayQueue[TimerTaskList]) { // 各个层级时间轮共用一个任务队列
 
     /** 时间轮指针，将时间轮划分为到期部分和未到期部分 */
     private[this] var currentTime = startMs - (startMs % tickMs) // 修剪成 tickMs 的倍数，近似等于创建时间
@@ -162,10 +161,8 @@ private[timer] class TimingWheel(tickMs: Long, // 当前时间轮中一格的时
             // 任务已经到期，则不应该被添加
             false
         } else if (expiration < currentTime + interval) {
-            /*
-             * 任务正好位于当前时间轮的时间跨度范围内，
-             * 依据任务的到期时间查找此任务隶属的时间格，并将任务添加到对应的时间格中
-             */
+            // 任务正好位于当前时间轮的时间跨度范围内，
+            // 依据任务的到期时间查找此任务所属的时间格，并将任务添加到对应的时间格中
             val virtualId = expiration / tickMs
             val bucket = buckets((virtualId % wheelSize.toLong).toInt)
             bucket.add(timerTaskEntry)
@@ -177,8 +174,7 @@ private[timer] class TimingWheel(tickMs: Long, // 当前时间轮中一格的时
             true
         } else {
             // 已经超出了当前时间轮的时间跨度范围，将任务添加到上层时间轮中
-            if (overflowWheel == null)
-                this.addOverflowWheel()
+            if (overflowWheel == null) this.addOverflowWheel()
             overflowWheel.add(timerTaskEntry)
         }
     }

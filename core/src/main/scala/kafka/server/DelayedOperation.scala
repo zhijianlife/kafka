@@ -199,15 +199,14 @@ class DelayedOperationPurgatory[T <: DelayedOperation](purgatoryName: String,
 
         // 1. 调用延时任务的 tryComplete 方法，尝试完成延迟操作
         var isCompletedByMe = operation.safeTryComplete()
-        if (isCompletedByMe)
-            return true // 如果延时任务已经执行完成，则直接返回
+        // 如果延时任务已经执行完成，则直接返回
+        if (isCompletedByMe) return true
 
         // 2. 遍历处理 watchKeys，将延时任务添加其关心的 key 对应的 Watchers 中
         var watchCreated = false
         for (key <- watchKeys) {
             // 如果待添加的延时任务已经执行完成，则放弃添加
-            if (operation.isCompleted)
-                return false
+            if (operation.isCompleted) return false
 
             // 添加延时任务添加到对应 key 的 Watchers 集合中，用于从时间维度以外的维度触发延时任务执行
             this.watchForOperation(key, operation)
@@ -221,8 +220,7 @@ class DelayedOperationPurgatory[T <: DelayedOperation](purgatoryName: String,
 
         // 3. 再次调用延时任务的 tryComplete 方法，尝试完成延迟操作
         isCompletedByMe = operation.safeTryComplete()
-        if (isCompletedByMe)
-            return true
+        if (isCompletedByMe) return true
 
         // 4. 对于未执行的延时任务，尝试添加到定时器中，用于从时间维度触发延时任务执行
         if (!operation.isCompleted) {

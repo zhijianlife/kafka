@@ -29,10 +29,9 @@ import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse
 import scala.collection._
 
 case class ProducePartitionStatus(requiredOffset: Long, // 对应 topic 分区最后一条消息的 offset
-                                  responseStatus: PartitionResponse // 记录 ProducerResponse 中的错误码
-                                 ) {
+                                  responseStatus: PartitionResponse) { // 记录 ProducerResponse 中的错误码
 
-    /** 标识是否正在等待 ISR 集合中的其它副本从 leader 副本同步 requiredOffset 之前的消息 */
+    /** 标识是否正在等待 ISR 集合中的 follower 副本从 leader 副本同步 requiredOffset 之前的消息 */
     @volatile var acksPending = false
 
     override def toString: String = "[acksPending: %b, error: %d, startOffset: %d, requiredOffset: %d]"
@@ -42,9 +41,8 @@ case class ProducePartitionStatus(requiredOffset: Long, // 对应 topic 分区�
 /**
  * The produce metadata maintained by the delayed produce operation
  */
-case class ProduceMetadata(produceRequiredAcks: Short, // 对应 acks 值
-                           produceStatus: Map[TopicPartition, ProducePartitionStatus] // 记录每个 topic 分区对应的 ProducePartitionStatus 对象
-                          ) {
+case class ProduceMetadata(produceRequiredAcks: Short, // 对应 acks 值设置
+                           produceStatus: Map[TopicPartition, ProducePartitionStatus]) { // 记录每个 topic 分区对应的消息追加状态
 
     override def toString: String = "[requiredAcks: %d, partitionStatus: %s]".format(produceRequiredAcks, produceStatus)
 }
@@ -78,8 +76,7 @@ class DelayedProduce(delayMs: Long, // 延迟时长
      *
      * Case A: This broker is no longer the leader: set an error in response
      * Case B: This broker is the leader:
-     *   B.1 - If there was a local error thrown while checking if at least requiredAcks
-     * replicas have caught up to this operation: set an error in response
+     *   B.1 - If there was a local error thrown while checking if at least requiredAcks replicas have caught up to this operation: set an error in response
      *   B.2 - Otherwise, set the response with no error.
      *
      * 检测当前 DelayedProduce 是否满足执行条件（如下），如果满足则调用 forceComplete 方法：
@@ -99,18 +96,18 @@ class DelayedProduce(delayMs: Long, // 延迟时长
                         // 检测对应分区本次追加的最后一条消息是否已经被 ISR 集合中所有的 follower 副本同步
                         partition.checkEnoughReplicasReachOffset(status.requiredOffset)
                     case None =>
-                        // 找不到对应的分区对象，说明对应分区的 leader 副本已经不再当前 broker 节点上
+                        // 找不到对应的分区对象，说明对应分区的 leader 副本已经不在当前 broker 节点上
                         (false, Errors.UNKNOWN_TOPIC_OR_PARTITION)
                 }
-                // 出现异常 || 所有的 ISR 副本已经同步完成
+                // 出现异常，或所有的 ISR 副本已经同步完成
                 if (error != Errors.NONE || hasEnough) {
-                    status.acksPending = false
+                    status.acksPending = false // 不再等待
                     status.responseStatus.error = error
                 }
             }
         }
 
-        // 如果所有的 topic 分区都已经满足了 DelayedProduce 的执行条件
+        // 如果所有的 topic 分区都已经满足了 DelayedProduce 的执行条件，即不存在等待 ack 的分区，则结束本次延时任务
         if (!produceMetadata.produceStatus.values.exists(_.acksPending))
             forceComplete()
         else

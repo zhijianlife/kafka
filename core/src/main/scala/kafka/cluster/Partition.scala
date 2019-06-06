@@ -394,12 +394,13 @@ class Partition(val topic: String, // 分区所属的 topic
 
                 // 获取 ISR 集合中已经 ack 的副本数目
                 def numAcks: Int = curInSyncReplicas.count { r =>
-                    if (!r.isLocal)
-                    // 对于远程副本来说，如果其 LEO 值大于等于指定的 offset，则认为其已经 ack
+                    if (!r.isLocal) {
+                        // 对于远程副本来说，如果其 LEO 值大于等于指定的 offset，则认为其已经 ack
                         if (r.logEndOffset.messageOffset >= requiredOffset) {
                             trace(s"Replica ${r.brokerId} of $topic-$partitionId received offset $requiredOffset")
                             true
                         } else false
+                    }
                     // 对于本地副本，默认它已经 ack
                     else true
                 }
