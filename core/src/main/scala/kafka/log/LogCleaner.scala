@@ -261,7 +261,7 @@ class LogCleaner(val config: CleanerConfig, // cleaner 线程相关配置
                     true
             }
 
-            // 获取所有启用 compact 和 delete 清理策略的 Log 对象，并将其对应的 topic 分区状态设置为 LogCleaningInProgress
+            // 获取所有启用了 compact 和 delete 清理策略的 Log 对象，并将其对应的 topic 分区状态设置为 LogCleaningInProgress
             val deletable: Iterable[(TopicPartition, Log)] = cleanerManager.deletableLogs()
             deletable.foreach {
                 case (topicPartition, log) =>
@@ -275,8 +275,7 @@ class LogCleaner(val config: CleanerConfig, // cleaner 线程相关配置
             }
 
             // 如果没有需要执行清理的 LogToClean 对象，则休息一会后继续重试
-            if (!cleaned)
-                backOffWaitLatch.await(config.backOffMs, TimeUnit.MILLISECONDS)
+            if (!cleaned) backOffWaitLatch.await(config.backOffMs, TimeUnit.MILLISECONDS)
         }
 
         /**
@@ -365,7 +364,7 @@ private[log] class Cleaner(val id: Int,
         // 清理操作的 offset 上界
         val upperBoundOffset = cleanable.firstUncleanableOffset
 
-        // 1. 遍历处理待清理区间的 LogSegment，填充 offsetMap 对象，主要记录每个消息 key 及其对应清理区间内的最大 offset
+        // 1. 遍历处理待清理区间的 LogSegment 对象，填充 offsetMap 对象，主要记录每个消息 key 及其对应清理区间内的最大 offset 值
         this.buildOffsetMap(log, cleanable.firstDirtyOffset, upperBoundOffset, offsetMap, stats)
         val endOffset = offsetMap.latestOffset + 1
         stats.indexDone()
@@ -376,8 +375,7 @@ private[log] class Cleaner(val id: Int,
             case Some(seg) => seg.lastModified - log.config.deleteRetentionMs // delete.retention.ms
         }
 
-        // determine the timestamp up to which the log will be cleaned
-        // this is the lower of the last active segment and the compaction lag
+        // determine the timestamp up to which the log will be cleaned，this is the lower of the last active segment and the compaction lag
         val cleanableHorizonMs = log.logSegments(0, cleanable.firstUncleanableOffset).lastOption.map(_.lastModified).getOrElse(0L)
 
         // 3. 对 [0, endOffset) 区间的 LogSegment 进行分组，并以组为单位执行清理操作
@@ -407,7 +405,7 @@ private[log] class Cleaner(val id: Int,
                                    map: OffsetMap,
                                    deleteHorizonMs: Long,
                                    stats: CleanerStats) {
-        // 创建组内第一个 LogSegment 的 log 文件对应的“.cleaned”文件
+        // 创建组内第一个 LogSegment 对象的 log 文件对应的“.cleaned”文件
         val logFile = new File(segments.head.log.file.getPath + Log.CleanedFileSuffix)
         logFile.delete()
         // 创建 index 文件对应的“.cleaned”文件
@@ -424,7 +422,7 @@ private[log] class Cleaner(val id: Int,
             segments.head.baseOffset, segments.head.indexIntervalBytes, log.config.randomSegmentJitter, time)
 
         try {
-            // 遍历处理需要清理的 LogSegment，将清理后的数据记录到 cleaned 中
+            // 遍历处理需要清理的 LogSegment 对象，将清理后的数据记录到 cleaned 文件中
             for (old <- segments) {
                 val retainDeletes = old.lastModified > deleteHorizonMs
                 info("Cleaning segment %s in log %s (largest timestamp %s) into %s, %s deletes."
@@ -434,19 +432,18 @@ private[log] class Cleaner(val id: Int,
 
             // 对 index 文件进行截断，剔除无效的字节
             index.trimToValidSize()
-
             // 对 timeindex 文件进行截断，剔除无效的字节
             cleaned.onBecomeInactiveSegment()
             timeIndex.trimToValidSize()
 
-            // 将 LogSegment 相关的文件刷盘
+            // 将 LogSegment 对象相关的文件刷盘
             cleaned.flush()
 
             // update the modification date to retain the last modified date of the original files
             val modified = segments.last.lastModified
             cleaned.lastModified = modified
 
-            // 使用清理后的 LogSegment 替换清理之前的 LogSegment 集合
+            // 使用清理后的 LogSegment 对象替换清理之前的 LogSegment 对象集合
             info("Swapping in cleaned segment %d for segment(s) %s in log %s.".format(cleaned.baseOffset, segments.map(_.baseOffset).mkString(","), log.name))
             log.replaceSegments(cleaned, segments)
         } catch {
@@ -482,7 +479,7 @@ private[log] class Cleaner(val id: Int,
         }
 
         var position = 0
-        // 遍历处理待清理的 LogSegment 中的消息
+        // 遍历处理待清理的 LogSegment 对象中的消息
         while (position < source.log.sizeInBytes) {
             // 校验对应 topic 分区的清理状态不为 LogCleaningAborted
             this.checkDone(topicPartition)
@@ -516,8 +513,7 @@ private[log] class Cleaner(val id: Int,
             }
 
             // 如果未能读取一条完整的消息，则需要对 buffer 进行扩容
-            if (readBuffer.limit > 0 && result.messagesRead == 0)
-                growBuffers(maxLogMessageSize)
+            if (readBuffer.limit > 0 && result.messagesRead == 0) growBuffers(maxLogMessageSize)
         }
         // 对 buffer 进行重置
         this.restoreBuffers()
@@ -660,7 +656,7 @@ private[log] class Cleaner(val id: Int,
      * @param map   The map in which to store the mappings
      * @param stats Collector for cleaning statistics
      */
-    private[log] def buildOffsetMap(log: Log,
+    private[log] def buildOffsetMap(log: Log, // 待清理的 Log 对象
                                     start: Long, // 清理区间起始 offset
                                     end: Long, // 清理区间结束 offset
                                     map: OffsetMap, // 记录消息 key 及其对应的最大 offset
@@ -698,9 +694,9 @@ private[log] class Cleaner(val id: Int,
                                          stats: CleanerStats): Boolean = {
         // 获取清理区间起始 offset 对应的消息物理地址
         var position = segment.index.lookup(start).position
-        // 当前 map 的最大容量
+        // 计算当前 map 的最大容量
         val maxDesiredMapSize = (map.slots * dupBufferLoadFactor).toInt
-        // 遍历处理 LogSegment 中的消息
+        // 遍历处理 LogSegment 对象中的消息
         while (position < segment.log.sizeInBytes) {
             // 再次校验当前分区的状态，确保不是 LogCleaningAborted 状态
             this.checkDone(topicPartition)
@@ -716,12 +712,9 @@ private[log] class Cleaner(val id: Int,
                 val message = entry.record
                 // 仅处理具备 key，且 offset 位于 start 之后的消息
                 if (message.hasKey && entry.offset >= start) {
-                    if (map.size < maxDesiredMapSize)
-                    // 将消息的 key 及其 offset 放入 map 中，这里会覆盖 offset 较小的 key
-                        map.put(message.key, entry.offset)
-                    else
-                    // 标识 map 已满
-                        return true
+                    // 如果 map 未满，将消息的 key 及其 offset 放入 map 中，这里会覆盖 offset 较小的 key
+                    if (map.size < maxDesiredMapSize) map.put(message.key, entry.offset)
+                    else return true // 标识 map 已满
                 }
                 stats.indexMessagesRead(1)
             }
@@ -730,8 +723,7 @@ private[log] class Cleaner(val id: Int,
             position += bytesRead
             stats.indexBytesRead(bytesRead)
             // 如果 position 未向前移动，则说明未读取到一个完整的消息，需要对 buffer 进行扩容
-            if (position == startPosition)
-                this.growBuffers(maxLogMessageSize)
+            if (position == startPosition) this.growBuffers(maxLogMessageSize)
         } // ~ end while
         // 重置 buffer
         this.restoreBuffers()

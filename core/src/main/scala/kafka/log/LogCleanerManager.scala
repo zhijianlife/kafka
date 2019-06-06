@@ -123,7 +123,7 @@ private[log] class LogCleanerManager(val logDirs: Array[File],
             val now = time.milliseconds
             this.timeOfLastRun = now
 
-            // 读取 log 目录下的 cleaner-offset-checkpoint 文件，获取每个 topic 分区上次清理工作的 offset 边界
+            // 读取 log 目录下的 cleaner-offset-checkpoint 文件，获取每个 topic 分区上次清理操作的 offset 边界
             val lastClean = allCleanerCheckpoints
             val dirtyLogs = logs.filter {
                 // 过滤掉 cleanup.policy 配置为 delete 的 Log 对象，因为不需要压缩
@@ -141,7 +141,7 @@ private[log] class LogCleanerManager(val logDirs: Array[File],
                     LogToClean(topicPartition, log, firstDirtyOffset, firstUncleanableDirtyOffset)
             }.filter(ltc => ltc.totalBytes > 0) // 忽略待清理区间数据为空的 LogToClean 对象
 
-            // 获取待清理区间最大的 cleanableRatio
+            // 获取待清理区间最大的 cleanableRatio 比率
             this.dirtiestLogCleanableRatio = if (dirtyLogs.nonEmpty) dirtyLogs.max.cleanableRatio else 0
             // 过滤掉所有 cleanableRatio 小于等于配置值（对应 min.cleanable.dirty.ratio 配置）的 LogToClean 对象
             val cleanableLogs = dirtyLogs.filter(ltc => ltc.cleanableRatio > ltc.log.config.minCleanableRatio)
@@ -327,9 +327,9 @@ private[log] object LogCleanerManager extends Logging {
      * @param now       the current time in milliseconds of the cleaning operation
      * @return the lower (inclusive) and upper (exclusive) offsets
      */
-    def cleanableOffsets(log: Log, // 对应的 Log 对象
-                         topicPartition: TopicPartition, // 对应的 TP 对象
-                         lastClean: immutable.Map[TopicPartition, Long], // 记录每个 TP 上一次清理操作的结束 offset
+    def cleanableOffsets(log: Log, // 待清理的 Log 对象
+                         topicPartition: TopicPartition, // 对应的 topic 分区对象
+                         lastClean: immutable.Map[TopicPartition, Long], // 记录每个 topic 分区上一次清理操作的结束 offset
                          now: Long): (Long, Long) = {
 
         // 获取当前 topic 分区上次清理的 offset，即下一次需要被清理的 Log 的起始 offset
@@ -339,10 +339,8 @@ private[log] object LogCleanerManager extends Logging {
         val logStartOffset = log.logSegments.head.baseOffset
         // 计算下一次执行清理操作的起始 offset
         val firstDirtyOffset = {
-            /*
-             * 如果 cleaner-offset-checkpoint 中没有当前 topic 分区的相关记录或记录的 offset 小于 logStartOffset，
-             * 则以当前 Log 对象 SkipList 中的起始 logStartOffset 作为下一次需要被清理的起始 offset
-             */
+            // 如果 cleaner-offset-checkpoint 中没有当前 topic 分区的相关记录或记录的 offset 小于 logStartOffset，
+            // 则以当前 Log 对象 SkipList 中的起始 logStartOffset 作为下一次需要被清理的起始 offset 位置
             val offset = lastCleanOffset.getOrElse(logStartOffset)
             if (offset < logStartOffset) {
                 // don't bother with the warning if compact and delete are enabled.
@@ -359,12 +357,12 @@ private[log] object LogCleanerManager extends Logging {
         // 获取配置的清理滞后时间（对应 min.compaction.lag.ms 配置）
         val compactionLagMs = math.max(log.config.compactionLagMs, 0L)
 
-        // 计算本次不应该被清理的 LogSegment 对应的最小 offset
+        // 计算本次不应该被清理的 LogSegment 对应的最小 offset 值
         val firstUncleanableDirtyOffset: Long = Seq(
             // activeSegment 不能执行清理操作，避免竞态条件
             Option(log.activeSegment.baseOffset),
 
-            // 寻找最大消息时间戳距离当前时间戳在清理滞后时间（compactionLagMs）范围内的 LogSegment 对应的最小 offset
+            // 寻找最大消息时间戳距离当前时间戳在清理滞后时间（compactionLagMs）范围内的 LogSegment 对应的最小 offset 值
             if (compactionLagMs > 0) {
                 dirtyNonActiveSegments.find { s =>
                     // 如果 LogSegment 的最大消息时间戳距离当前在 compactionLagMs 范围内，则不能执行清理操作

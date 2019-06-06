@@ -726,14 +726,13 @@ class Log(@volatile var dir: File, // 当前 Log 对象对应的 topic 分区目
      */
     private def deleteOldSegments(predicate: LogSegment => Boolean): Int = {
         lock synchronized {
-            // 检查当前 Log 中的 LogSegment 是否满足删除条件，并返回需要被删除的 LogSegment 集合
+            // 检查当前 Log 中的 LogSegment 是否满足删除条件，并返回需要被删除的 LogSegment 对象集合
             val deletable = this.deletableSegments(predicate)
             val numToDelete = deletable.size
             if (numToDelete > 0) {
-                // 如果当前 Log 中所有的 LogSegment 都需要被删除，则在删除之前创建一个新的 activeSegment
-                if (segments.size == numToDelete)
-                    this.roll()
-                // 遍历删除需要删除的 LogSegment 对象及其相关文件
+                // 如果当前 Log 中所有的 LogSegment 对象都需要被删除，则在删除之前创建一个新的 activeSegment 对象，保证 Log 可以正常运行
+                if (segments.size == numToDelete) this.roll()
+                // 遍历删除需要删除的 LogSegment 对象及其相关数据文件
                 deletable.foreach(deleteSegment)
             }
             // 返回被删除的 LogSegment 数目

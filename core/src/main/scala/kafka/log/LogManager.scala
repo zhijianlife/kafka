@@ -56,7 +56,7 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
 
     /**
      * 每个 log 目录下面都有一个 recovery-point-offset-checkpoint 文件，
-     * 记录了当前 log 目录每个 Log 的 recoveryPoint 值，用于在 broker 启动时恢复 Log，示例：
+     * 记录了当前 log 目录每个 Log 的 recoveryPoint 信息，用于在 broker 启动时恢复日志数据，示例：
      *
      * 0
      * 8
@@ -76,15 +76,13 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
     /** 创建或删除 Log 时的锁对象 */
     private val logCreationOrDeletionLock = new Object
 
-    /** 记录每个 TP 与 Log 对象之间的映射关系 */
+    /** 记录每个 topic 分区对象与 Log 对象之间的映射关系 */
     private val logs = new Pool[TopicPartition, Log]()
 
-    /** 记录需要被删除的 log */
+    /** 记录需要被删除的 Log 对象 */
     private val logsToBeDeleted = new LinkedBlockingQueue[Log]()
 
-    /**
-     * 确保 log.dirs 配置中没有重复的路径，且配置中的路径都是目录且可读，如果不存在则会创建
-     */
+    /** 确保 log.dirs 配置中没有重复的路径，且配置中的路径都是目录且可读，如果不存在则会创建 */
     this.createAndValidateLogDirs(logDirs)
 
     /** 尝试对每个 log 目录在文件系统层面加锁，这里加的是进程锁 */
@@ -104,8 +102,7 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
     this.loadLogs()
 
     /** 用于清理过期或者过大的日志 */
-    val cleaner: LogCleaner = if (cleanerConfig.enableCleaner)
-                                  new LogCleaner(cleanerConfig, logDirs, logs, time = time) else null
+    val cleaner: LogCleaner = if (cleanerConfig.enableCleaner) new LogCleaner(cleanerConfig, logDirs, logs, time = time) else null
 
     /**
      * 遍历配置的 log.dirs，如果不存在则创建，需要保证以下几点：
@@ -177,7 +174,7 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
                 brokerState.newState(RecoveringFromUncleanShutdown)
             }
 
-            // 读取每个 log 目录下的 recovery-point-offset-checkpoint 文件，返回 TP 与 HW offset 之间的映射关系
+            // 读取每个 log 目录下的 recovery-point-offset-checkpoint 文件，返回 topic 分区对象与 HW 之间的映射关系
             var recoveryPoints = Map[TopicPartition, Long]()
             try {
                 recoveryPoints = this.recoveryPointCheckpoints(dir).read()
@@ -195,12 +192,11 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
                 // 为每个 Log 目录创建一个 Runnable 任务
                 CoreUtils.runnable {
                     debug("Loading log '" + logDir.getName + "'")
-
                     // 依据目录名解析得到对应的 topic 分区对象
                     val topicPartition = Log.parseTopicPartitionName(logDir)
                     // 获取当前 topic 分区对应的配置
                     val config = topicConfigs.getOrElse(topicPartition.topic, defaultConfig)
-                    // 获取 topic 分区对应的 HW offset
+                    // 获取 topic 分区对应的 HW 值
                     val logRecoveryPoint = recoveryPoints.getOrElse(topicPartition, 0L)
 
                     // 创建对应的 Log 对象，每个 topic 分区目录对应一个 Log 对象
@@ -209,7 +205,7 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
                     if (logDir.getName.endsWith(Log.DeleteDirSuffix)) { // -delete
                         logsToBeDeleted.add(current)
                     } else {
-                        // 建立 topic 分区对象与其 Log 对象之间的映射关系，不允许一个 topic 对象对应多个目录
+                        // 建立 topic 分区对象与其 Log 对象之间的映射关系，不允许一个 topic 分区对象对应多个目录
                         val previous = logs.put(topicPartition, current)
                         if (previous != null) {
                             throw new IllegalArgumentException(
@@ -543,7 +539,7 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
         // 遍历处理每个 topic 分区对应的 Log 对象，只有对应 Log 配置了 cleanup.policy=delete 才会执行删除
         for (log <- allLogs(); if !log.config.compact) {
             debug("Garbage collecting '" + log.name + "'")
-            // 遍历删除当前 Log 对象中过期的 LogSegment，并保证 Log 的大小在允许范围内（对应 retention.bytes 配置）
+            // 遍历删除当前 Log 对象中过期的 LogSegment 对象，并保证 Log 的大小在允许范围内（对应 retention.bytes 配置）
             total += log.deleteOldSegments()
         }
         debug("Log cleanup completed. " + total + " files deleted in " + (time.milliseconds - startMs) / 1000 + " seconds")
