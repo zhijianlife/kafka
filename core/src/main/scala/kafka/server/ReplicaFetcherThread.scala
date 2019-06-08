@@ -46,12 +46,12 @@ class ReplicaFetcherThread(name: String,
                            metrics: Metrics,
                            time: Time,
                            quota: ReplicationQuotaManager
-                          )
-        extends AbstractFetcherThread(name = name,
-            clientId = name,
-            sourceBroker = sourceBroker,
-            fetchBackOffMs = brokerConfig.replicaFetchBackoffMs,
-            isInterruptible = false) {
+                          ) extends AbstractFetcherThread(
+    name = name,
+    clientId = name,
+    sourceBroker = sourceBroker,
+    fetchBackOffMs = brokerConfig.replicaFetchBackoffMs,
+    isInterruptible = false) {
 
     type REQ = FetchRequest
     type PD = PartitionData
@@ -128,12 +128,12 @@ class ReplicaFetcherThread(name: String,
             this.maybeWarnIfOversizedRecords(records, topicPartition)
 
             if (fetchOffset != replica.logEndOffset.messageOffset)
-                throw new RuntimeException("Offset mismatch for partition %s: fetched offset = %d, log end offset = %d."
-                        .format(topicPartition, fetchOffset, replica.logEndOffset.messageOffset))
+                throw new RuntimeException("Offset mismatch for partition %s: fetched offset = %d, log end offset = %d.".format(topicPartition, fetchOffset, replica.logEndOffset.messageOffset))
+
             if (logger.isTraceEnabled)
                 trace("Follower %d has replica log end offset %d for partition %s. Received %d messages and leader hw %d"
                         .format(replica.brokerId, replica.logEndOffset.messageOffset, topicPartition, records.sizeInBytes, partitionData.highWatermark))
-            // 将消息追加到 Log 中，因为 leader 已经为消息分配了 offset，所以 follower 无需在对消息分配 offset
+            // 将消息追加到 Log 中，因为 leader 已经为消息分配了 offset，所以 follower 无需在对消息分配 offset 值
             replica.log.get.append(records, assignOffsets = false)
             if (logger.isTraceEnabled)
                 trace("Follower %d has replica log end offset %d after appending %d bytes of messages for partition %s"
@@ -143,8 +143,7 @@ class ReplicaFetcherThread(name: String,
             replica.highWatermark = new LogOffsetMetadata(followerHighWatermark)
             if (logger.isTraceEnabled)
                 trace(s"Follower ${replica.brokerId} set replica high watermark for partition $topicPartition to $followerHighWatermark")
-            if (quota.isThrottled(topicPartition))
-                quota.record(records.sizeInBytes)
+            if (quota.isThrottled(topicPartition)) quota.record(records.sizeInBytes)
         } catch {
             case e: KafkaStorageException =>
                 fatal(s"Disk error while replicating data for $topicPartition", e)
@@ -209,7 +208,7 @@ class ReplicaFetcherThread(name: String,
             // 将分区对应的 Log 截断到 leader 副本的 LEO 位置，从该位置开始重新与 leader 副本进行同步
             replicaMgr.logManager.truncateTo(Map(topicPartition -> leaderEndOffset))
 
-            // 返回下次获取消息的 offset
+            // 返回下次获取消息的 offset 位置
             leaderEndOffset
         } else {
             /*
@@ -241,7 +240,7 @@ class ReplicaFetcherThread(name: String,
             if (leaderStartOffset > replica.logEndOffset.messageOffset)
                 replicaMgr.logManager.truncateFullyAndStartAt(topicPartition, leaderStartOffset)
 
-            // 返回下次获取消息的 offset
+            // 返回下次获取消息的 offset 位置
             offsetToFetch
         }
     }

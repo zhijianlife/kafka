@@ -106,10 +106,8 @@ abstract class AbstractFetcherManager(protected val name: String,
         mapLock synchronized {
             val partitionsPerFetcher = partitionAndOffsets.groupBy {
                 case (topicPartition, brokerAndInitialOffset) =>
-                    /*
-                     * 由分区所属的 topic 和分区编号计算得到对应的 fetcher 线程 ID，并与 broker 的网络位置信息组成 key，然后按 key 进行分组。
-                     * 后面会为每组分配一个 fetcher 线程，每个线程只连接一个 broker，可以同时为组内多个分区的 follower 副本执行同步操作
-                     */
+                    // 由分区所属的 topic 和分区编号计算得到对应的 fetcher 线程 ID，并与 broker 的网络位置信息组成 key，然后按 key 进行分组，
+                    // 后面会为每组分配一个 fetcher 线程，每个线程只连接一个 broker，可以同时为组内多个分区的 follower 副本执行同步操作。
                     BrokerAndFetcherId(brokerAndInitialOffset.broker, this.getFetcherId(topicPartition.topic, topicPartition.partition))
             }
 
@@ -119,7 +117,7 @@ abstract class AbstractFetcherManager(protected val name: String,
                 fetcherThreadMap.get(brokerAndFetcherId) match {
                     case Some(f) => fetcherThread = f
                     case None =>
-                        // 新建 ReplicaFetcherThread 线程对象，并记录到 fetcherThreadMap 集合中
+                        // 创建 ReplicaFetcherThread 线程对象，并记录到 fetcherThreadMap 集合中
                         fetcherThread = this.createFetcherThread(brokerAndFetcherId.fetcherId, brokerAndFetcherId.broker)
                         fetcherThreadMap.put(brokerAndFetcherId, fetcherThread)
                         fetcherThread.start() // 启动线程

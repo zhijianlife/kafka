@@ -51,7 +51,6 @@ class Replica(val brokerId: Int, // 当前副本所在的 broker 的 ID
 
     /**
      * 记录副本所属 Log 对象最后一条消息的 offset 值：
-     *
      * - 如果是本地副本，可以直接从 Log#nextOffsetMetadata 字段中获取；
      * - 如果是远程副本，则由其它 broker 发送请求来更新该值。
      */
@@ -66,6 +65,7 @@ class Replica(val brokerId: Int, // 当前副本所在的 broker 的 ID
     /** 记录当前 follower 从 leader 拉取消息的最近一次时间戳，用于标识当前 follower 滞后 leader 的程度 */
     @volatile private[this] var _lastCaughtUpTimeMs = 0L
 
+    /** 副本所属 topic 分区对象 */
     val topicPartition: TopicPartition = partition.topicPartition
 
     /**
@@ -117,7 +117,7 @@ class Replica(val brokerId: Int, // 当前副本所在的 broker 的 ID
      */
     private def logEndOffset_=(newLogEndOffset: LogOffsetMetadata) {
         if (isLocal) {
-            // 如果是本地副本，不能直接更新 LEO，而是由对应 Log 对象的 Log#logEndOffsetMetadata 字段决定
+            // 如果是本地副本无需更新 LEO 值，而是由对应 Log 对象的 Log#logEndOffsetMetadata 字段决定
             throw new KafkaException(s"Should not set log end offset on partition $topicPartition's local replica $brokerId")
         } else {
             // 如果当前副本是远程副本，则更新副本的 LEO 值
@@ -140,7 +140,7 @@ class Replica(val brokerId: Int, // 当前副本所在的 broker 的 ID
      */
     def highWatermark_=(newHighWatermark: LogOffsetMetadata) {
         if (isLocal) {
-            // 如果是本地副本，则更新对应的 HW
+            // 如果是本地副本，则更新对应的 HW 值
             highWatermarkMetadata = newHighWatermark
             trace(s"Setting high watermark for replica $brokerId partition $topicPartition to [$newHighWatermark]")
         } else {

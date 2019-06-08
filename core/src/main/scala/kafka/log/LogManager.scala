@@ -428,7 +428,7 @@ class LogManager(val logDirs: Array[File], // log 目录集合，对应 log.dirs
                 dir.mkdirs()
                 // 创建 Log 对象
                 val log = new Log(dir, config, recoveryPoint = 0L, scheduler, time)
-                // 记录到本地
+                // 缓存到本地 logs 字段中
                 logs.put(topicPartition, log)
                 info("Created log for partition [%s,%d] in %s with properties {%s}."
                         .format(topicPartition.topic, topicPartition.partition, dataDir.getAbsolutePath, config.originals.asScala.mkString(", ")))

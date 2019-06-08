@@ -132,19 +132,16 @@ private[server] class MetadataCache(brokerId: Int) extends Logging {
                         val isr = leaderAndIsr.isr
                         // 获取 ISR 集合中可用的副本对应的节点信息
                         val isrInfo = this.getEndpoints(isr, listenerName, errorUnavailableEndpoints)
-                        // 如果 AR 集合中存在不可用的副本，则返回 REPLICA_NOT_AVAILABLE 错误
                         if (replicaInfo.size < replicas.size) {
+                            // 如果 AR 集合中存在不可用的副本，则返回 REPLICA_NOT_AVAILABLE 错误
                             debug(s"Error while fetching metadata for $topicPartition: replica information not available for " +
                                     s"following brokers ${replicas.filterNot(replicaInfo.map(_.id).contains).mkString(",")}")
-                            new MetadataResponse.PartitionMetadata(
-                                Errors.REPLICA_NOT_AVAILABLE, partitionId, leader, replicaInfo.asJava, isrInfo.asJava)
-                        }
-                        // 如果 ISR 集合中存在不可用的的副本，则返回 REPLICA_NOT_AVAILABLE 错误
-                        else if (isrInfo.size < isr.size) {
+                            new MetadataResponse.PartitionMetadata(Errors.REPLICA_NOT_AVAILABLE, partitionId, leader, replicaInfo.asJava, isrInfo.asJava)
+                        } else if (isrInfo.size < isr.size) {
+                            // 如果 ISR 集合中存在不可用的的副本，则返回 REPLICA_NOT_AVAILABLE 错误
                             debug(s"Error while fetching metadata for $topicPartition: in sync replica information not available for " +
                                     s"following brokers ${isr.filterNot(isrInfo.map(_.id).contains).mkString(",")}")
-                            new MetadataResponse.PartitionMetadata(
-                                Errors.REPLICA_NOT_AVAILABLE, partitionId, leader, replicaInfo.asJava, isrInfo.asJava)
+                            new MetadataResponse.PartitionMetadata(Errors.REPLICA_NOT_AVAILABLE, partitionId, leader, replicaInfo.asJava, isrInfo.asJava)
                         } else {
                             // AR 集合和 ISR 集合中的副本都是可用的
                             new MetadataResponse.PartitionMetadata(Errors.NONE, partitionId, leader, replicaInfo.asJava, isrInfo.asJava)
@@ -229,7 +226,7 @@ private[server] class MetadataCache(brokerId: Int) extends Logging {
             aliveNodes.clear()
             aliveBrokers.clear()
             updateMetadataRequest.liveBrokers.asScala.foreach { broker =>
-                // aliveNodes 是一个请求热点，所以这里使用 java.util.HashMap 来提升性能，如果是 scala 2.10 之后，可以使用 AnyRefMap 代替
+                // aliveNodes 是一个请求热点，所以这里使用 java.util.HashMap 来提升性能，如果是 scala 2.10 之后可以使用 AnyRefMap 代替
                 val nodes = new java.util.HashMap[ListenerName, Node]
                 val endPoints = new mutable.ArrayBuffer[EndPoint]
                 broker.endPoints.asScala.foreach { ep =>

@@ -113,7 +113,7 @@ abstract class AbstractFetcherThread(name: String,
             val fetchRequest = this.buildFetchRequest(partitionStates.partitionStates.asScala.map { state =>
                 state.topicPartition -> state.value
             })
-            // 如果没有 FetchRequest 请求，则等待一会后重试
+            // 如果没有拉取消息的需求，则等待一会后重试
             if (fetchRequest.isEmpty) {
                 trace("There are no active partitions. Back off for %d ms before sending a fetch request".format(fetchBackOffMs))
                 partitionMapCond.await(fetchBackOffMs, TimeUnit.MILLISECONDS)
@@ -168,11 +168,11 @@ abstract class AbstractFetcherThread(name: String,
                                     try {
                                         // 获取返回的消息集合
                                         val records = partitionData.toRecords
-                                        // 获取返回的最后一条消息的 offset
+                                        // 获取返回的最后一条消息的 offset 值
                                         val newOffset = records.shallowEntries.asScala.lastOption.map(_.nextOffset).getOrElse(currentPartitionFetchState.offset)
 
                                         fetcherLagStats.getAndMaybePut(topic, partitionId).lag = Math.max(0L, partitionData.highWatermark - newOffset)
-                                        // 将从 leader 副本获取到的消息追加到当前 follower 副本对应的 Log 中
+                                        // 将从 leader 副本获取到的消息追加到当前 follower 副本对应的 Log 对象中
                                         this.processPartitionData(topicPartition, currentPartitionFetchState.offset, partitionData)
 
                                         val validBytes = records.validBytes
@@ -199,8 +199,7 @@ abstract class AbstractFetcherThread(name: String,
                                         // 计算有效的 offset，并更新本地缓存的 fetch 状态
                                         val newOffset = this.handleOffsetOutOfRange(topicPartition)
                                         partitionStates.updateAndMoveToEnd(topicPartition, new PartitionFetchState(newOffset))
-                                        error("Current offset %d for partition [%s,%d] out of range; reset offset to %d"
-                                                .format(currentPartitionFetchState.offset, topic, partitionId, newOffset))
+                                        error("Current offset %d for partition [%s,%d] out of range; reset offset to %d".format(currentPartitionFetchState.offset, topic, partitionId, newOffset))
                                     } catch {
                                         case e: Throwable =>
                                             error("Error getting offset for partition [%s,%d] to broker %d".format(topic, partitionId, sourceBroker.id), e)
