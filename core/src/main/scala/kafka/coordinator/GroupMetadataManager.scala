@@ -70,10 +70,10 @@ class GroupMetadataManager(val brokerId: Int, // 所属 broker 节点 ID
     /* lock protecting access to loading and owned partition sets */
     private val partitionLock = new ReentrantLock()
 
-    /** 正在加载的 offset topic 分区的 ID */
+    /** 正在加载的 offset topic 分区的 ID 集合 */
     private val loadingPartitions: mutable.Set[Int] = mutable.Set()
 
-    /** 已经加载完成的 offset topic 分区的 ID */
+    /** 已经加载完成的 offset topic 分区的 ID 集合 */
     private val ownedPartitions: mutable.Set[Int] = mutable.Set()
 
     /** 标识 GroupCoordinator 正在关闭 */
@@ -606,18 +606,25 @@ class GroupMetadataManager(val brokerId: Int, // 所属 broker 节点 ID
         this.cleanupGroupMetadata(None)
     }
 
+    /**
+     * @param deletedTopicPartitions 需要被移除的 topic 分区集合
+     */
     def cleanupGroupMetadata(deletedTopicPartitions: Option[Seq[TopicPartition]]) {
         val startMs = time.milliseconds()
         var offsetsRemoved = 0
 
-        // 遍历处理没有 group 对应的元数据信息
+        // 遍历处理每个 group 对应的元数据信息
         groupMetadataCache.foreach { case (groupId, group) =>
             val (removedOffsets, groupIsDead, generation) = group synchronized {
+                // 计算待移除的 topic 分区对应的 offset 元数据信息
                 val removedOffsets = deletedTopicPartitions match {
+                    // 从 group 元数据信息中移除指定的 topic 分区集合
                     case Some(topicPartitions) => group.removeOffsets(topicPartitions)
+                    // 移除那些 offset 元数据已经过期的，且没有 offset 待提交的 topic 分区集合
                     case None => group.removeExpiredOffsets(startMs)
                 }
 
+                // 如果 group 当前状态为 Empty，且名下 topic 分区所有的 offset 已经过期，则将该 group 状态切换成 Dead
                 if (group.is(Empty) && !group.hasOffsets) {
                     info(s"Group $groupId transitioned to Dead in generation ${group.generationId}")
                     group.transitionTo(Dead)
@@ -625,16 +632,18 @@ class GroupMetadataManager(val brokerId: Int, // 所属 broker 节点 ID
                 (removedOffsets, group.is(Dead), group.generationId)
             }
 
+            // 获取 group 对应在 offset topic 中的分区编号
             val offsetsPartition = partitionFor(groupId)
             val appendPartition = new TopicPartition(Topic.GroupMetadataTopicName, offsetsPartition)
             getMagic(offsetsPartition) match {
+                // 对应 group 由当前 GroupCoordinator 进行管理
                 case Some(magicValue) =>
-                    // We always use CREATE_TIME, like the producer. The conversion to LOG_APPEND_TIME (if necessary) happens automatically.
                     val timestampType = TimestampType.CREATE_TIME
                     val timestamp = time.milliseconds()
-
+                    // 获取当前 group 在 offset topic 中的分区对象
                     val partitionOpt = replicaManager.getPartition(appendPartition)
                     partitionOpt.foreach { partition =>
+                        // 遍历处理每个待移除的 topic 分区对应的 offset 元数据信息，封装成消息数据
                         val tombstones = removedOffsets.map { case (topicPartition, offsetAndMetadata) =>
                             trace(s"Removing expired/deleted offset and metadata for $groupId, $topicPartition: $offsetAndMetadata")
                             val commitKey = GroupMetadataManager.offsetCommitKey(groupId, topicPartition)
@@ -642,27 +651,22 @@ class GroupMetadataManager(val brokerId: Int, // 所属 broker 节点 ID
                         }.toBuffer
                         trace(s"Marked ${removedOffsets.size} offsets in $appendPartition for deletion.")
 
-                        // We avoid writing the tombstone when the generationId is 0, since this group is only using
-                        // Kafka for offset storage.
+                        // 如果当前 group 已经失效，则从本地移除对应的元数据信息，并将 group 信息封装成消息，
+                        // 如果 generation 为 0 则表示当前 group 仅仅使用 kafka 存储 offset 信息
                         if (groupIsDead && groupMetadataCache.remove(groupId, group) && generation > 0) {
-                            // Append the tombstone messages to the partition. It is okay if the replicas don't receive these (say,
-                            // if we crash or leaders move) since the new leaders will still expire the consumers with heartbeat and
-                            // retry removing this group.
                             tombstones += Record.create(magicValue, timestampType, timestamp, GroupMetadataManager.groupMetadataKey(group.groupId), null)
                             trace(s"Group $groupId removed from the metadata cache and marked for deletion in $appendPartition.")
                         }
 
                         if (tombstones.nonEmpty) {
                             try {
-                                // do not need to require acks since even if the tombstone is lost,
-                                // it will be appended again in the next purge cycle
+                                // 往 offset topic 中追加消息，不需要 ack，如果失败则周期性任务稍后会重试
                                 partition.appendRecordsToLeader(MemoryRecords.withRecords(timestampType, compressionType, tombstones: _*))
                                 offsetsRemoved += removedOffsets.size
                                 trace(s"Successfully appended ${tombstones.size} tombstones to $appendPartition for expired/deleted offsets and/or metadata for group $groupId")
                             } catch {
                                 case t: Throwable =>
                                     error(s"Failed to append ${tombstones.size} tombstones to $appendPartition for expired/deleted offsets and/or metadata for group $groupId.", t)
-                                // ignore and continue
                             }
                         }
                     }
