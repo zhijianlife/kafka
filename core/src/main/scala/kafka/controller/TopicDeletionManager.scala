@@ -253,21 +253,21 @@ class TopicDeletionManager(controller: KafkaController,
         if (isDeleteTopicEnabled) {
             controller.replicaStateMachine.isAtLeastOneReplicaInDeletionStartedState(topic)
         } else
-              false
+            false
     }
 
     def isPartitionToBeDeleted(topicAndPartition: TopicAndPartition): Boolean = {
         if (isDeleteTopicEnabled) {
             partitionsToBeDeleted.contains(topicAndPartition)
         } else
-              false
+            false
     }
 
     def isTopicQueuedUpForDeletion(topic: String): Boolean = {
         if (isDeleteTopicEnabled) {
             topicsToBeDeleted.contains(topic)
         } else
-              false
+            false
     }
 
     /**
@@ -419,7 +419,7 @@ class TopicDeletionManager(controller: KafkaController,
             val replicasForDeletionRetry = aliveReplicasForTopic -- successfullyDeletedReplicas
             // 将不可用副本状态变更为 ReplicaDeletionIneligible
             replicaStateMachine.handleStateChanges(deadReplicasForTopic, ReplicaDeletionIneligible)
-            // 将待删除的副本状态变更为 OfflineReplica，用于 follower 对于 leader 的 fetch 请求
+            // 将待删除的副本状态变更为 OfflineReplica，用于关闭 follower 对于 leader 的 fetch 请求
             replicaStateMachine.handleStateChanges(replicasForDeletionRetry, OfflineReplica)
             debug("Deletion started for replicas %s".format(replicasForDeletionRetry.mkString(",")))
             // 将待删除的副本状态变更为 ReplicaDeletionStarted，标记当前副本准备好开始删除
