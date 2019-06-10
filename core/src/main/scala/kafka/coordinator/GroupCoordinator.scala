@@ -190,7 +190,7 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
             } else {
                 // 依据 group 的当前状态分别进行处理
                 group.currentState match {
-                    // 目标 group 已经死亡
+                    // 目标 group 已经失效
                     case Dead =>
                         // 对应的 group 的元数据信息已经被删除，说明已经迁移到其它 GroupCoordinator 实例或者不再可用，直接返回错误码
                         responseCallback(joinError(memberId, Errors.UNKNOWN_MEMBER_ID.code))
@@ -204,7 +204,7 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
                             val member = group.get(memberId)
                             this.updateMemberAndRebalance(group, member, protocols, responseCallback)
                         }
-                    // 目标 group 正在等待 group leader 的分区分配结果
+                    // 目标 group 正在等待 leader 消费者的分区分配结果
                     case AwaitingSync =>
                         if (memberId == JoinGroupRequest.UNKNOWN_MEMBER_ID) {
                             // 对于未知 ID 的消费者申请加入，创建对应的元数据信息，并分配 ID，同时切换 group 的状态为 PreparingRebalance，准备执行分区再平衡
@@ -230,7 +230,7 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
                                 this.updateMemberAndRebalance(group, member, protocols, responseCallback)
                             }
                         }
-                    // group 运行正常，或者正在等待 offset 过期
+                    // 目标 group 运行正常，或者正在等待 offset 过期
                     case Empty | Stable =>
                         if (memberId == JoinGroupRequest.UNKNOWN_MEMBER_ID) {
                             // 对于未知 ID 的消费者申请加入，创建对应的元数据信息，并分配 ID，同时切换 group 的状态为 PreparingRebalance，准备执行分区再平衡
@@ -322,7 +322,7 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
                     case AwaitingSync =>
                         // 设置对应消费者的响应回调函数
                         group.get(memberId).awaitingSyncCallback = responseCallback
-                        // 仅处理来自 group leader 发来的 SyncGroupRequest 请求
+                        // 仅处理来自 leader 消费者发来的 SyncGroupRequest 请求
                         if (memberId == group.leaderId) {
                             info(s"Assignment received from leader for group ${group.groupId} for generation ${group.generationId}")
                             // 将未分配分区的消费者对应的分区分配结果填充为空的字节数组
@@ -334,7 +334,7 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
                                 // 追加消息完成的响应逻辑
                                 (error: Errors) => {
                                     group synchronized {
-                                        // 检查 group 的状态（正在等待 group leader 将分区的分配结果发送给 GroupCoordinator）和年代信息
+                                        // 检查 group 的状态（正在等待 leader 消费者将分区的分配结果发送给 GroupCoordinator）和年代信息
                                         if (group.is(AwaitingSync) && generationId == group.generationId) {
                                             if (error != Errors.NONE) {
                                                 // 清空分区的分配结果，并发送异常响应
@@ -613,30 +613,30 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
         group synchronized {
             info(s"Unloading group metadata for ${group.groupId} with generation ${group.generationId}")
             val previousState = group.currentState
-            // 切换成 Dead 状态
+            // 将当前 group 切换成 Dead 状态
             group.transitionTo(Dead)
 
+            // 依据前置状态分别处理
             previousState match {
                 case Empty | Dead =>
                 case PreparingRebalance =>
-                    // 遍历调用所有 member 的 awaitingJoinCallback 函数，返回对应的错误码
+                    // 遍历响应所有消费者的 JoinGroupRequest 请求，返回 NOT_COORDINATOR_FOR_GROUP 错误码
                     for (member <- group.allMemberMetadata) {
                         if (member.awaitingJoinCallback != null) {
                             member.awaitingJoinCallback(joinError(member.memberId, Errors.NOT_COORDINATOR_FOR_GROUP.code))
                             member.awaitingJoinCallback = null
                         }
                     }
-                    // 尝试执行 DelayedJoin 操作
+                    // 尝试执行 DelayedJoin 延时任务
                     joinPurgatory.checkAndComplete(GroupKey(group.groupId))
-
                 case Stable | AwaitingSync =>
-                    // 遍历调用所有 member 的 awaitingJoinCallback 函数，返回对应的错误码
+                    // 遍历响应所有消费者的 JoinGroupRequest 请求，返回 NOT_COORDINATOR_FOR_GROUP 错误码
                     for (member <- group.allMemberMetadata) {
                         if (member.awaitingSyncCallback != null) {
                             member.awaitingSyncCallback(Array.empty[Byte], Errors.NOT_COORDINATOR_FOR_GROUP.code)
                             member.awaitingSyncCallback = null
                         }
-                        // 尝试执行 DelayHeartbeat
+                        // 尝试执行 DelayHeartbeat 延时任务
                         heartbeatPurgatory.checkAndComplete(MemberKey(member.groupId, member.memberId))
                     }
             }
@@ -652,13 +652,13 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
         group synchronized {
             info(s"Loading group metadata for ${group.groupId} with generation ${group.generationId}")
             assert(group.is(Stable) || group.is(Empty))
-            // 遍历更新素有 member 的心跳
+            // 遍历更新当前 group 名下所有消费者的心跳信息
             group.allMemberMetadata.foreach(completeAndScheduleNextHeartbeatExpiration(group, _))
         }
     }
 
     /**
-     * 当 broker 成为 offset topic 分区的 leader 副本时会回调该方法执行加载工作
+     * 当 broker 维护 offset topic 分区的 leader 副本时会回调该方法执行加载工作
      *
      * @param offsetTopicPartitionId
      */
@@ -667,7 +667,7 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
     }
 
     /**
-     * 当 broker 成为 offset topic 分区的 follower 副本时会回调该方法执行清理工作
+     * 当 broker 维护 offset topic 分区的 follower 副本时会回调该方法执行清理工作
      *
      * @param offsetTopicPartitionId
      */
@@ -815,17 +815,17 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
      * @param group
      */
     private def prepareRebalance(group: GroupMetadata) {
-        // 如果处于 AwaitingSync 状态，说明在等待 leader 的分区分配结果，
+        // 如果处于 AwaitingSync 状态，说明在等待 leader 消费者的分区分配结果，
         // 此时对于来自 follower 的 SyncGroupRequest 请求，直接响应 REBALANCE_IN_PROGRESS 错误
         if (group.is(AwaitingSync)) resetAndPropagateAssignmentError(group, Errors.REBALANCE_IN_PROGRESS)
 
-        // 将 group 状态切换成 PreparingRebalance 状态，表示准备执行分区再平衡操作
+        // 将 group 状态切换成 PreparingRebalance 状态，准备执行分区再平衡操作
         group.transitionTo(PreparingRebalance)
         info("Preparing to restabilize group %s with old generation %s".format(group.groupId, group.generationId))
 
         // 分区再均衡超时时长是所有消费者设置的超时时长的最大值
         val rebalanceTimeout = group.rebalanceTimeoutMs
-        // 创建 DelayedJoin 延时任务
+        // 创建 DelayedJoin 延时任务，用于等待消费者申请加入当前 group
         val delayedRebalance = new DelayedJoin(this, group, rebalanceTimeout)
         val groupKey = GroupKey(group.groupId) // 关注当前 group
         // 将延时任务添加到炼狱中进行管理
@@ -865,7 +865,7 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
             group.notYetRejoinedMembers.foreach { failedMember => group.remove(failedMember.memberId) }
 
             if (!group.is(Dead)) {
-                // 递增 group 的年代信息，并选择 group 最终使用的分区分配策略，如果 group 名下存在消费者，则切换状态为 AwaitingSync，否则切换成 Empty
+                // 递增 group 的年代信息，并选择 group 最终使用的分区分配策略，如果 group 名下存在消费者则切换状态为 AwaitingSync，否则切换成 Empty
                 group.initNextGeneration()
                 if (group.is(Empty)) {
                     info(s"Group ${group.groupId} with generation ${group.generationId} is now empty")

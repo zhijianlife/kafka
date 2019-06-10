@@ -153,14 +153,12 @@ class KafkaApis(val requestChannel: RequestChannel,
         try {
             // 完成 GroupCoordinator 的迁移操作
             def onLeadershipChange(updatedLeaders: Iterable[Partition], updatedFollowers: Iterable[Partition]) {
-                // for each new leader or follower, call coordinator to handle consumer group migration.
-                // this callback is invoked under the replica state change lock to ensure proper order of leadership changes
                 updatedLeaders.foreach { partition =>
-                    // 仅处理 offset topic，当 broker 成为 offset topic 分区的 leader 副本角色时回调执行
+                    // 仅处理 offset topic，当 broker 节点维护 offset topic 分区的 leader 副本时回调执行
                     if (partition.topic == Topic.GroupMetadataTopicName) coordinator.handleGroupImmigration(partition.partitionId)
                 }
                 updatedFollowers.foreach { partition =>
-                    // 仅处理 offset topic
+                    // 仅处理 offset topic，当 broker 节点维护 offset topic 分区的 follower 副本时回调执行
                     if (partition.topic == Topic.GroupMetadataTopicName) coordinator.handleGroupEmigration(partition.partitionId)
                 }
             }
@@ -1065,7 +1063,7 @@ class KafkaApis(val requestChannel: RequestChannel,
                         .find(_.partition == partition)
                         .map(_.leader())
 
-                // 创建 GroupCoordinatorResponse 对象
+                // 创建 GroupCoordinatorResponse 对象，将 leader 副本所在节点信息返回给客户端
                 coordinatorEndpoint match {
                     case Some(endpoint) if !endpoint.isEmpty => new GroupCoordinatorResponse(Errors.NONE.code, endpoint)
                     case _ => new GroupCoordinatorResponse(Errors.GROUP_COORDINATOR_NOT_AVAILABLE.code, Node.noNode)
