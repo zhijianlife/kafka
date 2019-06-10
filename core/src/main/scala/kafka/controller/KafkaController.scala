@@ -260,7 +260,7 @@ class KafkaController(val config: KafkaConfig, // 配置信息
     private val controllerElector = new ZookeeperLeaderElector(
         controllerContext, ZkUtils.ControllerPath, onControllerFailover, onControllerResignation, config.brokerId, time)
 
-    /** 分区再均衡定时任务调度器 */
+    /** 分区再平衡定时任务调度器 */
     private val autoRebalanceScheduler = new KafkaScheduler(1)
 
     /** 用于对指定的 topic 执行删除操作 */

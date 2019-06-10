@@ -164,7 +164,7 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
             // 遍历处理集群中所有的分区，不包含正在等待被删除的 topic 的分区，尝试切换分区状态为 OnlinePartition
             for ((topicAndPartition, partitionState) <- partitionState
                  if !controller.deleteTopicManager.isTopicQueuedUpForDeletion(topicAndPartition.topic)) {
-                // 对于 OfflinePartition 或 NewPartition 状态的分区，尝试对应分区状态修改为 OnlinePartition 状态
+                // 对于 OfflinePartition 或 NewPartition 状态的分区，尝试将对应分区状态修改为 OnlinePartition 状态
                 if (partitionState.equals(OfflinePartition) || partitionState.equals(NewPartition))
                     this.handleStateChange(
                         topicAndPartition.topic,
