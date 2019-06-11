@@ -508,10 +508,10 @@ class KafkaController(val config: KafkaConfig, // 配置信息
         this.deregisterReassignedPartitionsListener()
         this.deregisterPreferredReplicaElectionListener()
 
-        // 关闭 TopicDeletionManager
+        // 关闭 topic 删除机制
         if (deleteTopicManager != null) deleteTopicManager.shutdown()
 
-        // 关闭 partition-rebalance 分区自动均衡定时任务
+        // 关闭 partition-rebalance 分区再平衡定时任务
         if (config.autoLeaderRebalanceEnable) autoRebalanceScheduler.shutdown()
 
         inLock(controllerContext.controllerLock) {
@@ -570,10 +570,10 @@ class KafkaController(val config: KafkaConfig, // 配置信息
         val allReplicasOnNewBrokers = controllerContext.replicasOnBrokers(newBrokersSet)
         replicaStateMachine.handleStateChanges(allReplicasOnNewBrokers, OnlineReplica)
 
-        // 3. 尝试将状态为 OfflinePartition 和 NewPartition 的分区设置为 OnlinePartition，以触发失效分区的 leader 选举操作
+        // 3. 尝试将状态为 OfflinePartition 和 NewPartition 的分区设置为 OnlinePartition，以触发失效分区的 leader 副本选举
         partitionStateMachine.triggerOnlinePartitionStateChange()
 
-        // 4. 检查需要重新分配副本的分区是否需要重新分配副本
+        // 4. 检查正在重新分配副本的分区是否需要重新分配副本
         val partitionsWithReplicasOnNewBrokers = controllerContext.partitionsBeingReassigned.filter {
             case (_, reassignmentContext) => reassignmentContext.newReplicas.exists(newBrokersSet.contains)
         }

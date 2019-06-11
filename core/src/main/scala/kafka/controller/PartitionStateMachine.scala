@@ -553,7 +553,7 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
                 // 从 ZK 获取待删除的 topic 集合
                 var topicsToBeDeleted = children.toSet
                 debug("Delete topics listener fired for topics %s to be deleted".format(topicsToBeDeleted.mkString(",")))
-                // 检查 topic 是否存在，对于不存在的 topic，直接将其从 /admin/delete_topics 路径下删除
+                // 检查 topic 是否存在，对于不存在的 topic 直接将其从 /admin/delete_topics 路径下删除
                 val nonExistentTopics = topicsToBeDeleted -- controllerContext.allTopics
                 if (nonExistentTopics.nonEmpty) {
                     warn("Ignoring request to delete non-existing topics " + nonExistentTopics.mkString(","))
@@ -565,13 +565,12 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
                 if (controller.config.deleteTopicEnable) {
                     if (topicsToBeDeleted.nonEmpty) {
                         info("Starting topic deletion for topics " + topicsToBeDeleted.mkString(","))
-                        // mark topic ineligible for deletion if other state changes are in progress
                         // 检查待删除的 topic 是否处于不可删除的情况
                         topicsToBeDeleted.foreach { topic =>
                             // 1. 检测待删除的 topic 是否有分区正在进行优先副本选举
                             val preferredReplicaElectionInProgress =
                                 controllerContext.partitionsUndergoingPreferredReplicaElection.map(_.topic).contains(topic)
-                            // 2. 检测待删除的 topic 是否有分区正在进行副本重新分配
+                            // 2. 检测待删除的 topic 是否有分区正在进行副本再分配
                             val partitionReassignmentInProgress =
                                 controllerContext.partitionsBeingReassigned.keySet.map(_.topic).contains(topic)
                             // 如果满足上述 2 个条件之一，则将 topic 标记为不可删除
