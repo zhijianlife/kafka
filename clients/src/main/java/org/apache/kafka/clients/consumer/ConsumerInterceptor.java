@@ -10,8 +10,8 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
-package org.apache.kafka.clients.consumer;
 
+package org.apache.kafka.clients.consumer;
 
 import org.apache.kafka.common.Configurable;
 import org.apache.kafka.common.TopicPartition;
@@ -59,7 +59,7 @@ public interface ConsumerInterceptor<K, V> extends Configurable {
      * @param records records to be consumed by the client or records returned by the previous interceptors in the list.
      * @return records that are either modified by the interceptor or same as records passed to this method.
      */
-    public ConsumerRecords<K, V> onConsume(ConsumerRecords<K, V> records);
+    ConsumerRecords<K, V> onConsume(ConsumerRecords<K, V> records);
 
     /**
      * This is called when offsets get committed.
@@ -68,10 +68,10 @@ public interface ConsumerInterceptor<K, V> extends Configurable {
      *
      * @param offsets A map of offsets by partition with associated metadata
      */
-    public void onCommit(Map<TopicPartition, OffsetAndMetadata> offsets);
+    void onCommit(Map<TopicPartition, OffsetAndMetadata> offsets);
 
     /**
      * This is called when interceptor is closed
      */
-    public void close();
+    void close();
 }
