@@ -14,20 +14,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.kafka.clients.producer;
 
-import java.net.InetSocketAddress;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Properties;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import org.apache.kafka.clients.ApiVersions;
 import org.apache.kafka.clients.ClientDnsLookup;
 import org.apache.kafka.clients.ClientUtils;
@@ -82,6 +71,18 @@ import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 import org.slf4j.Logger;
 
+import java.net.InetSocketAddress;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Properties;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * A Kafka client that publishes records to the Kafka cluster.
@@ -262,8 +263,8 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      * string "42" or the integer 42).
      * <p>
      * Note: after creating a {@code KafkaProducer} you must always {@link #close()} it to avoid resource leaks.
-     * @param configs   The producer configs
      *
+     * @param configs The producer configs
      */
     public KafkaProducer(final Map<String, Object> configs) {
         this(configs, null, null, null, null, null, Time.SYSTEM);
@@ -276,11 +277,12 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      * either the string "42" or the integer 42).
      * <p>
      * Note: after creating a {@code KafkaProducer} you must always {@link #close()} it to avoid resource leaks.
-     * @param configs   The producer configs
-     * @param keySerializer  The serializer for key that implements {@link Serializer}. The configure() method won't be
-     *                       called in the producer when the serializer is passed in directly.
-     * @param valueSerializer  The serializer for value that implements {@link Serializer}. The configure() method won't
-     *                         be called in the producer when the serializer is passed in directly.
+     *
+     * @param configs The producer configs
+     * @param keySerializer The serializer for key that implements {@link Serializer}. The configure() method won't be
+     * called in the producer when the serializer is passed in directly.
+     * @param valueSerializer The serializer for value that implements {@link Serializer}. The configure() method won't
+     * be called in the producer when the serializer is passed in directly.
      */
     public KafkaProducer(Map<String, Object> configs, Serializer<K> keySerializer, Serializer<V> valueSerializer) {
         this(configs, keySerializer, valueSerializer, null, null, null, Time.SYSTEM);
@@ -291,7 +293,8 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      * are documented <a href="http://kafka.apache.org/documentation.html#producerconfigs">here</a>.
      * <p>
      * Note: after creating a {@code KafkaProducer} you must always {@link #close()} it to avoid resource leaks.
-     * @param properties   The producer configs
+     *
+     * @param properties The producer configs
      */
     public KafkaProducer(Properties properties) {
         this(propsToMap(properties), null, null, null, null, null, Time.SYSTEM);
@@ -302,11 +305,12 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      * Valid configuration strings are documented <a href="http://kafka.apache.org/documentation.html#producerconfigs">here</a>.
      * <p>
      * Note: after creating a {@code KafkaProducer} you must always {@link #close()} it to avoid resource leaks.
-     * @param properties   The producer configs
-     * @param keySerializer  The serializer for key that implements {@link Serializer}. The configure() method won't be
-     *                       called in the producer when the serializer is passed in directly.
-     * @param valueSerializer  The serializer for value that implements {@link Serializer}. The configure() method won't
-     *                         be called in the producer when the serializer is passed in directly.
+     *
+     * @param properties The producer configs
+     * @param keySerializer The serializer for key that implements {@link Serializer}. The configure() method won't be
+     * called in the producer when the serializer is passed in directly.
+     * @param valueSerializer The serializer for value that implements {@link Serializer}. The configure() method won't
+     * be called in the producer when the serializer is passed in directly.
      */
     public KafkaProducer(Properties properties, Serializer<K> keySerializer, Serializer<V> valueSerializer) {
         this(propsToMap(properties), keySerializer, valueSerializer, null, null, null,
@@ -329,17 +333,19 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             this.producerConfig = config;
             this.time = time;
             String clientId = config.getString(ProducerConfig.CLIENT_ID_CONFIG);
-            if (clientId.length() <= 0)
+            if (clientId.length() <= 0) {
                 clientId = "producer-" + PRODUCER_CLIENT_ID_SEQUENCE.getAndIncrement();
+            }
             this.clientId = clientId;
 
             String transactionalId = userProvidedConfigs.containsKey(ProducerConfig.TRANSACTIONAL_ID_CONFIG) ?
                     (String) userProvidedConfigs.get(ProducerConfig.TRANSACTIONAL_ID_CONFIG) : null;
             LogContext logContext;
-            if (transactionalId == null)
+            if (transactionalId == null) {
                 logContext = new LogContext(String.format("[Producer clientId=%s] ", clientId));
-            else
+            } else {
                 logContext = new LogContext(String.format("[Producer clientId=%s, transactionalId=%s] ", clientId, transactionalId));
+            }
             log = logContext.logger(KafkaProducer.class);
             log.trace("Starting the Kafka producer");
 
@@ -357,7 +363,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             long retryBackoffMs = config.getLong(ProducerConfig.RETRY_BACKOFF_MS_CONFIG);
             if (keySerializer == null) {
                 this.keySerializer = config.getConfiguredInstance(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG,
-                                                                                         Serializer.class);
+                        Serializer.class);
                 this.keySerializer.configure(config.originals(), true);
             } else {
                 config.ignore(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG);
@@ -365,7 +371,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             }
             if (valueSerializer == null) {
                 this.valueSerializer = config.getConfiguredInstance(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG,
-                                                                                           Serializer.class);
+                        Serializer.class);
                 this.valueSerializer.configure(config.originals(), false);
             } else {
                 config.ignore(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG);
@@ -377,10 +383,11 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             ProducerConfig configWithClientId = new ProducerConfig(userProvidedConfigs, false);
             List<ProducerInterceptor<K, V>> interceptorList = (List) configWithClientId.getConfiguredInstances(
                     ProducerConfig.INTERCEPTOR_CLASSES_CONFIG, ProducerInterceptor.class);
-            if (interceptors != null)
+            if (interceptors != null) {
                 this.interceptors = interceptors;
-            else
+            } else {
                 this.interceptors = new ProducerInterceptors<>(interceptorList);
+            }
             ClusterResourceListeners clusterResourceListeners = configureClusterResourceListeners(keySerializer,
                     valueSerializer, interceptorList, reporters);
             this.maxRequestSize = config.getInt(ProducerConfig.MAX_REQUEST_SIZE_CONFIG);
@@ -411,7 +418,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                 this.metadata = metadata;
             } else {
                 this.metadata = new Metadata(retryBackoffMs, config.getLong(ProducerConfig.METADATA_MAX_AGE_CONFIG),
-                    true, true, clusterResourceListeners);
+                        true, true, clusterResourceListeners);
                 this.metadata.update(Cluster.bootstrap(addresses), Collections.emptySet(), time.milliseconds());
             }
             this.errors = this.metrics.sensor("errors");
@@ -481,14 +488,14 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             if (config.originals().containsKey(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG)) {
                 // throw an exception if the user explicitly set an inconsistent value
                 throw new ConfigException(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG
-                    + " should be equal to or larger than " + ProducerConfig.LINGER_MS_CONFIG
-                    + " + " + ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG);
+                        + " should be equal to or larger than " + ProducerConfig.LINGER_MS_CONFIG
+                        + " + " + ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG);
             } else {
                 // override deliveryTimeoutMs default value to lingerMs + requestTimeoutMs for backward compatibility
                 deliveryTimeoutMs = lingerMs + requestTimeoutMs;
                 log.warn("{} should be equal to or larger than {} + {}. Setting it to {}.",
-                    ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, ProducerConfig.LINGER_MS_CONFIG,
-                    ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, deliveryTimeoutMs);
+                        ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, ProducerConfig.LINGER_MS_CONFIG,
+                        ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, deliveryTimeoutMs);
             }
         }
         return deliveryTimeoutMs;
@@ -499,30 +506,35 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
         TransactionManager transactionManager = null;
 
         boolean userConfiguredIdempotence = false;
-        if (config.originals().containsKey(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG))
+        if (config.originals().containsKey(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG)) {
             userConfiguredIdempotence = true;
+        }
 
         boolean userConfiguredTransactions = false;
-        if (config.originals().containsKey(ProducerConfig.TRANSACTIONAL_ID_CONFIG))
+        if (config.originals().containsKey(ProducerConfig.TRANSACTIONAL_ID_CONFIG)) {
             userConfiguredTransactions = true;
+        }
 
         boolean idempotenceEnabled = config.getBoolean(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG);
 
-        if (!idempotenceEnabled && userConfiguredIdempotence && userConfiguredTransactions)
+        if (!idempotenceEnabled && userConfiguredIdempotence && userConfiguredTransactions) {
             throw new ConfigException("Cannot set a " + ProducerConfig.TRANSACTIONAL_ID_CONFIG + " without also enabling idempotence.");
+        }
 
-        if (userConfiguredTransactions)
+        if (userConfiguredTransactions) {
             idempotenceEnabled = true;
+        }
 
         if (idempotenceEnabled) {
             String transactionalId = config.getString(ProducerConfig.TRANSACTIONAL_ID_CONFIG);
             int transactionTimeoutMs = config.getInt(ProducerConfig.TRANSACTION_TIMEOUT_CONFIG);
             long retryBackoffMs = config.getLong(ProducerConfig.RETRY_BACKOFF_MS_CONFIG);
             transactionManager = new TransactionManager(logContext, transactionalId, transactionTimeoutMs, retryBackoffMs);
-            if (transactionManager.isTransactional())
+            if (transactionManager.isTransactional()) {
                 log.info("Instantiated a transactional producer.");
-            else
+            } else {
                 log.info("Instantiated an idempotent producer.");
+            }
         }
 
         return transactionManager;
@@ -585,27 +597,28 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      * Needs to be called before any other methods when the transactional.id is set in the configuration.
      *
      * This method does the following:
-     *   1. Ensures any transactions initiated by previous instances of the producer with the same
-     *      transactional.id are completed. If the previous instance had failed with a transaction in
-     *      progress, it will be aborted. If the last transaction had begun completion,
-     *      but not yet finished, this method awaits its completion.
-     *   2. Gets the internal producer id and epoch, used in all future transactional
-     *      messages issued by the producer.
+     * 1. Ensures any transactions initiated by previous instances of the producer with the same
+     * transactional.id are completed. If the previous instance had failed with a transaction in
+     * progress, it will be aborted. If the last transaction had begun completion,
+     * but not yet finished, this method awaits its completion.
+     * 2. Gets the internal producer id and epoch, used in all future transactional
+     * messages issued by the producer.
      *
      * Note that this method will raise {@link TimeoutException} if the transactional state cannot
      * be initialized before expiration of {@code max.block.ms}. Additionally, it will raise {@link InterruptException}
      * if interrupted. It is safe to retry in either case, but once the transactional state has been successfully
      * initialized, this method should no longer be used.
      *
-     * @throws IllegalStateException if no transactional.id has been configured
+     * @throws IllegalStateException                                      if no transactional.id has been configured
      * @throws org.apache.kafka.common.errors.UnsupportedVersionException fatal error indicating the broker
-     *         does not support transactions (i.e. if its version is lower than 0.11.0.0)
-     * @throws org.apache.kafka.common.errors.AuthorizationException fatal error indicating that the configured
-     *         transactional.id is not authorized. See the exception for more details
-     * @throws KafkaException if the producer has encountered a previous fatal error or for any other unexpected error
-     * @throws TimeoutException if the time taken for initialize the transaction has surpassed <code>max.block.ms</code>.
-     * @throws InterruptException if the thread is interrupted while blocked
+     *                                                                    does not support transactions (i.e. if its version is lower than 0.11.0.0)
+     * @throws org.apache.kafka.common.errors.AuthorizationException      fatal error indicating that the configured
+     *                                                                    transactional.id is not authorized. See the exception for more details
+     * @throws KafkaException                                             if the producer has encountered a previous fatal error or for any other unexpected error
+     * @throws TimeoutException                                           if the time taken for initialize the transaction has surpassed <code>max.block.ms</code>.
+     * @throws InterruptException                                         if the thread is interrupted while blocked
      */
+    @Override
     public void initTransactions() {
         throwIfNoTransactionManager();
         if (initTransactionsResult == null) {
@@ -628,15 +641,16 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      * Should be called before the start of each new transaction. Note that prior to the first invocation
      * of this method, you must invoke {@link #initTransactions()} exactly one time.
      *
-     * @throws IllegalStateException if no transactional.id has been configured or if {@link #initTransactions()}
-     *         has not yet been invoked
-     * @throws ProducerFencedException if another producer with the same transactional.id is active
+     * @throws IllegalStateException                                      if no transactional.id has been configured or if {@link #initTransactions()}
+     *                                                                    has not yet been invoked
+     * @throws ProducerFencedException                                    if another producer with the same transactional.id is active
      * @throws org.apache.kafka.common.errors.UnsupportedVersionException fatal error indicating the broker
-     *         does not support transactions (i.e. if its version is lower than 0.11.0.0)
-     * @throws org.apache.kafka.common.errors.AuthorizationException fatal error indicating that the configured
-     *         transactional.id is not authorized. See the exception for more details
-     * @throws KafkaException if the producer has encountered a previous fatal error or for any other unexpected error
+     *                                                                    does not support transactions (i.e. if its version is lower than 0.11.0.0)
+     * @throws org.apache.kafka.common.errors.AuthorizationException      fatal error indicating that the configured
+     *                                                                    transactional.id is not authorized. See the exception for more details
+     * @throws KafkaException                                             if the producer has encountered a previous fatal error or for any other unexpected error
      */
+    @Override
     public void beginTransaction() throws ProducerFencedException {
         throwIfNoTransactionManager();
         transactionManager.beginTransaction();
@@ -655,17 +669,18 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      * and should also not commit offsets manually (via {@link KafkaConsumer#commitSync(Map) sync} or
      * {@link KafkaConsumer#commitAsync(Map, OffsetCommitCallback) async} commits).
      *
-     * @throws IllegalStateException if no transactional.id has been configured or no transaction has been started
-     * @throws ProducerFencedException fatal error indicating another producer with the same transactional.id is active
-     * @throws org.apache.kafka.common.errors.UnsupportedVersionException fatal error indicating the broker
-     *         does not support transactions (i.e. if its version is lower than 0.11.0.0)
-     * @throws org.apache.kafka.common.errors.UnsupportedForMessageFormatException  fatal error indicating the message
-     *         format used for the offsets topic on the broker does not support transactions
-     * @throws org.apache.kafka.common.errors.AuthorizationException fatal error indicating that the configured
-     *         transactional.id is not authorized. See the exception for more details
-     * @throws KafkaException if the producer has encountered a previous fatal or abortable error, or for any
-     *         other unexpected error
+     * @throws IllegalStateException                                               if no transactional.id has been configured or no transaction has been started
+     * @throws ProducerFencedException                                             fatal error indicating another producer with the same transactional.id is active
+     * @throws org.apache.kafka.common.errors.UnsupportedVersionException          fatal error indicating the broker
+     *                                                                             does not support transactions (i.e. if its version is lower than 0.11.0.0)
+     * @throws org.apache.kafka.common.errors.UnsupportedForMessageFormatException fatal error indicating the message
+     *                                                                             format used for the offsets topic on the broker does not support transactions
+     * @throws org.apache.kafka.common.errors.AuthorizationException               fatal error indicating that the configured
+     *                                                                             transactional.id is not authorized. See the exception for more details
+     * @throws KafkaException                                                      if the producer has encountered a previous fatal or abortable error, or for any
+     *                                                                             other unexpected error
      */
+    @Override
     public void sendOffsetsToTransaction(Map<TopicPartition, OffsetAndMetadata> offsets,
                                          String consumerGroupId) throws ProducerFencedException {
         throwIfNoTransactionManager();
@@ -681,15 +696,16 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      * errors, this method will throw the last received exception immediately and the transaction will not be committed.
      * So all {@link #send(ProducerRecord)} calls in a transaction must succeed in order for this method to succeed.
      *
-     * @throws IllegalStateException if no transactional.id has been configured or no transaction has been started
-     * @throws ProducerFencedException fatal error indicating another producer with the same transactional.id is active
+     * @throws IllegalStateException                                      if no transactional.id has been configured or no transaction has been started
+     * @throws ProducerFencedException                                    fatal error indicating another producer with the same transactional.id is active
      * @throws org.apache.kafka.common.errors.UnsupportedVersionException fatal error indicating the broker
-     *         does not support transactions (i.e. if its version is lower than 0.11.0.0)
-     * @throws org.apache.kafka.common.errors.AuthorizationException fatal error indicating that the configured
-     *         transactional.id is not authorized. See the exception for more details
-     * @throws KafkaException if the producer has encountered a previous fatal or abortable error, or for any
-     *         other unexpected error
+     *                                                                    does not support transactions (i.e. if its version is lower than 0.11.0.0)
+     * @throws org.apache.kafka.common.errors.AuthorizationException      fatal error indicating that the configured
+     *                                                                    transactional.id is not authorized. See the exception for more details
+     * @throws KafkaException                                             if the producer has encountered a previous fatal or abortable error, or for any
+     *                                                                    other unexpected error
      */
+    @Override
     public void commitTransaction() throws ProducerFencedException {
         throwIfNoTransactionManager();
         TransactionalRequestResult result = transactionManager.beginCommit();
@@ -702,14 +718,15 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      * This call will throw an exception immediately if any prior {@link #send(ProducerRecord)} calls failed with a
      * {@link ProducerFencedException} or an instance of {@link org.apache.kafka.common.errors.AuthorizationException}.
      *
-     * @throws IllegalStateException if no transactional.id has been configured or no transaction has been started
-     * @throws ProducerFencedException fatal error indicating another producer with the same transactional.id is active
+     * @throws IllegalStateException                                      if no transactional.id has been configured or no transaction has been started
+     * @throws ProducerFencedException                                    fatal error indicating another producer with the same transactional.id is active
      * @throws org.apache.kafka.common.errors.UnsupportedVersionException fatal error indicating the broker
-     *         does not support transactions (i.e. if its version is lower than 0.11.0.0)
-     * @throws org.apache.kafka.common.errors.AuthorizationException fatal error indicating that the configured
-     *         transactional.id is not authorized. See the exception for more details
-     * @throws KafkaException if the producer has encountered a previous fatal error or for any other unexpected error
+     *                                                                    does not support transactions (i.e. if its version is lower than 0.11.0.0)
+     * @throws org.apache.kafka.common.errors.AuthorizationException      fatal error indicating that the configured
+     *                                                                    transactional.id is not authorized. See the exception for more details
+     * @throws KafkaException                                             if the producer has encountered a previous fatal error or for any other unexpected error
      */
+    @Override
     public void abortTransaction() throws ProducerFencedException {
         throwIfNoTransactionManager();
         TransactionalRequestResult result = transactionManager.beginAbort();
@@ -821,16 +838,15 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      *
      * @param record The record to send
      * @param callback A user-supplied callback to execute when the record has been acknowledged by the server (null
-     *        indicates no callback)
-     *
+     * indicates no callback)
      * @throws AuthenticationException if authentication fails. See the exception for more details
-     * @throws AuthorizationException fatal error indicating that the producer is not allowed to write
-     * @throws IllegalStateException if a transactional.id has been configured and no transaction has been started, or
-     *                               when send is invoked after producer has been closed.
-     * @throws InterruptException If the thread is interrupted while blocked
-     * @throws SerializationException If the key or value are not valid objects given the configured serializers
-     * @throws TimeoutException If the time taken for fetching metadata or allocating memory for the record has surpassed <code>max.block.ms</code>.
-     * @throws KafkaException If a Kafka related error occurs that does not belong to the public API exceptions.
+     * @throws AuthorizationException  fatal error indicating that the producer is not allowed to write
+     * @throws IllegalStateException   if a transactional.id has been configured and no transaction has been started, or
+     *                                 when send is invoked after producer has been closed.
+     * @throws InterruptException      If the thread is interrupted while blocked
+     * @throws SerializationException  If the key or value are not valid objects given the configured serializers
+     * @throws TimeoutException        If the time taken for fetching metadata or allocating memory for the record has surpassed <code>max.block.ms</code>.
+     * @throws KafkaException          If a Kafka related error occurs that does not belong to the public API exceptions.
      */
     @Override
     public Future<RecordMetadata> send(ProducerRecord<K, V> record, Callback callback) {
@@ -842,8 +858,9 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     // Verify that this producer instance has not been closed. This method throws IllegalStateException if the producer
     // has already been closed.
     private void throwIfProducerClosed() {
-        if (ioThread == null || !ioThread.isAlive())
+        if (ioThread == null || !ioThread.isAlive()) {
             throw new IllegalStateException("Cannot perform operation after producer has been closed");
+        }
     }
 
     /**
@@ -858,8 +875,9 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             try {
                 clusterAndWaitTime = waitOnMetadata(record.topic(), record.partition(), maxBlockTimeMs);
             } catch (KafkaException e) {
-                if (metadata.isClosed())
+                if (metadata.isClosed()) {
                     throw new KafkaException("Producer closed while send in progress", e);
+                }
                 throw e;
             }
             long remainingWaitMs = Math.max(0, maxBlockTimeMs - clusterAndWaitTime.waitedOnMetadataMs);
@@ -894,8 +912,9 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             // producer callback will make sure to call both 'callback' and interceptor callback
             Callback interceptCallback = new InterceptorCallback<>(callback, this.interceptors, tp);
 
-            if (transactionManager != null && transactionManager.isTransactional())
+            if (transactionManager != null && transactionManager.isTransactional()) {
                 transactionManager.maybeAddPartitionToTransaction(tp);
+            }
 
             RecordAccumulator.RecordAppendResult result = accumulator.append(tp, timestamp, serializedKey,
                     serializedValue, headers, interceptCallback, remainingWaitMs);
@@ -909,8 +928,9 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             // for other exceptions throw directly
         } catch (ApiException e) {
             log.debug("Exception occurred during message send:", e);
-            if (callback != null)
+            if (callback != null) {
                 callback.onCompletion(null, e);
+            }
             this.errors.record();
             this.interceptors.onSendError(record, tp, e);
             return new FutureFailure(e);
@@ -942,6 +962,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
 
     /**
      * Wait for cluster metadata including partitions for the given topic to be available.
+     *
      * @param topic The topic we want metadata for
      * @param partition A specific partition expected to exist in metadata, or null if there's no preference
      * @param maxWaitMs The maximum time in ms for waiting on the metadata
@@ -952,16 +973,18 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
         // add topic to metadata topic list if it is not there already and reset expiry
         Cluster cluster = metadata.fetch();
 
-        if (cluster.invalidTopics().contains(topic))
+        if (cluster.invalidTopics().contains(topic)) {
             throw new InvalidTopicException(topic);
+        }
 
         metadata.add(topic);
 
         Integer partitionsCount = cluster.partitionCountForTopic(topic);
         // Return cached metadata if we have it, and if the record's partition is either undefined
         // or within the known partition range
-        if (partitionsCount != null && (partition == null || partition < partitionsCount))
+        if (partitionsCount != null && (partition == null || partition < partitionsCount)) {
             return new ClusterAndWaitTime(cluster, 0);
+        }
 
         long begin = time.milliseconds();
         long remainingWaitMs = maxWaitMs;
@@ -995,10 +1018,12 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                         String.format("Partition %d of topic %s with partition count %d is not present in metadata after %d ms.",
                                 partition, topic, partitionsCount, maxWaitMs));
             }
-            if (cluster.unauthorizedTopics().contains(topic))
+            if (cluster.unauthorizedTopics().contains(topic)) {
                 throw new TopicAuthorizationException(topic);
-            if (cluster.invalidTopics().contains(topic))
+            }
+            if (cluster.invalidTopics().contains(topic)) {
                 throw new InvalidTopicException(topic);
+            }
             remainingWaitMs = maxWaitMs - elapsed;
             partitionsCount = cluster.partitionCountForTopic(topic);
         } while (partitionsCount == null || (partition != null && partition >= partitionsCount));
@@ -1010,16 +1035,18 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      * Validate that the record size isn't too large
      */
     private void ensureValidRecordSize(int size) {
-        if (size > this.maxRequestSize)
+        if (size > this.maxRequestSize) {
             throw new RecordTooLargeException("The message is " + size +
                     " bytes when serialized which is larger than the maximum request size you have configured with the " +
                     ProducerConfig.MAX_REQUEST_SIZE_CONFIG +
                     " configuration.");
-        if (size > this.totalMemorySize)
+        }
+        if (size > this.totalMemorySize) {
             throw new RecordTooLargeException("The message is " + size +
                     " bytes when serialized which is larger than the total memory buffer you have configured with the " +
                     ProducerConfig.BUFFER_MEMORY_CONFIG +
                     " configuration.");
+        }
     }
 
     /**
@@ -1070,11 +1097,12 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
 
     /**
      * Get the partition metadata for the given topic. This can be used for custom partitioning.
+     *
      * @throws AuthenticationException if authentication fails. See the exception for more details
-     * @throws AuthorizationException if not authorized to the specified topic. See the exception for more details
-     * @throws InterruptException if the thread is interrupted while blocked
-     * @throws TimeoutException if metadata could not be refreshed within {@code max.block.ms}
-     * @throws KafkaException for all Kafka-related exceptions, including the case where this method is called after producer close
+     * @throws AuthorizationException  if not authorized to the specified topic. See the exception for more details
+     * @throws InterruptException      if the thread is interrupted while blocked
+     * @throws TimeoutException        if metadata could not be refreshed within {@code max.block.ms}
+     * @throws KafkaException          for all Kafka-related exceptions, including the case where this method is called after producer close
      */
     @Override
     public List<PartitionInfo> partitionsFor(String topic) {
@@ -1121,9 +1149,9 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      * blocking the I/O thread of the producer.
      *
      * @param timeout The maximum time to wait for producer to complete any pending requests. The value should be
-     *                non-negative. Specifying a timeout of zero means do not wait for pending send requests to complete.
+     * non-negative. Specifying a timeout of zero means do not wait for pending send requests to complete.
      * @param timeUnit The time unit for the <code>timeout</code>
-     * @throws InterruptException If the thread is interrupted while blocked
+     * @throws InterruptException       If the thread is interrupted while blocked
      * @throws IllegalArgumentException If the <code>timeout</code> is negative.
      */
     @Override
@@ -1132,8 +1160,9 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     }
 
     private void close(long timeout, TimeUnit timeUnit, boolean swallowException) {
-        if (timeout < 0)
+        if (timeout < 0) {
             throw new IllegalArgumentException("The timeout cannot be negative.");
+        }
 
         long timeoutMs = timeUnit.toMillis(timeout);
         log.info("Closing the Kafka producer with timeoutMillis = {} ms.", timeoutMs);
@@ -1144,12 +1173,13 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
         if (timeoutMs > 0) {
             if (invokedFromCallback) {
                 log.warn("Overriding close timeout {} ms to 0 ms in order to prevent useless blocking due to self-join. " +
-                        "This means you have incorrectly invoked close with a non-zero timeout from the producer call-back.",
+                                "This means you have incorrectly invoked close with a non-zero timeout from the producer call-back.",
                         timeoutMs);
             } else {
                 // Try to close gracefully.
-                if (this.sender != null)
+                if (this.sender != null) {
                     this.sender.initiateClose();
+                }
                 if (this.ioThread != null) {
                     try {
                         this.ioThread.join(timeoutMs);
@@ -1206,7 +1236,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
 
     private ClusterResourceListeners configureClusterResourceListeners(Serializer<K> keySerializer, Serializer<V> valueSerializer, List<?>... candidateLists) {
         ClusterResourceListeners clusterResourceListeners = new ClusterResourceListeners();
-        for (List<?> candidateList: candidateLists)
+        for (List<?> candidateList : candidateLists)
             clusterResourceListeners.maybeAddAll(candidateList);
 
         clusterResourceListeners.maybeAdd(keySerializer);
@@ -1228,9 +1258,10 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     }
 
     private void throwIfNoTransactionManager() {
-        if (transactionManager == null)
+        if (transactionManager == null) {
             throw new IllegalStateException("Cannot use transactional methods without enabling transactions " +
                     "by setting the " + ProducerConfig.TRANSACTIONAL_ID_CONFIG + " configuration property");
+        }
     }
 
     // Visible for testing
@@ -1241,6 +1272,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     private static class ClusterAndWaitTime {
         final Cluster cluster;
         final long waitedOnMetadataMs;
+
         ClusterAndWaitTime(Cluster cluster, long waitedOnMetadataMs) {
             this.cluster = cluster;
             this.waitedOnMetadataMs = waitedOnMetadataMs;
@@ -1297,11 +1329,13 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             this.tp = tp;
         }
 
+        @Override
         public void onCompletion(RecordMetadata metadata, Exception exception) {
             metadata = metadata != null ? metadata : new RecordMetadata(tp, -1, -1, RecordBatch.NO_TIMESTAMP, Long.valueOf(-1L), -1, -1);
             this.interceptors.onAcknowledgement(metadata, exception);
-            if (this.userCallback != null)
+            if (this.userCallback != null) {
                 this.userCallback.onCompletion(metadata, exception);
+            }
         }
     }
 }

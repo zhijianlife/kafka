@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.kafka.clients.producer.internals;
 
 import org.apache.kafka.clients.producer.Callback;
@@ -29,6 +30,8 @@ import org.apache.kafka.common.record.MemoryRecordsBuilder;
 import org.apache.kafka.common.record.MutableRecordBatch;
 import org.apache.kafka.common.record.Record;
 import org.apache.kafka.common.record.RecordBatch;
+import static org.apache.kafka.common.record.RecordBatch.MAGIC_VALUE_V2;
+import static org.apache.kafka.common.record.RecordBatch.NO_TIMESTAMP;
 import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.common.requests.ProduceResponse;
 import org.apache.kafka.common.utils.Time;
@@ -44,9 +47,6 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static org.apache.kafka.common.record.RecordBatch.MAGIC_VALUE_V2;
-import static org.apache.kafka.common.record.RecordBatch.NO_TIMESTAMP;
-
 /**
  * A batch of records that is or will be sent.
  *
@@ -56,7 +56,11 @@ public final class ProducerBatch {
 
     private static final Logger log = LoggerFactory.getLogger(ProducerBatch.class);
 
-    private enum FinalState { ABORTED, FAILED, SUCCEEDED }
+    private enum FinalState {
+        ABORTED,
+        FAILED,
+        SUCCEEDED
+    }
 
     final long createdMs;
     final TopicPartition topicPartition;
@@ -89,8 +93,7 @@ public final class ProducerBatch {
         this.produceFuture = new ProduceRequestResult(topicPartition);
         this.retry = false;
         this.isSplitBatch = isSplitBatch;
-        float compressionRatioEstimation = CompressionRatioEstimator.estimation(topicPartition.topic(),
-                                                                                recordsBuilder.compressionType());
+        float compressionRatioEstimation = CompressionRatioEstimator.estimation(topicPartition.topic(), recordsBuilder.compressionType());
         recordsBuilder.setEstimatedCompressionRatio(compressionRatioEstimation);
     }
 
@@ -108,10 +111,10 @@ public final class ProducerBatch {
                     recordsBuilder.compressionType(), key, value, headers));
             this.lastAppendTime = now;
             FutureRecordMetadata future = new FutureRecordMetadata(this.produceFuture, this.recordCount,
-                                                                   timestamp, checksum,
-                                                                   key == null ? -1 : key.length,
-                                                                   value == null ? -1 : value.length,
-                                                                   Time.SYSTEM);
+                    timestamp, checksum,
+                    key == null ? -1 : key.length,
+                    value == null ? -1 : value.length,
+                    Time.SYSTEM);
             // we have to keep every future returned to the users in case the batch needs to be
             // split to several new batches and resent.
             thunks.add(new Thunk(callback, future));
@@ -122,6 +125,7 @@ public final class ProducerBatch {
 
     /**
      * This method is only used by {@link #split(int)} when splitting a large batch to smaller ones.
+     *
      * @return true if the record has been successfully appended, false otherwise.
      */
     private boolean tryAppendForSplit(long timestamp, ByteBuffer key, ByteBuffer value, Header[] headers, Thunk thunk) {
@@ -133,10 +137,10 @@ public final class ProducerBatch {
             this.maxRecordSize = Math.max(this.maxRecordSize, AbstractRecords.estimateSizeInBytesUpperBound(magic(),
                     recordsBuilder.compressionType(), key, value, headers));
             FutureRecordMetadata future = new FutureRecordMetadata(this.produceFuture, this.recordCount,
-                                                                   timestamp, thunk.future.checksumOrNull(),
-                                                                   key == null ? -1 : key.remaining(),
-                                                                   value == null ? -1 : value.remaining(),
-                                                                   Time.SYSTEM);
+                    timestamp, thunk.future.checksumOrNull(),
+                    key == null ? -1 : key.remaining(),
+                    value == null ? -1 : value.remaining(),
+                    Time.SYSTEM);
             // Chain the future to the original thunk.
             thunk.future.chain(future);
             this.thunks.add(thunk);
@@ -151,8 +155,9 @@ public final class ProducerBatch {
      * @param exception The exception to use to complete the future and awaiting callbacks.
      */
     public void abort(RuntimeException exception) {
-        if (!finalState.compareAndSet(null, FinalState.ABORTED))
+        if (!finalState.compareAndSet(null, FinalState.ABORTED)) {
             throw new IllegalStateException("Batch has already been completed in final state " + finalState.get());
+        }
 
         log.trace("Aborting batch for partition {}", topicPartition, exception);
         completeFutureAndFireCallbacks(ProduceResponse.INVALID_OFFSET, RecordBatch.NO_TIMESTAMP, exception);
@@ -201,11 +206,11 @@ public final class ProducerBatch {
             if (tryFinalState == FinalState.SUCCEEDED) {
                 // Log if a previously unsuccessful batch succeeded later on.
                 log.debug("ProduceResponse returned {} for {} after batch with base offset {} had already been {}.",
-                    tryFinalState, topicPartition, baseOffset, this.finalState.get());
+                        tryFinalState, topicPartition, baseOffset, this.finalState.get());
             } else {
                 // FAILED --> FAILED and ABORTED --> FAILED transitions are ignored.
                 log.debug("Ignored state transition {} -> {} for {} batch with base offset {}",
-                    this.finalState.get(), tryFinalState, topicPartition, baseOffset);
+                        this.finalState.get(), tryFinalState, topicPartition, baseOffset);
             }
         } else {
             // A SUCCESSFUL batch must not attempt another state change.
@@ -223,11 +228,13 @@ public final class ProducerBatch {
             try {
                 if (exception == null) {
                     RecordMetadata metadata = thunk.future.value();
-                    if (thunk.callback != null)
+                    if (thunk.callback != null) {
                         thunk.callback.onCompletion(metadata, null);
+                    }
                 } else {
-                    if (thunk.callback != null)
+                    if (thunk.callback != null) {
                         thunk.callback.onCompletion(null, exception);
+                    }
                 }
             } catch (Exception e) {
                 log.error("Error executing user-provided callback on message for topic-partition '{}'", topicPartition, e);
@@ -242,16 +249,19 @@ public final class ProducerBatch {
         MemoryRecords memoryRecords = recordsBuilder.build();
 
         Iterator<MutableRecordBatch> recordBatchIter = memoryRecords.batches().iterator();
-        if (!recordBatchIter.hasNext())
+        if (!recordBatchIter.hasNext()) {
             throw new IllegalStateException("Cannot split an empty producer batch.");
+        }
 
         RecordBatch recordBatch = recordBatchIter.next();
-        if (recordBatch.magic() < MAGIC_VALUE_V2 && !recordBatch.isCompressed())
+        if (recordBatch.magic() < MAGIC_VALUE_V2 && !recordBatch.isCompressed()) {
             throw new IllegalArgumentException("Batch splitting cannot be used with non-compressed messages " +
                     "with version v0 and v1");
+        }
 
-        if (recordBatchIter.hasNext())
+        if (recordBatchIter.hasNext()) {
             throw new IllegalArgumentException("A producer batch should only have one record batch.");
+        }
 
         Iterator<Thunk> thunkIter = thunks.iterator();
         // We always allocate batch size because we are already splitting a big batch.
@@ -261,8 +271,9 @@ public final class ProducerBatch {
         for (Record record : recordBatch) {
             assert thunkIter.hasNext();
             Thunk thunk = thunkIter.next();
-            if (batch == null)
+            if (batch == null) {
                 batch = createBatchOffAccumulatorForRecord(record, splitBatchSize);
+            }
 
             // A newly created batch can always host the first message.
             if (!batch.tryAppendForSplit(record.timestamp(), record.key(), record.value(), record.headers(), thunk)) {
@@ -273,8 +284,9 @@ public final class ProducerBatch {
         }
 
         // Close the last batch and add it to the batch list after split.
-        if (batch != null)
+        if (batch != null) {
             batches.add(batch);
+        }
 
         produceFuture.set(ProduceResponse.INVALID_OFFSET, NO_TIMESTAMP, new RecordBatchTooLargeException());
         produceFuture.done();
@@ -404,8 +416,8 @@ public final class ProducerBatch {
         recordsBuilder.close();
         if (!recordsBuilder.isControlBatch()) {
             CompressionRatioEstimator.updateEstimation(topicPartition.topic(),
-                                                       recordsBuilder.compressionType(),
-                                                       (float) recordsBuilder.compressionRatio());
+                    recordsBuilder.compressionType(),
+                    (float) recordsBuilder.compressionRatio());
         }
         reopened = false;
     }
