@@ -14,14 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.clients.producer.internals;
 
-import java.nio.ByteBuffer;
-import java.util.ArrayDeque;
-import java.util.Deque;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.ReentrantLock;
+package org.apache.kafka.clients.producer.internals;
 
 import org.apache.kafka.common.MetricName;
 import org.apache.kafka.common.errors.TimeoutException;
@@ -30,6 +24,12 @@ import org.apache.kafka.common.metrics.Sensor;
 import org.apache.kafka.common.metrics.stats.Meter;
 import org.apache.kafka.common.utils.Time;
 
+import java.nio.ByteBuffer;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * A pool of ByteBuffers kept under a given memory limit. This class is fairly specific to the needs of the producer. In
@@ -50,7 +50,7 @@ public class BufferPool {
     private final ReentrantLock lock;
     private final Deque<ByteBuffer> free;
     private final Deque<Condition> waiters;
-    /** Total available memory is the sum of nonPooledAvailableMemory and the number of byte buffers in free * poolableSize.  */
+    /** Total available memory is the sum of nonPooledAvailableMemory and the number of byte buffers in free * poolableSize. */
     private long nonPooledAvailableMemory;
     private final Metrics metrics;
     private final Time time;
@@ -76,11 +76,11 @@ public class BufferPool {
         this.time = time;
         this.waitTime = this.metrics.sensor(WAIT_TIME_SENSOR_NAME);
         MetricName rateMetricName = metrics.metricName("bufferpool-wait-ratio",
-                                                   metricGrpName,
-                                                   "The fraction of time an appender waits for space allocation.");
+                metricGrpName,
+                "The fraction of time an appender waits for space allocation.");
         MetricName totalMetricName = metrics.metricName("bufferpool-wait-time-total",
-                                                   metricGrpName,
-                                                   "The total time an appender waits for space allocation.");
+                metricGrpName,
+                "The total time an appender waits for space allocation.");
         this.waitTime.add(new Meter(TimeUnit.NANOSECONDS, rateMetricName, totalMetricName));
     }
 
@@ -91,23 +91,25 @@ public class BufferPool {
      * @param size The buffer size to allocate in bytes
      * @param maxTimeToBlockMs The maximum time in milliseconds to block for buffer memory to be available
      * @return The buffer
-     * @throws InterruptedException If the thread is interrupted while blocked
+     * @throws InterruptedException     If the thread is interrupted while blocked
      * @throws IllegalArgumentException if size is larger than the total memory controlled by the pool (and hence we would block
-     *         forever)
+     *                                  forever)
      */
     public ByteBuffer allocate(int size, long maxTimeToBlockMs) throws InterruptedException {
-        if (size > this.totalMemory)
+        if (size > this.totalMemory) {
             throw new IllegalArgumentException("Attempt to allocate " + size
-                                               + " bytes, but there is a hard limit of "
-                                               + this.totalMemory
-                                               + " on memory allocations.");
+                    + " bytes, but there is a hard limit of "
+                    + this.totalMemory
+                    + " on memory allocations.");
+        }
 
         ByteBuffer buffer = null;
         this.lock.lock();
         try {
             // check if we have a free buffer of the right size pooled
-            if (size == poolableSize && !this.free.isEmpty())
+            if (size == poolableSize && !this.free.isEmpty()) {
                 return this.free.pollFirst();
+            }
 
             // now check if the request is immediately satisfiable with the
             // memory on hand or if we need to block
@@ -171,18 +173,20 @@ public class BufferPool {
             // signal any additional waiters if there is more memory left
             // over for them
             try {
-                if (!(this.nonPooledAvailableMemory == 0 && this.free.isEmpty()) && !this.waiters.isEmpty())
+                if (!(this.nonPooledAvailableMemory == 0 && this.free.isEmpty()) && !this.waiters.isEmpty()) {
                     this.waiters.peekFirst().signal();
+                }
             } finally {
                 // Another finally... otherwise find bugs complains
                 lock.unlock();
             }
         }
 
-        if (buffer == null)
+        if (buffer == null) {
             return safeAllocateByteBuffer(size);
-        else
+        } else {
             return buffer;
+        }
     }
 
     // Protected for testing
@@ -205,8 +209,9 @@ public class BufferPool {
                 this.lock.lock();
                 try {
                     this.nonPooledAvailableMemory += size;
-                    if (!this.waiters.isEmpty())
+                    if (!this.waiters.isEmpty()) {
                         this.waiters.peekFirst().signal();
+                    }
                 } finally {
                     this.lock.unlock();
                 }
@@ -234,7 +239,7 @@ public class BufferPool {
      *
      * @param buffer The buffer to return
      * @param size The size of the buffer to mark as deallocated, note that this may be smaller than buffer.capacity
-     *             since the buffer may re-allocate itself during in-place compression
+     * since the buffer may re-allocate itself during in-place compression
      */
     public void deallocate(ByteBuffer buffer, int size) {
         lock.lock();
@@ -246,8 +251,9 @@ public class BufferPool {
                 this.nonPooledAvailableMemory += size;
             }
             Condition moreMem = this.waiters.peekFirst();
-            if (moreMem != null)
+            if (moreMem != null) {
                 moreMem.signal();
+            }
         } finally {
             lock.unlock();
         }
