@@ -10,6 +10,7 @@
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
  * specific language governing permissions and limitations under the License.
  */
+
 package org.apache.kafka.clients.consumer;
 
 import org.apache.kafka.common.TopicPartition;
@@ -40,33 +41,37 @@ public class ConsumerRecords<K, V> implements Iterable<ConsumerRecord<K, V>> {
 
     /**
      * Get just the records for the given partition
-     * 
+     *
      * @param partition The partition to get records for
      */
     public List<ConsumerRecord<K, V>> records(TopicPartition partition) {
         List<ConsumerRecord<K, V>> recs = this.records.get(partition);
-        if (recs == null)
+        if (recs == null) {
             return Collections.emptyList();
-        else
+        } else {
             return Collections.unmodifiableList(recs);
+        }
     }
 
     /**
      * Get just the records for the given topic
      */
     public Iterable<ConsumerRecord<K, V>> records(String topic) {
-        if (topic == null)
+        if (topic == null) {
             throw new IllegalArgumentException("Topic must be non-null.");
+        }
         List<List<ConsumerRecord<K, V>>> recs = new ArrayList<>();
         for (Map.Entry<TopicPartition, List<ConsumerRecord<K, V>>> entry : records.entrySet()) {
-            if (entry.getKey().topic().equals(topic))
+            if (entry.getKey().topic().equals(topic)) {
                 recs.add(entry.getValue());
+            }
         }
         return new ConcatenatedIterable<>(recs);
     }
 
     /**
      * Get the partitions which have records contained in this record set.
+     *
      * @return the set of partitions with data in this record set (may be empty if no data was returned)
      */
     public Set<TopicPartition> partitions() {
@@ -83,7 +88,7 @@ public class ConsumerRecords<K, V> implements Iterable<ConsumerRecord<K, V>> {
      */
     public int count() {
         int count = 0;
-        for (List<ConsumerRecord<K, V>> recs: this.records.values())
+        for (List<ConsumerRecord<K, V>> recs : this.records.values())
             count += recs.size();
         return count;
     }
@@ -102,12 +107,14 @@ public class ConsumerRecords<K, V> implements Iterable<ConsumerRecord<K, V>> {
                 Iterator<? extends Iterable<ConsumerRecord<K, V>>> iters = iterables.iterator();
                 Iterator<ConsumerRecord<K, V>> current;
 
+                @Override
                 public ConsumerRecord<K, V> makeNext() {
                     while (current == null || !current.hasNext()) {
-                        if (iters.hasNext())
+                        if (iters.hasNext()) {
                             current = iters.next().iterator();
-                        else
+                        } else {
                             return allDone();
+                        }
                     }
                     return current.next();
                 }
