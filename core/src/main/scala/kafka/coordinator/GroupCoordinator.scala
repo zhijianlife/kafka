@@ -125,7 +125,7 @@ class GroupCoordinator(val brokerId: Int, // 所属的 broker 节点的 ID
             // GroupCoordinator 实例未启动
             responseCallback(joinError(memberId, Errors.GROUP_COORDINATOR_NOT_AVAILABLE.code))
         } else if (!validGroupId(groupId)) {
-            // groudId 不合法
+            // groupId 不合法
             responseCallback(joinError(memberId, Errors.INVALID_GROUP_ID.code))
         } else if (!isCoordinatorForGroup(groupId)) {
             // 当前 GroupCoordinator 实例并不负责管理当前 group
